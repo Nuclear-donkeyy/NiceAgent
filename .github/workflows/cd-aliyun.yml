@@ -98,11 +98,32 @@ jobs:
       - name: Deploy to ACK
         if: inputs.deploy_to_ack == 'true' && steps.kubeconfig.outputs.configured == 'true'
         env:
+          ACR_USERNAME: ${{ secrets.ALIYUN_ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN }}
           CONTROL_PLANE_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-control-plane:${{ env.IMAGE_TAG }}
           AGENT_RUNTIME_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-agent-runtime:${{ env.IMAGE_TAG }}
           SANDBOX_EXECUTOR_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-sandbox-executor:${{ env.IMAGE_TAG }}
         run: |
           kubectl apply -f deployments/k8s/namespace.yaml
+
+          kubectl -n niceagent create secret docker-registry aliyun-acr \
+            --docker-server="$ACR_REGISTRY" \
+            --docker-username="$ACR_USERNAME" \
+            --docker-password="$ACR_PASSWORD" \
+            --dry-run=client \
+            -o yaml | kubectl apply -f -
+
+          kubectl -n niceagent patch serviceaccount default \
+            -p '{"imagePullSecrets":[{"name":"aliyun-acr"}]}'
+
+          if [ -n "$INTERNAL_API_TOKEN" ]; then
+            kubectl -n niceagent create secret generic niceagent-internal-api \
+              --from-literal=token="$INTERNAL_API_TOKEN" \
+              --dry-run=client \
+              -o yaml | kubectl apply -f -
+          fi
+
           kubectl apply -f deployments/k8s/configmap.yaml
           kubectl apply -f deployments/k8s/redis.yaml
           kubectl apply -f deployments/k8s/sandbox-executor.yaml
