@@ -78,6 +78,7 @@ GOCACHE=/private/tmp/niceagent-go-cache make test
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：当前模块边界和架构说明。
 - [docs/API.md](docs/API.md)：外部和内部 API 契约。
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)：本地开发指南。
+- [docs/LOCAL_K8S.md](docs/LOCAL_K8S.md)：本地 Kubernetes 部署测试流程。
 - [docs/ROADMAP.md](docs/ROADMAP.md)：下一阶段行动计划。
 - [docs/OPERATIONS.md](docs/OPERATIONS.md)：运行和排障说明。
 - [docs/CICD.md](docs/CICD.md)：CI/CD 和阿里云发布说明。

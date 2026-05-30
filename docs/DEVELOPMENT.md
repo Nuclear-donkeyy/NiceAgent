@@ -71,6 +71,8 @@ git diff --check
 
 如果想在本机跑更接近云部署的环境，推荐使用 kind。它会通过 Docker 启动一个轻量 Kubernetes 集群，适合验证 `deployments/k8s`。
 
+完整部署、冒烟测试和常见问题见 [LOCAL_K8S.md](LOCAL_K8S.md)。
+
 安装工具：
 
 ```bash
