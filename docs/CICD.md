@@ -78,6 +78,8 @@ base64 -i ~/.kube/config | tr -d '\n'
 
 如果想跑得更接近云部署，但暂时不创建 ACK，可以在 Mac 上使用 kind。kind 会在本机 Docker 里启动 Kubernetes 节点，不会产生云费用。
 
+完整操作手册见 [LOCAL_K8S.md](LOCAL_K8S.md)。
+
 准备工具：
 
 ```bash
