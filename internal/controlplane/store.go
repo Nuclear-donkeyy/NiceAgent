@@ -53,7 +53,7 @@ func NewStore() *Store {
 		Description:  "Execute approved commands inside a sandbox workspace.",
 		Risk:         protocol.SkillRiskHigh,
 		RequiresAuth: true,
-		InputSchema:   `{"type":"object","required":["command"],"properties":{"command":{"type":"array","items":{"type":"string"}}}}`,
+		InputSchema:  `{"type":"object","required":["command"],"properties":{"command":{"type":"array","items":{"type":"string"}}}}`,
 	}
 	store.skills["workspace.read"] = protocol.Skill{
 		ID:           "workspace.read",
@@ -197,6 +197,9 @@ func (s *Store) UpdateRunStatus(runID string, status protocol.RunStatus, errMess
 	if !ok {
 		return protocol.Run{}, ErrNotFound
 	}
+	if isTerminalRunStatus(run.Status) && run.Status != status {
+		return run, nil
+	}
 	if status == protocol.RunRunning && run.StartedAt == nil {
 		run.StartedAt = &now
 	}
@@ -208,6 +211,10 @@ func (s *Store) UpdateRunStatus(runID string, status protocol.RunStatus, errMess
 	run.UpdatedAt = now
 	s.runs[runID] = run
 	return run, nil
+}
+
+func isTerminalRunStatus(status protocol.RunStatus) bool {
+	return status == protocol.RunSucceeded || status == protocol.RunFailed || status == protocol.RunCanceled
 }
 
 func (s *Store) AddEvent(runID string, typ protocol.RunEventType, message string, payload any) (protocol.RunEvent, error) {
@@ -296,4 +303,3 @@ func titleFromContent(content string) string {
 	}
 	return content[:max] + "..."
 }
-

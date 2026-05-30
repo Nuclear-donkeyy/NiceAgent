@@ -24,14 +24,14 @@ type Project struct {
 }
 
 type ChatSession struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	ProjectID   string    `json:"project_id"`
-	Title       string    `json:"title"`
-	Archived    bool      `json:"archived"`
-	LastRunID   string    `json:"last_run_id,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id"`
+	ProjectID    string    `json:"project_id"`
+	Title        string    `json:"title"`
+	Archived     bool      `json:"archived"`
+	LastRunID    string    `json:"last_run_id,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 	MessageCount int       `json:"message_count"`
 }
 
@@ -119,8 +119,8 @@ type Skill struct {
 	Description  string    `json:"description"`
 	Risk         SkillRisk `json:"risk"`
 	RequiresAuth bool      `json:"requires_auth"`
-	InputSchema   string    `json:"input_schema,omitempty"`
-	OutputSchema  string    `json:"output_schema,omitempty"`
+	InputSchema  string    `json:"input_schema,omitempty"`
+	OutputSchema string    `json:"output_schema,omitempty"`
 }
 
 type Workspace struct {
@@ -163,18 +163,18 @@ type TokenUsage struct {
 }
 
 type SkillInvocation struct {
-	ID             string        `json:"id"`
-	RunID          string        `json:"run_id"`
-	SkillID        string        `json:"skill_id"`
-	SkillVersion   string        `json:"skill_version"`
-	Input          any           `json:"input"`
-	TimeoutSeconds int           `json:"timeout_seconds"`
-	ApprovalID     string        `json:"approval_id,omitempty"`
-	StartedAt      time.Time     `json:"started_at"`
-	FinishedAt     *time.Time    `json:"finished_at,omitempty"`
-	Status         string        `json:"status"`
-	Output         any           `json:"output,omitempty"`
-	Error          string        `json:"error,omitempty"`
+	ID             string     `json:"id"`
+	RunID          string     `json:"run_id"`
+	SkillID        string     `json:"skill_id"`
+	SkillVersion   string     `json:"skill_version"`
+	Input          any        `json:"input"`
+	TimeoutSeconds int        `json:"timeout_seconds"`
+	ApprovalID     string     `json:"approval_id,omitempty"`
+	StartedAt      time.Time  `json:"started_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	Status         string     `json:"status"`
+	Output         any        `json:"output,omitempty"`
+	Error          string     `json:"error,omitempty"`
 }
 
 type Artifact struct {
@@ -193,14 +193,17 @@ type SandboxCommand struct {
 	Env            map[string]string `json:"env,omitempty"`
 	TimeoutSeconds int               `json:"timeout_seconds"`
 	Network        bool              `json:"network"`
+	MaxOutputBytes int               `json:"max_output_bytes,omitempty"`
+	WorkspaceRoot  string            `json:"workspace_root,omitempty"`
 }
 
 type SandboxResult struct {
-	RunID    string `json:"run_id"`
-	ExitCode int    `json:"exit_code"`
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	Duration string `json:"duration"`
-	Error    string `json:"error,omitempty"`
+	RunID            string `json:"run_id"`
+	ExitCode         int    `json:"exit_code"`
+	Stdout           string `json:"stdout"`
+	Stderr           string `json:"stderr"`
+	Duration         string `json:"duration"`
+	Truncated        bool   `json:"truncated"`
+	ApprovalRequired bool   `json:"approval_required"`
+	Error            string `json:"error,omitempty"`
 }
-

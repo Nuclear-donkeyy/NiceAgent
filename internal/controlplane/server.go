@@ -12,19 +12,18 @@ import (
 
 	"niceagent/internal/platform"
 	"niceagent/internal/protocol"
-	"niceagent/internal/runtime"
 )
 
 const demoUserID = "demo-user"
 
 type Server struct {
-	store  *Store
-	engine *runtime.Engine
-	log    *slog.Logger
+	repo       Repository
+	dispatcher RunDispatcher
+	log        *slog.Logger
 }
 
-func NewServer(store *Store, engine *runtime.Engine, log *slog.Logger) *Server {
-	return &Server{store: store, engine: engine, log: log}
+func NewServer(repo Repository, dispatcher RunDispatcher, log *slog.Logger) *Server {
+	return &Server{repo: repo, dispatcher: dispatcher, log: log}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -46,13 +45,13 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		platform.WriteJSON(w, http.StatusOK, map[string]any{"chats": s.store.ListChats(demoUserID)})
+		platform.WriteJSON(w, http.StatusOK, map[string]any{"chats": s.repo.ListChats(demoUserID)})
 	case http.MethodPost:
 		var input struct {
 			Title string `json:"title"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&input)
-		platform.WriteJSON(w, http.StatusCreated, s.store.CreateChat(demoUserID, input.Title))
+		platform.WriteJSON(w, http.StatusCreated, s.repo.CreateChat(demoUserID, input.Title))
 	default:
 		platform.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -66,7 +65,7 @@ func (s *Server) chatSubroutes(w http.ResponseWriter, r *http.Request) {
 	}
 	chatID := parts[0]
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		chat, messages, err := s.store.GetChat(chatID)
+		chat, messages, err := s.repo.GetChat(chatID)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -94,13 +93,18 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, chatID st
 		platform.WriteError(w, http.StatusBadRequest, "content is required")
 		return
 	}
-	message, run, err := s.store.AddUserMessage(chatID, demoUserID, input.Content)
+	message, run, err := s.repo.AddUserMessage(chatID, demoUserID, input.Content)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	_, _ = s.store.AddEvent(run.ID, protocol.EventRunQueued, "Run queued by control plane.", map[string]any{"message_id": message.ID})
-	go s.executeRun(context.Background(), run, input.Content)
+	_, _ = s.repo.AddEvent(run.ID, protocol.EventRunQueued, "Run queued by control plane.", map[string]any{"message_id": message.ID})
+	if err := s.dispatcher.Dispatch(context.Background(), run, input.Content); err != nil {
+		_, _ = s.repo.UpdateRunStatus(run.ID, protocol.RunFailed, err.Error())
+		_, _ = s.repo.AddEvent(run.ID, protocol.EventRunFailed, "Run dispatch failed.", map[string]any{"error": err.Error()})
+		platform.WriteError(w, http.StatusServiceUnavailable, "run dispatch failed")
+		return
+	}
 	platform.WriteJSON(w, http.StatusAccepted, map[string]any{"message": message, "run": run})
 }
 
@@ -112,7 +116,7 @@ func (s *Server) runSubroutes(w http.ResponseWriter, r *http.Request) {
 	}
 	runID := parts[0]
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		run, err := s.store.GetRun(runID)
+		run, err := s.repo.GetRun(runID)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -125,12 +129,12 @@ func (s *Server) runSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
-		run, err := s.store.UpdateRunStatus(runID, protocol.RunCanceled, "")
+		run, err := s.repo.UpdateRunStatus(runID, protocol.RunCanceled, "")
 		if err != nil {
 			writeStoreErr(w, err)
 			return
 		}
-		_, _ = s.store.AddEvent(runID, protocol.EventRunCanceled, "Run canceled by user.", nil)
+		_, _ = s.repo.AddEvent(runID, protocol.EventRunCanceled, "Run canceled by user.", nil)
 		platform.WriteJSON(w, http.StatusOK, run)
 		return
 	}
@@ -144,14 +148,14 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, runID string)
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	afterSeq, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	for _, event := range s.store.ListEvents(runID, afterSeq) {
+	for _, event := range s.repo.ListEvents(runID, afterSeq) {
 		if err := platform.WriteSSE(w, string(event.Type), event); err != nil {
 			return
 		}
 		afterSeq = event.Seq
 	}
 
-	ch, cancel := s.store.Subscribe(runID)
+	ch, cancel := s.repo.Subscribe(runID)
 	defer cancel()
 	ticker := time.NewTicker(25 * time.Second)
 	defer ticker.Stop()
@@ -177,7 +181,7 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, runID string)
 }
 
 func (s *Server) skills(w http.ResponseWriter, _ *http.Request) {
-	platform.WriteJSON(w, http.StatusOK, map[string]any{"skills": s.store.ListSkills()})
+	platform.WriteJSON(w, http.StatusOK, map[string]any{"skills": s.repo.ListSkills()})
 }
 
 func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -192,57 +196,44 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 	platform.WriteError(w, http.StatusNotFound, "skill route not found")
 }
 
-func (s *Server) executeRun(ctx context.Context, run protocol.Run, userMessage string) {
-	_, _ = s.store.UpdateRunStatus(run.ID, protocol.RunRunning, "")
-	req := protocol.RunRequest{
-		RunID:       run.ID,
-		ChatID:      run.ChatID,
-		UserID:      run.UserID,
-		WorkspaceID: run.WorkspaceID,
-		SkillIDs:    []string{"workspace.read", "cli.exec"},
-		ModelPolicy: "mock-default",
-	}
-	s.engine.Execute(ctx, req, userMessage, controlSink{store: s.store})
-}
-
 type controlSink struct {
-	store *Store
+	repo Repository
 }
 
 func (s controlSink) Emit(runID string, typ protocol.RunEventType, message string, payload any) error {
-	_, err := s.store.AddEvent(runID, typ, message, payload)
+	_, err := s.repo.AddEvent(runID, typ, message, payload)
 	return err
 }
 
 func (s controlSink) Complete(runID string, content string) error {
-	run, err := s.store.GetRun(runID)
+	run, err := s.repo.GetRun(runID)
 	if err != nil {
 		return err
 	}
 	if run.Status == protocol.RunCanceled {
 		return nil
 	}
-	s.store.AddAssistantMessage(run.ChatID, runID, content)
-	_, _ = s.store.UpdateRunStatus(runID, protocol.RunSucceeded, "")
-	_, err = s.store.AddEvent(runID, protocol.EventRunSucceeded, "Run completed.", nil)
+	s.repo.AddAssistantMessage(run.ChatID, runID, content)
+	_, _ = s.repo.UpdateRunStatus(runID, protocol.RunSucceeded, "")
+	_, err = s.repo.AddEvent(runID, protocol.EventRunSucceeded, "Run completed.", nil)
 	return err
 }
 
 func (s controlSink) Fail(runID string, message string) error {
-	run, err := s.store.GetRun(runID)
+	run, err := s.repo.GetRun(runID)
 	if err != nil {
 		return err
 	}
 	if run.Status == protocol.RunCanceled {
 		return nil
 	}
-	_, _ = s.store.UpdateRunStatus(runID, protocol.RunFailed, message)
-	_, err = s.store.AddEvent(runID, protocol.EventRunFailed, message, nil)
+	_, _ = s.repo.UpdateRunStatus(runID, protocol.RunFailed, message)
+	_, err = s.repo.AddEvent(runID, protocol.EventRunFailed, message, nil)
 	return err
 }
 
 func (s controlSink) IsCanceled(runID string) bool {
-	run, err := s.store.GetRun(runID)
+	run, err := s.repo.GetRun(runID)
 	return err == nil && run.Status == protocol.RunCanceled
 }
 

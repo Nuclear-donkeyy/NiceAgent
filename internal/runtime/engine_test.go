@@ -2,13 +2,14 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"niceagent/internal/protocol"
 	"niceagent/internal/sandbox"
 )
 
-func TestEngineEmitsCompletion(t *testing.T) {
+func TestEngineEmitsCompletionForPlainMessage(t *testing.T) {
 	sink := &recordingSink{}
 	engine := NewEngine(sandbox.NewExecutor())
 
@@ -29,6 +30,12 @@ func TestEngineEmitsCompletion(t *testing.T) {
 	}
 	if len(sink.events) == 0 {
 		t.Fatal("expected events")
+	}
+	if !sink.saw(protocol.EventRunStarted) || !sink.saw(protocol.EventModelToken) {
+		t.Fatalf("events = %v, want run started and model token events", sink.events)
+	}
+	if !strings.Contains(sink.completed, "无状态 agent runtime") {
+		t.Fatalf("completed content = %q, want ordinary runtime reply", sink.completed)
 	}
 }
 
@@ -51,17 +58,127 @@ func TestEngineRunsAllowedCLICommand(t *testing.T) {
 	if !sink.saw(protocol.EventToolOutput) {
 		t.Fatal("expected tool output event")
 	}
+	if !sink.saw(protocol.EventToolStarted) || !sink.saw(protocol.EventToolFinished) {
+		t.Fatalf("events = %v, want tool started/output/finished", sink.events)
+	}
+	if !strings.Contains(sink.completed, "hello") {
+		t.Fatalf("completed content = %q, want CLI stdout", sink.completed)
+	}
+}
+
+func TestEngineSurfacesCLICommandFailure(t *testing.T) {
+	sink := &recordingSink{}
+	engine := NewEngine(sandbox.NewExecutor())
+
+	result := engine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-3",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		SkillIDs:    []string{"cli.exec"},
+		ModelPolicy: "mock",
+	}, "/cli rm -rf /", sink)
+
+	if result.Status != protocol.RunSucceeded {
+		t.Fatalf("status = %q, want succeeded with surfaced tool error", result.Status)
+	}
+	payload, ok := sink.lastPayload(protocol.EventToolOutput).(protocol.SandboxResult)
+	if !ok {
+		t.Fatalf("tool output payload = %#v, want protocol.SandboxResult", sink.lastPayload(protocol.EventToolOutput))
+	}
+	if payload.Error == "" {
+		t.Fatalf("tool output payload = %#v, want policy error", payload)
+	}
+	if !strings.Contains(sink.completed, "执行错误") {
+		t.Fatalf("completed content = %q, want surfaced execution error", sink.completed)
+	}
+}
+
+func TestEngineFailsWhenSandboxMissingForCLI(t *testing.T) {
+	sink := &recordingSink{}
+	engine := NewEngine(nil)
+
+	result := engine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-4",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		SkillIDs:    []string{"cli.exec"},
+		ModelPolicy: "mock",
+	}, "/cli echo hello", sink)
+
+	if result.Status != protocol.RunFailed {
+		t.Fatalf("status = %q, want failed", result.Status)
+	}
+	if sink.failed == "" {
+		t.Fatal("expected failure to be reported to sink")
+	}
+	if sink.completed != "" {
+		t.Fatalf("completed content = %q, want no completion after failure", sink.completed)
+	}
+}
+
+func TestEngineHonorsCancellation(t *testing.T) {
+	sink := &recordingSink{cancelAfterTokens: 1}
+	engine := NewEngine(sandbox.NewExecutor())
+
+	result := engine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-5",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		SkillIDs:    []string{"cli.exec"},
+		ModelPolicy: "mock",
+	}, "please stop", sink)
+
+	if result.Status != protocol.RunCanceled {
+		t.Fatalf("status = %q, want canceled", result.Status)
+	}
+	if sink.completed != "" {
+		t.Fatalf("completed content = %q, want no completion after cancellation", sink.completed)
+	}
+}
+
+func TestEngineHonorsCancellationBeforeExecution(t *testing.T) {
+	sink := &recordingSink{canceled: true}
+	engine := NewEngine(sandbox.NewExecutor())
+
+	result := engine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-6",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		SkillIDs:    []string{"cli.exec"},
+		ModelPolicy: "mock",
+	}, "hello", sink)
+
+	if result.Status != protocol.RunCanceled {
+		t.Fatalf("status = %q, want canceled", result.Status)
+	}
+	if sink.completed != "" {
+		t.Fatalf("completed content = %q, want no completion", sink.completed)
+	}
 }
 
 type recordingSink struct {
-	events    []protocol.RunEventType
-	completed string
-	failed    string
-	canceled  bool
+	events            []protocol.RunEventType
+	payloads          []any
+	completed         string
+	failed            string
+	canceled          bool
+	tokenEvents       int
+	cancelAfterTokens int
 }
 
-func (s *recordingSink) Emit(_ string, typ protocol.RunEventType, _ string, _ any) error {
+func (s *recordingSink) Emit(_ string, typ protocol.RunEventType, _ string, payload any) error {
 	s.events = append(s.events, typ)
+	s.payloads = append(s.payloads, payload)
+	if typ == protocol.EventModelToken {
+		s.tokenEvents++
+		if s.cancelAfterTokens > 0 && s.tokenEvents >= s.cancelAfterTokens {
+			s.canceled = true
+		}
+	}
 	return nil
 }
 
@@ -88,3 +205,11 @@ func (s *recordingSink) saw(typ protocol.RunEventType) bool {
 	return false
 }
 
+func (s *recordingSink) lastPayload(typ protocol.RunEventType) any {
+	for i := len(s.events) - 1; i >= 0; i-- {
+		if s.events[i] == typ {
+			return s.payloads[i]
+		}
+	}
+	return nil
+}

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"niceagent/internal/protocol"
-	"niceagent/internal/sandbox"
 )
 
 type EventSink interface {
@@ -18,14 +17,31 @@ type EventSink interface {
 }
 
 type Engine struct {
-	Sandbox *sandbox.Executor
+	Sandbox SandboxExecutor
+	Models  ModelProvider
+	Tools   ToolBridge
+	Limits  LoopLimits
 }
 
-func NewEngine(executor *sandbox.Executor) *Engine {
-	return &Engine{Sandbox: executor}
+type LoopLimits struct {
+	MaxSteps int
+	Timeout  time.Duration
+}
+
+func NewEngine(executor SandboxExecutor) *Engine {
+	return &Engine{
+		Sandbox: executor,
+		Models:  MockProvider{},
+		Limits:  LoopLimits{MaxSteps: 8, Timeout: 2 * time.Minute},
+	}
 }
 
 func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessage string, sink EventSink) protocol.RunResult {
+	if e.Limits.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, e.Limits.Timeout)
+		defer cancel()
+	}
 	if err := sink.Emit(req.RunID, protocol.EventRunStarted, "Agent runtime accepted the run.", map[string]any{
 		"workspace_id": req.WorkspaceID,
 		"model_policy": req.ModelPolicy,
@@ -44,9 +60,10 @@ func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessa
 		time.Sleep(35 * time.Millisecond)
 	}
 
-	writeToken("我已经接收到任务，并会以无状态 agent runtime 的方式处理。")
-	writeToken("\n\n")
-	writeToken("当前实现会把聊天状态保存在 Control Plane，把本次请求封装成可追踪的 Run，并通过事件流返回执行过程。")
+	if err := e.streamModel(ctx, req, userMessage, writeToken); err != nil {
+		_ = sink.Fail(req.RunID, err.Error())
+		return protocol.RunResult{RunID: req.RunID, Status: protocol.RunFailed, Error: err.Error()}
+	}
 	if sink.IsCanceled(req.RunID) {
 		return protocol.RunResult{RunID: req.RunID, Status: protocol.RunCanceled}
 	}
@@ -101,6 +118,38 @@ func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessa
 			OutputTokens: estimateTokens(content),
 		},
 	}
+}
+
+func (e *Engine) streamModel(ctx context.Context, req protocol.RunRequest, userMessage string, writeToken func(string)) error {
+	provider := e.Models
+	if provider == nil {
+		provider = MockProvider{}
+	}
+	chunks, err := provider.Stream(ctx, ModelRequest{
+		RunID:       req.RunID,
+		ModelPolicy: req.ModelPolicy,
+		Messages: []protocol.Message{{
+			ChatID:  req.ChatID,
+			RunID:   req.RunID,
+			Role:    protocol.RoleUser,
+			Content: userMessage,
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	for chunk := range chunks {
+		if chunk.Error != nil {
+			return chunk.Error
+		}
+		if chunk.Text != "" {
+			writeToken(chunk.Text)
+		}
+		if chunk.Done {
+			return nil
+		}
+	}
+	return nil
 }
 
 func parseCLICommand(content string) ([]string, bool) {

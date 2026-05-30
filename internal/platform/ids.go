@@ -15,4 +15,3 @@ func NewID(prefix string) string {
 	}
 	return fmt.Sprintf("%s_%s_%s", prefix, time.Now().UTC().Format("20060102150405"), hex.EncodeToString(b[:]))
 }
-

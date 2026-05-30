@@ -16,7 +16,8 @@ func main() {
 	logger := platform.NewLogger("control-plane")
 	store := controlplane.NewStore()
 	engine := runtime.NewEngine(sandbox.NewExecutor())
-	server := controlplane.NewServer(store, engine, logger)
+	dispatcher := controlplane.NewLocalDispatcher(store, engine, logger)
+	server := controlplane.NewServer(store, dispatcher, logger)
 
 	logger.Info("starting control plane", "addr", addr)
 	if err := http.ListenAndServe(addr, server.Handler()); err != nil {
@@ -30,4 +31,3 @@ func env(key, fallback string) string {
 	}
 	return fallback
 }
-

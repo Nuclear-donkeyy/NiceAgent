@@ -87,3 +87,36 @@ CREATE INDEX idx_messages_chat_created ON messages(chat_id, created_at);
 CREATE INDEX idx_runs_chat_created ON runs(chat_id, created_at DESC);
 CREATE INDEX idx_run_events_run_seq ON run_events(run_id, seq);
 
+INSERT INTO users (id, email, name, status)
+VALUES ('demo-user', 'demo@niceagent.local', 'Demo User', 'active')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO organizations (id, name)
+VALUES ('demo-org', 'Demo Organization')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO projects (id, organization_id, name)
+VALUES ('demo-project', 'demo-org', 'Demo Project')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO skills (id, name, version, description, risk, requires_auth, input_schema)
+VALUES
+  (
+    'cli.exec',
+    'Remote CLI',
+    '0.1.0',
+    'Execute approved commands inside a sandbox workspace.',
+    'high',
+    true,
+    '{"type":"object","required":["command"],"properties":{"command":{"type":"array","items":{"type":"string"}}}}'
+  ),
+  (
+    'workspace.read',
+    'Workspace Reader',
+    '0.1.0',
+    'Inspect files and artifacts attached to a run workspace.',
+    'low',
+    false,
+    NULL
+  )
+ON CONFLICT (id) DO NOTHING;

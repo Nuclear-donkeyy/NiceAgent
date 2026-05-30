@@ -12,4 +12,3 @@ func Method(method string, handler http.HandlerFunc) http.HandlerFunc {
 		handler(w, r)
 	}
 }
-

@@ -24,4 +24,3 @@ func WriteSSE(w http.ResponseWriter, event string, value any) error {
 	}
 	return nil
 }
-
