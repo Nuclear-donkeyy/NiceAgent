@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NiceAgent</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="mark">NA</span>
+          <div>
+            <h1>NiceAgent</h1>
+            <p>Remote agent control plane</p>
+          </div>
+        </div>
+        <button id="new-chat" class="primary">New chat</button>
+        <div class="section-title">Chats</div>
+        <nav id="chat-list" class="chat-list"></nav>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Current session</p>
+            <h2 id="chat-title">No chat selected</h2>
+          </div>
+          <div id="run-status" class="status">idle</div>
+        </header>
+
+        <section id="messages" class="messages"></section>
+
+        <section class="events">
+          <div class="section-title">Run events</div>
+          <div id="events" class="event-list"></div>
+        </section>
+
+        <form id="composer" class="composer">
+          <textarea id="message-input" rows="3" placeholder="Ask the remote agent. Try: /cli echo hello"></textarea>
+          <button type="submit" class="primary">Send</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
+

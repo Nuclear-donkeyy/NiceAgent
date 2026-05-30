@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: niceagent
+      POSTGRES_USER: niceagent
+      POSTGRES_PASSWORD: niceagent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../migrations:/docker-entrypoint-initdb.d:ro
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  control-plane:
+    image: golang:1.22-alpine
+    working_dir: /workspace
+    command: go run ./cmd/control-plane
+    environment:
+      CONTROL_PLANE_ADDR: ":8080"
+      DATABASE_URL: postgres://niceagent:niceagent@postgres:5432/niceagent?sslmode=disable
+      REDIS_ADDR: redis:6379
+    ports:
+      - "8080:8080"
+    volumes:
+      - ..:/workspace
+    depends_on:
+      - postgres
+      - redis
+
+  agent-runtime:
+    image: golang:1.22-alpine
+    working_dir: /workspace
+    command: go run ./cmd/agent-runtime
+    environment:
+      AGENT_RUNTIME_ADDR: ":8081"
+      CONTROL_PLANE_URL: http://control-plane:8080
+      REDIS_ADDR: redis:6379
+    ports:
+      - "8081:8081"
+    volumes:
+      - ..:/workspace
+    depends_on:
+      - control-plane
+
+  sandbox-executor:
+    image: golang:1.22-alpine
+    working_dir: /workspace
+    command: go run ./cmd/sandbox-executor
+    environment:
+      SANDBOX_EXECUTOR_ADDR: ":8082"
+    ports:
+      - "8082:8082"
+    volumes:
+      - ..:/workspace
+
+volumes:
+  postgres-data:
+

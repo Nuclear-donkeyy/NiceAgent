@@ -1,0 +1,19 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Go
+bin/
+coverage.out
+
+# Node/static tooling if the web UI is upgraded later.
+node_modules/
+dist/
+.next/
+
+# Local runtime state
+.cache/
+.tmp/
+workspaces/
+
