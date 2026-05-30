@@ -18,12 +18,13 @@ services:
 
   control-plane:
     image: golang:1.22-alpine
-    working_dir: /workspace
-    command: go run ./cmd/control-plane
+    working_dir: /workspace/services/control-plane
+    command: go run ./cmd
     environment:
       CONTROL_PLANE_ADDR: ":8080"
       DATABASE_URL: postgres://niceagent:niceagent@postgres:5432/niceagent?sslmode=disable
       REDIS_ADDR: redis:6379
+      WEB_DIST_DIR: /workspace/frontend/dist
     ports:
       - "8080:8080"
     volumes:
@@ -34,8 +35,8 @@ services:
 
   agent-runtime:
     image: golang:1.22-alpine
-    working_dir: /workspace
-    command: go run ./cmd/agent-runtime
+    working_dir: /workspace/services/agent-runtime
+    command: go run ./cmd
     environment:
       AGENT_RUNTIME_ADDR: ":8081"
       CONTROL_PLANE_URL: http://control-plane:8080
@@ -49,8 +50,8 @@ services:
 
   sandbox-executor:
     image: golang:1.22-alpine
-    working_dir: /workspace
-    command: go run ./cmd/sandbox-executor
+    working_dir: /workspace/services/sandbox-executor
+    command: go run ./cmd
     environment:
       SANDBOX_EXECUTOR_ADDR: ":8082"
     ports:
@@ -60,4 +61,3 @@ services:
 
 volumes:
   postgres-data:
-

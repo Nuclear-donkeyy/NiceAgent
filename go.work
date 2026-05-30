@@ -1,0 +1,9 @@
+go 1.22
+
+use (
+	./packages/common
+	./services/agent-runtime
+	./services/control-plane
+	./services/sandbox-executor
+)
+

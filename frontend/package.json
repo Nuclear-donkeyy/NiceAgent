@@ -1,0 +1,19 @@
+{
+  "name": "niceagent-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "rspack serve --host 0.0.0.0 --port 3000",
+    "build": "rspack build",
+    "check": "node --check src/App.jsx && node --check src/main.jsx"
+  },
+  "dependencies": {
+    "@rspack/cli": "^1.1.8",
+    "@rspack/core": "^1.1.8",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {}
+}
+

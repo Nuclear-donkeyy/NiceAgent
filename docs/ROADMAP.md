@@ -2,7 +2,7 @@
 
 ## 阶段目标
 
-下一阶段的目标是把当前可演示骨架推进到可扩展基础平台：状态可持久化，run 可队列化，runtime 可替换，CLI 可进入沙箱，前端能展示完整运行态，测试能守住核心契约。
+下一阶段的目标是把当前可演示骨架推进到可扩展基础平台：服务可独立部署，状态可持久化，run 可队列化，runtime 可替换，CLI 可进入沙箱，React 前端能展示完整运行态，测试能守住核心契约。
 
 ## 多子 agent 分工
 
@@ -12,6 +12,7 @@
 - 新增 Postgres repository，覆盖 users/chats/messages/runs/events/skills/workspaces。
 - 新增 Redis Streams run queue 和 event fanout 边界。
 - 创建 run 后写入队列，为多个 runtime 消费做准备。
+- 保持 `services/control-plane` 为独立 Go module，不跨服务 import runtime 代码。
 
 ### Agent B：Agent Runtime 与 Eino 接入边界
 
@@ -19,6 +20,7 @@
 - 定义 `AgentEngine`、`ToolBridge`、`ModelProvider`。
 - 保留 mock provider，新增 OpenAI-compatible provider 配置。
 - 预留 CloudWeGo Eino ADK adapter 接入点。
+- 保持 `services/agent-runtime` 可独立部署，通过协议和队列/HTTP 与 Control Plane 通信。
 
 ### Agent C：Sandbox Executor 与远端 CLI
 
@@ -32,7 +34,8 @@
 - 将 Web UI 文案中文化。
 - 完善聊天管理、run 状态展示、事件面板和 CLI 输出展示。
 - 增加 skills 展示区，显示风险等级和授权状态。
-- 继续保持静态前端，不引入 Next.js。
+- 使用 React + Rspack 继续完善前端，不引入 Next.js。
+- 视觉保持黑、白、微黄色，少圆角，靠近 ChatGPT 网页版的简洁工作台。
 
 ### Agent E：中文文档与开发者体验
 
@@ -40,6 +43,7 @@
 - 补充本地开发、Docker Compose、测试、常见问题。
 - 明确标记 memory store、mock runtime、local executor 和 sandbox 未生产化等限制。
 - 增加 `compose-config` 和 `check-js` 检查入口。
+- 持续记录多 Go module、`go.work`、React/Rspack 的开发方式。
 
 ### Agent F：集成测试与契约检查
 

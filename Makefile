@@ -1,23 +1,29 @@
-.PHONY: run-control run-runtime run-sandbox test compose-up compose-down compose-config check-js
+.PHONY: run-control run-runtime run-sandbox run-web build-web test compose-up compose-down compose-config check-js
 
 run-control:
-	go run ./cmd/control-plane
+	cd services/control-plane && go run ./cmd
 
 run-runtime:
-	go run ./cmd/agent-runtime
+	cd services/agent-runtime && go run ./cmd
 
 run-sandbox:
-	go run ./cmd/sandbox-executor
+	cd services/sandbox-executor && go run ./cmd
+
+run-web:
+	cd frontend && npm run dev
+
+build-web:
+	cd frontend && npm run build
 
 test:
-	go test ./...
+	go test ./packages/common/... ./services/control-plane/... ./services/agent-runtime/... ./services/sandbox-executor/...
 
 check-js:
-	@files=$$(find web -type f -name '*.js'); \
-	if [ -z "$$files" ]; then \
-		echo "未找到 JS 文件，跳过语法检查。"; \
+	node --check frontend/rspack.config.cjs
+	@if [ -d frontend/node_modules ]; then \
+		cd frontend && npm run build; \
 	else \
-		for file in $$files; do node --check "$$file"; done; \
+		echo "未安装 frontend/node_modules，跳过 React/Rspack 构建检查；先运行 cd frontend && npm install。"; \
 	fi
 
 compose-up:

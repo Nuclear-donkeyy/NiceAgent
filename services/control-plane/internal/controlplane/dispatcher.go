@@ -1,0 +1,90 @@
+package controlplane
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"time"
+
+	"niceagent/common/protocol"
+	"niceagent/common/sandbox"
+)
+
+type RunDispatcher interface {
+	Dispatch(ctx context.Context, run protocol.Run, userMessage string) error
+}
+
+type LocalDispatcher struct {
+	repo    Repository
+	sandbox *sandbox.Executor
+	log     *slog.Logger
+}
+
+func NewLocalDispatcher(repo Repository, log *slog.Logger) *LocalDispatcher {
+	return &LocalDispatcher{repo: repo, sandbox: sandbox.NewExecutor(), log: log}
+}
+
+func (d *LocalDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMessage string) error {
+	go func() {
+		_, _ = d.repo.UpdateRunStatus(run.ID, protocol.RunRunning, "")
+		sink := controlSink{repo: d.repo}
+		_ = sink.Emit(run.ID, protocol.EventRunStarted, "Local demo dispatcher accepted the run.", map[string]any{
+			"mode": "local-demo",
+		})
+		content := "我已经接收到任务。当前是 Control Plane 的本地演示 dispatcher；生产部署时应改由 Redis/HTTP 调度到独立 Agent Runtime 服务。"
+		_ = sink.Emit(run.ID, protocol.EventModelToken, content, nil)
+		time.Sleep(30 * time.Millisecond)
+		if command, ok := parseLocalCLI(userMessage); ok {
+			_ = sink.Emit(run.ID, protocol.EventToolStarted, "Starting cli.exec skill.", map[string]any{"command": command})
+			result := d.sandbox.Execute(ctx, protocol.SandboxCommand{
+				RunID:          run.ID,
+				WorkspaceID:    run.WorkspaceID,
+				Command:        command,
+				TimeoutSeconds: 10,
+				Network:        false,
+			})
+			_ = sink.Emit(run.ID, protocol.EventToolOutput, "CLI command completed.", result)
+			_ = sink.Emit(run.ID, protocol.EventToolFinished, "Finished cli.exec skill.", map[string]any{"exit_code": result.ExitCode})
+			content += "\n\nCLI 执行结果：\n" + result.Stdout
+			if result.Stderr != "" {
+				content += result.Stderr
+			}
+			if result.Error != "" {
+				content += "执行错误: " + result.Error
+			}
+		}
+		if err := sink.Complete(run.ID, content); err != nil {
+			d.log.Warn("local run failed", "run_id", run.ID, "error", err)
+		}
+	}()
+	return nil
+}
+
+func parseLocalCLI(content string) ([]string, bool) {
+	content = strings.TrimSpace(content)
+	if !strings.HasPrefix(content, "/cli ") {
+		return nil, false
+	}
+	parts := strings.Fields(strings.TrimPrefix(content, "/cli "))
+	return parts, len(parts) > 0
+}
+
+type QueueDispatcher struct {
+	queue RunQueue
+}
+
+func NewQueueDispatcher(queue RunQueue) *QueueDispatcher {
+	return &QueueDispatcher{queue: queue}
+}
+
+func (d *QueueDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMessage string) error {
+	return d.queue.Enqueue(ctx, QueuedRun{
+		RunID:       run.ID,
+		ChatID:      run.ChatID,
+		UserID:      run.UserID,
+		WorkspaceID: run.WorkspaceID,
+		UserMessage: userMessage,
+		SkillIDs:    []string{"workspace.read", "cli.exec"},
+		ModelPolicy: "mock-default",
+	})
+}
