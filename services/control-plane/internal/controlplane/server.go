@@ -35,6 +35,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/runs/", s.runSubroutes)
 	mux.HandleFunc("/api/skills", platform.Method(http.MethodGet, s.skills))
 	mux.HandleFunc("/api/skills/", s.skillSubroutes)
+	mux.HandleFunc("/internal/runs/", s.internalRunSubroutes)
 	mux.Handle("/", http.FileServer(http.Dir(staticDir())))
 	return requestLogger(s.log, mux)
 }
@@ -204,6 +205,107 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 	platform.WriteError(w, http.StatusNotFound, "skill route not found")
 }
 
+func (s *Server) internalRunSubroutes(w http.ResponseWriter, r *http.Request) {
+	if !authorizeInternal(w, r) {
+		return
+	}
+	parts := splitPath(strings.TrimPrefix(r.URL.Path, "/internal/runs/"))
+	if len(parts) != 2 {
+		platform.WriteError(w, http.StatusNotFound, "internal run route not found")
+		return
+	}
+	runID, action := parts[0], parts[1]
+	switch {
+	case action == "events" && r.Method == http.MethodPost:
+		s.internalWriteRunEvent(w, r, runID)
+	case action == "complete" && r.Method == http.MethodPost:
+		s.internalCompleteRun(w, r, runID)
+	case action == "fail" && r.Method == http.MethodPost:
+		s.internalFailRun(w, r, runID)
+	case action == "status" && r.Method == http.MethodGet:
+		run, err := s.repo.GetRun(runID)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		platform.WriteJSON(w, http.StatusOK, protocol.RunStatusResponse{Run: run})
+	default:
+		platform.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) internalWriteRunEvent(w http.ResponseWriter, r *http.Request, runID string) {
+	var input protocol.RunEventWriteRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if input.Type == "" {
+		platform.WriteError(w, http.StatusBadRequest, "type is required")
+		return
+	}
+	event, err := s.repo.AddEvent(runID, input.Type, input.Message, input.Payload)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if input.Type == protocol.EventRunStarted {
+		_, _ = s.repo.UpdateRunStatus(runID, protocol.RunRunning, "")
+	}
+	platform.WriteJSON(w, http.StatusCreated, event)
+}
+
+func (s *Server) internalCompleteRun(w http.ResponseWriter, r *http.Request, runID string) {
+	var input protocol.RunCompleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if err := (controlSink{repo: s.repo}).Complete(runID, input.Content); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	run, err := s.repo.GetRun(runID)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	platform.WriteJSON(w, http.StatusOK, run)
+}
+
+func (s *Server) internalFailRun(w http.ResponseWriter, r *http.Request, runID string) {
+	var input protocol.RunFailRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if strings.TrimSpace(input.Error) == "" {
+		input.Error = "run failed"
+	}
+	if err := (controlSink{repo: s.repo}).Fail(runID, input.Error); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	run, err := s.repo.GetRun(runID)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	platform.WriteJSON(w, http.StatusOK, run)
+}
+
+func authorizeInternal(w http.ResponseWriter, r *http.Request) bool {
+	token := os.Getenv("INTERNAL_API_TOKEN")
+	if token == "" {
+		return true
+	}
+	if r.Header.Get("Authorization") == "Bearer "+token {
+		return true
+	}
+	platform.WriteError(w, http.StatusUnauthorized, "unauthorized")
+	return false
+}
+
 type controlSink struct {
 	repo Repository
 }
@@ -218,7 +320,7 @@ func (s controlSink) Complete(runID string, content string) error {
 	if err != nil {
 		return err
 	}
-	if run.Status == protocol.RunCanceled {
+	if isTerminalRunStatus(run.Status) {
 		return nil
 	}
 	s.repo.AddAssistantMessage(run.ChatID, runID, content)
@@ -232,7 +334,7 @@ func (s controlSink) Fail(runID string, message string) error {
 	if err != nil {
 		return err
 	}
-	if run.Status == protocol.RunCanceled {
+	if isTerminalRunStatus(run.Status) {
 		return nil
 	}
 	_, _ = s.repo.UpdateRunStatus(runID, protocol.RunFailed, message)

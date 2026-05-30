@@ -22,6 +22,9 @@ services:
     command: go run ./cmd
     environment:
       CONTROL_PLANE_ADDR: ":8080"
+      DISPATCH_MODE: http
+      AGENT_RUNTIME_URL: http://agent-runtime:8081
+      CONTROL_PLANE_PUBLIC_URL: http://control-plane:8080
       DATABASE_URL: postgres://niceagent:niceagent@postgres:5432/niceagent?sslmode=disable
       REDIS_ADDR: redis:6379
       WEB_DIST_DIR: /workspace/frontend/dist
@@ -40,6 +43,7 @@ services:
     environment:
       AGENT_RUNTIME_ADDR: ":8081"
       CONTROL_PLANE_URL: http://control-plane:8080
+      SANDBOX_EXECUTOR_URL: http://sandbox-executor:8082
       REDIS_ADDR: redis:6379
     ports:
       - "8081:8081"
@@ -47,6 +51,7 @@ services:
       - ..:/workspace
     depends_on:
       - control-plane
+      - sandbox-executor
 
   sandbox-executor:
     image: golang:1.22-alpine

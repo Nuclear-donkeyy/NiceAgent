@@ -50,11 +50,68 @@
 
 `POST /internal/runs/execute`
 
-Agent Runtime 执行 `RunRequest` 的入口。
+Agent Runtime 执行 `RunExecutionRequest` 的入口，由 Control Plane 的 HTTP dispatcher 调用。
+
+请求体：
+
+```json
+{
+  "request": {
+    "run_id": "run_xxx",
+    "chat_id": "chat_xxx",
+    "user_id": "demo-user",
+    "workspace_id": "ws_xxx",
+    "skill_ids": ["workspace.read", "cli.exec"],
+    "model_policy": "mock-default"
+  },
+  "user_message": "/cli echo hello",
+  "control_plane_url": "http://127.0.0.1:8080"
+}
+```
+
+`POST /internal/runs/{run_id}/events`
+
+Agent Runtime 向 Control Plane 写入单条 `RunEvent`。当任一服务配置了 `INTERNAL_API_TOKEN` 时，对应内部 API 需要请求头 `Authorization: Bearer <token>`。
+
+请求体：
+
+```json
+{
+  "type": "model.token",
+  "message": "hello",
+  "payload": null
+}
+```
+
+`POST /internal/runs/{run_id}/complete`
+
+Agent Runtime 通知 Control Plane 写入最终 assistant 消息，并将 run 置为 `succeeded`。如果 run 已经是 `canceled`、`failed` 或 `succeeded`，Control Plane 不会覆盖终态。
+
+请求体：
+
+```json
+{ "content": "最终回复内容" }
+```
+
+`POST /internal/runs/{run_id}/fail`
+
+Agent Runtime 或 dispatcher 通知 Control Plane 将 run 置为 `failed`，并写入 `run.failed` 事件。终态 run 不会被覆盖。
+
+请求体：
+
+```json
+{ "error": "runtime unavailable" }
+```
+
+`GET /internal/runs/{run_id}/status`
+
+Agent Runtime 查询 run 状态，用于识别用户取消。
 
 `POST /internal/sandbox/exec`
 
-Sandbox Executor 在策略约束下执行命令的入口。
+Sandbox Executor 在策略约束下执行命令的入口，由 Agent Runtime 的 HTTP sandbox executor 调用。
+
+请求体复用 `SandboxCommand`，响应体复用 `SandboxResult`。
 
 ## 事件约定
 

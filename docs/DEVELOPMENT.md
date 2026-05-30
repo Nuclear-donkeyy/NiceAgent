@@ -13,10 +13,20 @@
 仓库根目录使用 `go.work` 组织多个 module：
 
 ```bash
-make run-control
-make run-runtime
 make run-sandbox
+make run-runtime
+make run-control
 ```
+
+三服务 HTTP 直连开发模式建议按以下顺序启动：
+
+1. 启动 Sandbox Executor：`make run-sandbox`。
+2. 启动 Agent Runtime，并让它通过 HTTP 调用 sandbox：`SANDBOX_EXECUTOR_URL=http://127.0.0.1:8082 make run-runtime`。
+3. 启动 Control Plane，并让它通过 HTTP 调度 runtime：`AGENT_RUNTIME_URL=http://127.0.0.1:8081 CONTROL_PLANE_PUBLIC_URL=http://127.0.0.1:8080 make run-control`。
+
+如果没有配置 `AGENT_RUNTIME_URL`，Control Plane 会回退到本地 demo dispatcher。如果没有配置 `SANDBOX_EXECUTOR_URL`，Agent Runtime 会回退到 local sandbox executor。
+
+如需模拟内部鉴权，三个服务使用同一个 `INTERNAL_API_TOKEN`；为空时内部 API 不校验 bearer token。
 
 也可以进入单个服务目录运行：
 

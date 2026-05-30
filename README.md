@@ -1,10 +1,10 @@
 # NiceAgent
 
-NiceAgent 是一个网页端远端 agent 服务框架的早期骨架。当前重点是把“前置控制服务、远端 agent 实例、sandbox 执行器、React 前端、共享协议”拆成可以独立部署和独立演进的模块。
+NiceAgent 是一个网页端远端 agent 服务框架。它把前置服务器、agent 实例服务、sandbox 执行器、React 前端和共享协议拆成可独立部署、可独立演进的模块。
 
-## 当前结构
+长期产品目标和架构原则见 [target.md](target.md)。下一阶段工程路线见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
-根目录是协调层，使用 `go.work` 管理多个 Go module：
+## 仓库结构
 
 ```text
 services/control-plane       前置服务器，负责用户会话、run、events、skills 和 Web/API
@@ -17,25 +17,28 @@ deployments                  Docker Compose 拓扑
 docs                         中文架构、API、开发、路线图和运维文档
 ```
 
-后端服务各自拥有独立 `go.mod`，可以分开构建和部署；公共代码只通过 `packages/common` 复用。
+根目录使用 `go.work` 协调多个 Go module。三个后端服务各自拥有 `go.mod`，公共代码只通过 `packages/common` 复用。
 
-## 当前能力与限制
+## 当前状态
 
 - Control Plane 默认使用 memory store，适合本地演示；Postgres repository 已有边界和基础实现。
+- Control Plane 的主路径正在切到 HTTP dispatcher，可通过 `AGENT_RUNTIME_URL` 调度独立 Agent Runtime；未配置时回退到本地 demo dispatcher。
 - Agent Runtime 当前是 mock provider + 可替换 `AgentEngine` 边界，尚未真实接入 Eino ADK。
-- Sandbox 当前提供 local executor 和 container executor 入口，但还不是生产级强隔离沙箱。
-- Frontend 已改为 React + Rspack，风格为黑白微黄色、面性+线性、少圆角的简洁聊天工作台。
+- Sandbox 当前提供独立 Sandbox Executor 服务、local executor 和 container executor 入口，但还不是生产级强隔离沙箱。
+- Frontend 使用 React + Rspack，风格为黑、白、微黄色，面性+线性，少圆角。
 - Redis Streams、模型密钥管理、认证、多租户、配额和完整审批闭环仍在后续阶段。
 
 ## 本地运行
 
-安装 Go 后启动 Control Plane：
+三服务 HTTP 直连本地启动：
 
 ```bash
-make run-control
+make run-sandbox
+SANDBOX_EXECUTOR_URL=http://127.0.0.1:8082 make run-runtime
+AGENT_RUNTIME_URL=http://127.0.0.1:8081 CONTROL_PLANE_PUBLIC_URL=http://127.0.0.1:8080 make run-control
 ```
 
-React 前端开发服务器：
+启动 React 前端开发服务器：
 
 ```bash
 cd frontend
@@ -51,8 +54,6 @@ Rspack dev server 默认运行在 `http://localhost:3000`，并把 `/api`、`/he
 make build-web
 ```
 
-Control Plane 默认从 `../../frontend/dist` 托管构建后的静态文件，也可以通过 `WEB_DIST_DIR` 覆盖。
-
 ## 常用检查
 
 ```bash
@@ -62,18 +63,17 @@ make compose-config
 git diff --check
 ```
 
-如果本机 Go cache 权限受限，可以使用：
+如果本机 Go cache 权限受限：
 
 ```bash
 GOCACHE=/private/tmp/niceagent-go-cache make test
 ```
 
-## 下一阶段计划
+## 文档入口
 
-- Control Plane：把 memory store 切换为可配置 repository，完善 Postgres/Redis Streams 实际运行路径。
-- Agent Runtime：接入 Eino ADK adapter、模型 provider、tool bridge 和 checkpoint/resume。
-- Sandbox：把 container executor 做成默认远端 CLI 执行路径，补齐资源限制、网络策略、审计和审批。
-- Frontend：继续完善 ChatGPT 风格交互，包括 run replay、artifact 展示、skill 授权流和错误恢复。
-- 部署：为三个 Go 服务和前端分别补 Dockerfile、镜像构建和环境配置说明。
-
-更多细节见 [架构说明](docs/ARCHITECTURE.md)、[API 契约](docs/API.md)、[开发指南](docs/DEVELOPMENT.md) 和 [路线图](docs/ROADMAP.md)。
+- [target.md](target.md)：产品目标和长期架构原则。
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：当前模块边界和架构说明。
+- [docs/API.md](docs/API.md)：外部和内部 API 契约。
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)：本地开发指南。
+- [docs/ROADMAP.md](docs/ROADMAP.md)：下一阶段行动计划。
+- [docs/OPERATIONS.md](docs/OPERATIONS.md)：运行和排障说明。

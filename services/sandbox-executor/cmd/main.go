@@ -21,6 +21,9 @@ func main() {
 		platform.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}))
 	mux.HandleFunc("/internal/sandbox/exec", platform.Method(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
+		if !authorizeInternal(w, r) {
+			return
+		}
 		var request protocol.SandboxCommand
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			platform.WriteError(w, http.StatusBadRequest, "invalid json body")
@@ -40,4 +43,16 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func authorizeInternal(w http.ResponseWriter, r *http.Request) bool {
+	token := os.Getenv("INTERNAL_API_TOKEN")
+	if token == "" {
+		return true
+	}
+	if r.Header.Get("Authorization") == "Bearer "+token {
+		return true
+	}
+	platform.WriteError(w, http.StatusUnauthorized, "unauthorized")
+	return false
 }

@@ -148,6 +148,32 @@ type RunRequest struct {
 	ModelPolicy string   `json:"model_policy"`
 }
 
+type RunExecutionRequest struct {
+	Request         RunRequest `json:"request"`
+	UserMessage     string     `json:"user_message"`
+	ControlPlaneURL string     `json:"control_plane_url,omitempty"`
+}
+
+type RunEventWriteRequest struct {
+	Type    RunEventType `json:"type"`
+	Message string       `json:"message,omitempty"`
+	Payload any          `json:"payload,omitempty"`
+}
+
+type RunCompleteRequest struct {
+	Content    string     `json:"content"`
+	TokenUsage TokenUsage `json:"token_usage,omitempty"`
+	Artifacts  []Artifact `json:"artifacts,omitempty"`
+}
+
+type RunFailRequest struct {
+	Error string `json:"error"`
+}
+
+type RunStatusResponse struct {
+	Run Run `json:"run"`
+}
+
 type RunResult struct {
 	RunID      string     `json:"run_id"`
 	Status     RunStatus  `json:"status"`

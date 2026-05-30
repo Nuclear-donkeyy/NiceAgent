@@ -2,64 +2,86 @@
 
 ## 阶段目标
 
-下一阶段的目标是把当前可演示骨架推进到可扩展基础平台：服务可独立部署，状态可持久化，run 可队列化，runtime 可替换，CLI 可进入沙箱，React 前端能展示完整运行态，测试能守住核心契约。
+当前仓库已经完成多 Go module 拆分、React + Rspack 前端迁移，以及 memory demo 链路。下一阶段目标是把它推进到“前置服务器、agent 实例服务、sandbox 服务真正解耦协作”的基础平台。
 
-## 多子 agent 分工
+优先级从高到低：
 
-### Agent A：Control Plane 持久化与队列
+1. 服务间真实解耦。
+2. 状态持久化。
+3. Agent Runtime 能力补强。
+4. Sandbox 与远端 CLI 生产化起步。
+5. 前端产品化。
 
-- 抽象 `Store` 接口，保留 memory 实现。
-- 新增 Postgres repository，覆盖 users/chats/messages/runs/events/skills/workspaces。
-- 新增 Redis Streams run queue 和 event fanout 边界。
-- 创建 run 后写入队列，为多个 runtime 消费做准备。
-- 保持 `services/control-plane` 为独立 Go module，不跨服务 import runtime 代码。
+## Phase 1：服务间真实解耦（当前落地）
 
-### Agent B：Agent Runtime 与 Eino 接入边界
+- Control Plane 默认使用 HTTP dispatcher，通过 `AGENT_RUNTIME_URL` 调用独立 Agent Runtime。
+- Agent Runtime 执行后通过 Control Plane 内部 API 回写 `RunEvent`、最终消息和状态。
+- Agent Runtime 默认通过 `SANDBOX_EXECUTOR_URL` 调用独立 Sandbox Executor 执行 `/cli`。
+- 保留本地 demo dispatcher 作为开发 fallback，但文档中明确它不是生产路径。
+- 增加跨服务契约测试：创建 run、runtime 接收、事件回写、终态更新、sandbox HTTP 调用。
+- Redis queue 主路径后移，本阶段先把 HTTP 直连契约打稳。
 
-- 拆分 runtime pipeline：上下文加载、模型调用、工具选择、事件输出、最终消息写回。
-- 定义 `AgentEngine`、`ToolBridge`、`ModelProvider`。
-- 保留 mock provider，新增 OpenAI-compatible provider 配置。
-- 预留 CloudWeGo Eino ADK adapter 接入点。
-- 保持 `services/agent-runtime` 可独立部署，通过协议和队列/HTTP 与 Control Plane 通信。
+验收标准：
 
-### Agent C：Sandbox Executor 与远端 CLI
+- `services/control-plane` 不 import `services/agent-runtime/internal/*`。
+- 启动 Control Plane、Agent Runtime 和 Sandbox Executor 三个进程后，普通消息和 `/cli echo hello` 能走跨服务链路。
+- Agent Runtime 重启或不可用时，Control Plane 能将 run 标记为失败或保留可重试状态。
 
-- 抽象 `SandboxExecutor`。
-- 增加 workspace、超时、网络开关、环境变量过滤、输出大小限制。
-- 设计 Docker/container executor 路径。
-- 高风险命令返回 approval-needed 语义，不直接执行。
+## Phase 2：状态持久化
 
-### Agent D：Web 前端体验
+- 将 memory store 切换为可配置 repository。
+- 补齐 Postgres repository 的错误处理、事务一致性和测试。
+- Compose 中提供 Postgres 模式启动说明和环境变量。
+- `RunEvent` replay 以 Postgres 为权威。
+- 保留 memory store 作为本地快速 demo。
 
-- 将 Web UI 文案中文化。
-- 完善聊天管理、run 状态展示、事件面板和 CLI 输出展示。
-- 增加 skills 展示区，显示风险等级和授权状态。
-- 使用 React + Rspack 继续完善前端，不引入 Next.js。
-- 视觉保持黑、白、微黄色，少圆角，靠近 ChatGPT 网页版的简洁工作台。
+验收标准：
 
-### Agent E：中文文档与开发者体验
+- 重启 Control Plane 后，Postgres 模式下会话、消息、run 和 events 仍可恢复。
+- SSE `after` replay 使用数据库事件序号。
+- memory 模式和 Postgres 模式都有清晰启动方式。
 
-- 维护 README 和 `docs/*` 中文化。
-- 补充本地开发、Docker Compose、测试、常见问题。
-- 明确标记 memory store、mock runtime、local executor 和 sandbox 未生产化等限制。
-- 增加 `compose-config` 和 `check-js` 检查入口。
-- 持续记录多 Go module、`go.work`、React/Rspack 的开发方式。
+## Phase 3：Agent Runtime 能力
 
-### Agent F：集成测试与契约检查
+- 接入 Eino adapter 边界。
+- 落地 OpenAI-compatible provider。
+- 通过 `ToolBridge` 将平台 `Skill` 映射为 runtime tools。
+- 支持最大步数、超时、取消、工具失败和事件审计。
+- 定义 checkpoint/resume 的最小协议，先不要求完整长任务恢复。
 
-- 补充 API handler 测试。
-- 补充 run event seq、SSE replay、terminal state 保护测试。
-- 补充 runtime 普通回复、CLI 工具调用、工具失败和取消测试。
-- 在文档中记录无 Go 工具链时的 Docker 化测试方式。
+验收标准：
 
-## 集成验收标准
+- Runtime 可通过配置选择 mock provider 或 OpenAI-compatible provider。
+- 工具调用、工具失败、模型错误都会产生标准化 `RunEvent`。
+- 取消 run 后，runtime 不再写入成功终态。
 
-- 创建聊天并发送普通消息后，能收到 assistant 回复和 run events。
-- 发送 `/cli echo hello` 后，能看到 tool started/output/finished/succeeded 事件。
-- 刷新页面后能恢复会话和最近 run 状态。
-- 取消 run 后，后台完成不能覆盖 canceled 终态。
-- Postgres/Redis 模式和 memory 模式至少各有一条可运行路径。
-- 所有面向人的说明文档使用中文。
+## Phase 4：Sandbox 与 CLI
+
+- `services/sandbox-executor` 成为远端 CLI 的默认执行路径。
+- Agent Runtime 通过 HTTP 调用 Sandbox Executor。
+- 加强 workspace、输出截断、网络策略、环境变量过滤和审批语义。
+- local executor 只用于单元测试和本地 fallback。
+- 记录命令审计事件，包括 command、exit code、duration、stdout/stderr 摘要。
+
+验收标准：
+
+- `/cli echo hello` 通过 Sandbox Executor 服务执行。
+- 高风险命令不会直接执行，会返回 approval-needed 或策略拒绝事件。
+- stdout/stderr 超长输出会被截断并标记。
+
+## Phase 5：前端产品化
+
+- React 前端继续贴近 ChatGPT 网页版风格。
+- 完善会话搜索、归档、run replay、artifact 展示、skill 授权和错误恢复。
+- 增加 API loading、error、empty 状态。
+- 保持黑、白、微黄色，少圆角，面性+线性风格。
+- 增加前端侧基础测试或至少稳定的 Rspack build 检查。
+
+验收标准：
+
+- 刷新页面后能恢复聊天和最近 run 状态。
+- 用户能看懂 run 当前阶段、工具调用结果和失败原因。
+- `make check-js` 能稳定验证前端构建。
 
 ## 后续生产化方向
 
