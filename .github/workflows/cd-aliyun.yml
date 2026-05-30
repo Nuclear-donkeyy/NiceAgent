@@ -15,9 +15,9 @@ on:
         required: false
         default: ""
       deploy_to_ack:
-        description: "Apply Kubernetes manifests to ACK when kubeconfig secret exists."
+        description: "Manually apply Kubernetes manifests to ACK when kubeconfig secret exists."
         required: true
-        default: "true"
+        default: "false"
         type: choice
         options:
           - "true"
@@ -32,7 +32,7 @@ jobs:
       contents: read
     env:
       IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag != '' && inputs.image_tag || github.sha }}
-      DEPLOY_TO_ACK: ${{ github.event_name == 'push' && 'true' || inputs.deploy_to_ack }}
+      DEPLOY_TO_ACK: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_to_ack || 'false' }}
       ACR_REGISTRY: ${{ secrets.ALIYUN_ACR_REGISTRY }}
       ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE }}
     steps:
