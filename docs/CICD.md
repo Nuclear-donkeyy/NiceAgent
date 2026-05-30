@@ -26,14 +26,16 @@
 
 `.github/workflows/cd-aliyun.yml`
 
-- 触发：手动 `workflow_dispatch`。
+- 触发：
+  - 推送到 `main`：自动构建、推送镜像，并默认执行 ACK 部署。
+  - 手动 `workflow_dispatch`：可指定 environment、image tag，并可选择是否部署 ACK。
 - 内容：
   - 登录 ACR。
   - 构建并推送：
     - `niceagent-control-plane`
     - `niceagent-agent-runtime`
     - `niceagent-sandbox-executor`
-  - 如果 `deploy_to_ack=true` 且配置了 ACK kubeconfig，则自动创建/更新 ACK 镜像拉取凭据，并发布到 ACK。
+  - 如果部署开关为 true 且配置了 ACK kubeconfig，则自动创建/更新 ACK 镜像拉取凭据，并发布到 ACK。
 
 ## GitHub Secrets
 
@@ -62,11 +64,13 @@ base64 -i ~/.kube/config | tr -d '\n'
 
 如果暂时只想发布镜像，不想部署到 ACK，可以不配置 `ALIYUN_ACK_KUBE_CONFIG`，并在手动触发 CD 时保持 `deploy_to_ack=false`。
 
-启用 ACK 部署时，在 GitHub Actions 手动运行 `CD Aliyun`：
+推送到 `main` 时，CD 会自动把部署开关视为 true，不需要在网页上手动选择 `deploy_to_ack`。
+
+手动运行 `CD Aliyun` 时：
 
 - `environment`：通常保持 `staging`。
 - `image_tag`：留空时使用当前 commit SHA。
-- `deploy_to_ack`：选择 `true`。
+- `deploy_to_ack`：默认是 `true`，如只想推镜像不部署，可改为 `false`。
 
 工作流会先推送三服务镜像，再执行 `kubectl apply`。如果配置了 `INTERNAL_API_TOKEN`，工作流会同步创建 `niceagent-internal-api` Secret；如果没有配置，则内部 API token 保持为空，适合早期验证链路。
 

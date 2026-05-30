@@ -1,6 +1,9 @@
 name: CD Aliyun
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       environment:
@@ -14,21 +17,22 @@ on:
       deploy_to_ack:
         description: "Apply Kubernetes manifests to ACK when kubeconfig secret exists."
         required: true
-        default: "false"
+        default: "true"
         type: choice
         options:
-          - "false"
           - "true"
+          - "false"
 
 jobs:
   publish:
     name: Build and publish images
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'staging' }}
     permissions:
       contents: read
     env:
-      IMAGE_TAG: ${{ inputs.image_tag != '' && inputs.image_tag || github.sha }}
+      IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag != '' && inputs.image_tag || github.sha }}
+      DEPLOY_TO_ACK: ${{ github.event_name == 'push' && 'true' || inputs.deploy_to_ack }}
       ACR_REGISTRY: ${{ secrets.ALIYUN_ACR_REGISTRY }}
       ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE }}
     steps:
@@ -76,11 +80,11 @@ jobs:
             ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-sandbox-executor:latest
 
       - name: Setup kubectl
-        if: inputs.deploy_to_ack == 'true'
+        if: env.DEPLOY_TO_ACK == 'true'
         uses: azure/setup-kubectl@v4
 
       - name: Configure ACK kubeconfig
-        if: inputs.deploy_to_ack == 'true'
+        if: env.DEPLOY_TO_ACK == 'true'
         id: kubeconfig
         env:
           ALIYUN_ACK_KUBE_CONFIG: ${{ secrets.ALIYUN_ACK_KUBE_CONFIG }}
@@ -96,7 +100,7 @@ jobs:
           echo "configured=true" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to ACK
-        if: inputs.deploy_to_ack == 'true' && steps.kubeconfig.outputs.configured == 'true'
+        if: env.DEPLOY_TO_ACK == 'true' && steps.kubeconfig.outputs.configured == 'true'
         env:
           ACR_USERNAME: ${{ secrets.ALIYUN_ACR_USERNAME }}
           ACR_PASSWORD: ${{ secrets.ALIYUN_ACR_PASSWORD }}
