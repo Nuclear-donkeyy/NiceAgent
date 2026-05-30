@@ -67,6 +67,43 @@ make compose-config
 git diff --check
 ```
 
+## 本地 Kubernetes
+
+如果想在本机跑更接近云部署的环境，推荐使用 kind。它会通过 Docker 启动一个轻量 Kubernetes 集群，适合验证 `deployments/k8s`。
+
+安装工具：
+
+```bash
+brew install kind kubectl
+```
+
+创建集群并部署：
+
+```bash
+make kind-create
+make kind-deploy
+```
+
+查看状态：
+
+```bash
+make k8s-status
+```
+
+把 Control Plane 转发到本机：
+
+```bash
+make k8s-port-forward
+```
+
+浏览器打开 `http://127.0.0.1:8080`。结束后可以删除本地集群：
+
+```bash
+make kind-delete
+```
+
+本地 kind 与 ACK 使用同一套 Kubernetes YAML；区别是 kind 不会创建阿里云 SLB，本地访问使用 `kubectl port-forward`。
+
 如果 Go cache 目录不可写：
 
 ```bash

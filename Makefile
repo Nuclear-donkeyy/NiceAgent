@@ -1,7 +1,9 @@
 IMAGE_REGISTRY ?= niceagent
 IMAGE_TAG ?= local
+KIND_CLUSTER ?= niceagent
+K8S_NAMESPACE ?= niceagent
 
-.PHONY: run-control run-runtime run-sandbox run-web build-web test compose-up compose-down compose-config check-js docker-build docker-build-control docker-build-runtime docker-build-sandbox
+.PHONY: run-control run-runtime run-sandbox run-web build-web test compose-up compose-down compose-config check-js docker-build docker-build-control docker-build-runtime docker-build-sandbox kind-create kind-delete kind-load k8s-apply k8s-status k8s-port-forward kind-deploy
 
 run-control:
 	cd services/control-plane && go run ./cmd
@@ -48,3 +50,36 @@ docker-build-runtime:
 
 docker-build-sandbox:
 	docker build -f build/docker/sandbox-executor.Dockerfile -t $(IMAGE_REGISTRY)/niceagent-sandbox-executor:$(IMAGE_TAG) .
+
+kind-create:
+	kind create cluster --name $(KIND_CLUSTER)
+
+kind-delete:
+	kind delete cluster --name $(KIND_CLUSTER)
+
+kind-load:
+	kind load docker-image $(IMAGE_REGISTRY)/niceagent-control-plane:$(IMAGE_TAG) --name $(KIND_CLUSTER)
+	kind load docker-image $(IMAGE_REGISTRY)/niceagent-agent-runtime:$(IMAGE_TAG) --name $(KIND_CLUSTER)
+	kind load docker-image $(IMAGE_REGISTRY)/niceagent-sandbox-executor:$(IMAGE_TAG) --name $(KIND_CLUSTER)
+
+k8s-apply:
+	kubectl apply -f deployments/k8s/namespace.yaml
+	kubectl apply -f deployments/k8s/configmap.yaml
+	kubectl apply -f deployments/k8s/redis.yaml
+	kubectl apply -f deployments/k8s/sandbox-executor.yaml
+	kubectl apply -f deployments/k8s/agent-runtime.yaml
+	kubectl apply -f deployments/k8s/control-plane.yaml
+	kubectl -n $(K8S_NAMESPACE) set image deployment/niceagent-control-plane control-plane=$(IMAGE_REGISTRY)/niceagent-control-plane:$(IMAGE_TAG)
+	kubectl -n $(K8S_NAMESPACE) set image deployment/niceagent-agent-runtime agent-runtime=$(IMAGE_REGISTRY)/niceagent-agent-runtime:$(IMAGE_TAG)
+	kubectl -n $(K8S_NAMESPACE) set image deployment/niceagent-sandbox-executor sandbox-executor=$(IMAGE_REGISTRY)/niceagent-sandbox-executor:$(IMAGE_TAG)
+	kubectl -n $(K8S_NAMESPACE) rollout status deployment/niceagent-control-plane --timeout=180s
+	kubectl -n $(K8S_NAMESPACE) rollout status deployment/niceagent-agent-runtime --timeout=180s
+	kubectl -n $(K8S_NAMESPACE) rollout status deployment/niceagent-sandbox-executor --timeout=180s
+
+k8s-status:
+	kubectl -n $(K8S_NAMESPACE) get pods,svc
+
+k8s-port-forward:
+	kubectl -n $(K8S_NAMESPACE) port-forward svc/niceagent-control-plane 8080:8080
+
+kind-deploy: docker-build kind-load k8s-apply

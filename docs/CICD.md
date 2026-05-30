@@ -1,12 +1,13 @@
 # NiceAgent CI/CD 与阿里云发布
 
-本文记录当前 CI/CD 方案。第一版目标是把 NiceAgent 从“本地可运行”推进到“可自动检查、可构建镜像、可手动发布到阿里云”的状态。
+本文记录当前 CI/CD 方案。第一版目标是把 NiceAgent 从“本地可运行”推进到“可自动检查、可构建镜像、可推送到阿里云 ACR”的状态；ACK 部署暂时保留为手动入口，避免早期阶段持续产生集群费用。
 
 ## 选型
 
 - CI：GitHub Actions。
 - 镜像仓库：阿里云 Container Registry，简称 ACR。
-- 云端运行：阿里云 ACK Kubernetes 集群。
+- 云端运行：阿里云 ACK Kubernetes 集群，后续再启用。
+- 本地云化验证：kind 或 k3d，在本机 Docker 中运行 Kubernetes。
 - 部署方式：先构建并推送三服务镜像，再用 `kubectl apply` 发布 `deployments/k8s` 模板。
 
 阿里云官方文档中，ACR 支持通过 `docker login <registry>` 登录并推送镜像；ACK 支持通过 kubeconfig 使用 `kubectl` 连接集群。当前流水线就是围绕这两个入口设计的。
@@ -27,15 +28,16 @@
 `.github/workflows/cd-aliyun.yml`
 
 - 触发：
-  - 推送到 `main`：自动构建、推送镜像，并默认执行 ACK 部署。
-  - 手动 `workflow_dispatch`：可指定 environment、image tag，并可选择是否部署 ACK。
+  - 推送到 `main`：自动构建并推送镜像到 ACR，不部署 ACK。
+  - 手动 `workflow_dispatch`：可指定 environment、image tag；只有显式选择 `deploy_to_ack=true` 且配置了 ACK kubeconfig 时才部署 ACK。
 - 内容：
   - 登录 ACR。
   - 构建并推送：
     - `niceagent-control-plane`
     - `niceagent-agent-runtime`
     - `niceagent-sandbox-executor`
-  - 如果部署开关为 true 且配置了 ACK kubeconfig，则自动创建/更新 ACK 镜像拉取凭据，并发布到 ACK。
+  - 默认到推送镜像为止。
+  - 如果手动部署开关为 true 且配置了 ACK kubeconfig，则自动创建/更新 ACK 镜像拉取凭据，并发布到 ACK。
 
 ## GitHub Secrets
 
@@ -62,17 +64,63 @@ macOS 可以使用：
 base64 -i ~/.kube/config | tr -d '\n'
 ```
 
-如果暂时只想发布镜像，不想部署到 ACK，可以不配置 `ALIYUN_ACK_KUBE_CONFIG`，并在手动触发 CD 时保持 `deploy_to_ack=false`。
-
-推送到 `main` 时，CD 会自动把部署开关视为 true，不需要在网页上手动选择 `deploy_to_ack`。
+如果暂时只想发布镜像，不想部署到 ACK，可以不配置 `ALIYUN_ACK_KUBE_CONFIG`。推送到 `main` 时，CD 会自动把部署开关视为 false，只构建并推送 ACR 镜像。
 
 手动运行 `CD Aliyun` 时：
 
 - `environment`：通常保持 `staging`。
 - `image_tag`：留空时使用当前 commit SHA。
-- `deploy_to_ack`：默认是 `true`，如只想推镜像不部署，可改为 `false`。
+- `deploy_to_ack`：默认是 `false`；只有确认要发布到 ACK 时才改为 `true`。
 
-工作流会先推送三服务镜像，再执行 `kubectl apply`。如果配置了 `INTERNAL_API_TOKEN`，工作流会同步创建 `niceagent-internal-api` Secret；如果没有配置，则内部 API token 保持为空，适合早期验证链路。
+工作流会先推送三服务镜像。只有手动启用 ACK 部署时才执行 `kubectl apply`。如果配置了 `INTERNAL_API_TOKEN`，工作流会同步创建 `niceagent-internal-api` Secret；如果没有配置，则内部 API token 保持为空，适合早期验证链路。
+
+## 本地 Kubernetes 验证
+
+如果想跑得更接近云部署，但暂时不创建 ACK，可以在 Mac 上使用 kind。kind 会在本机 Docker 里启动 Kubernetes 节点，不会产生云费用。
+
+准备工具：
+
+```bash
+brew install kind kubectl
+```
+
+创建本地集群：
+
+```bash
+make kind-create
+```
+
+构建三服务镜像、加载到 kind、应用 Kubernetes 模板：
+
+```bash
+make kind-deploy
+```
+
+查看 Pod 和 Service：
+
+```bash
+make k8s-status
+```
+
+访问 Control Plane：
+
+```bash
+make k8s-port-forward
+```
+
+然后打开 `http://127.0.0.1:8080`。
+
+删除本地集群：
+
+```bash
+make kind-delete
+```
+
+本地 K8s 运行的是同一套 `deployments/k8s` 模板，差异主要是：
+
+- kind 不会自动提供阿里云 SLB，访问时使用 `kubectl port-forward`。
+- 本地镜像通过 `kind load docker-image` 注入集群，不需要从 ACR 拉取。
+- `LoadBalancer` Service 在 kind 中通常不会拿到公网 IP，这是正常现象。
 
 ## 本地镜像构建
 
@@ -128,7 +176,7 @@ kubectl -n niceagent patch serviceaccount default \
 - `redis.yaml` 是集群内临时 Redis，不是生产级托管 Redis。
 - 当前没有接入 RDS/Postgres 持久化，重启会丢状态。
 - Sandbox Executor 仍是 local executor 风格，不是强隔离生产沙箱。
-- CD 采用手动触发，避免在云资源和安全边界未稳定前自动上线。
+- 推送到 `main` 的 CD 只发布镜像，不自动部署 ACK，避免在云资源和安全边界未稳定前自动上线。
 
 ## 下一步
 
