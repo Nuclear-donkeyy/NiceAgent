@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: niceagent-sandbox-executor
+  namespace: niceagent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: niceagent-sandbox-executor
+  template:
+    metadata:
+      labels:
+        app: niceagent-sandbox-executor
+    spec:
+      containers:
+        - name: sandbox-executor
+          image: registry.example.com/niceagent/niceagent-sandbox-executor:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8082
+          env:
+            - name: SANDBOX_EXECUTOR_ADDR
+              value: ":8082"
+            - name: INTERNAL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-internal-api
+                  key: token
+                  optional: true
+          volumeMounts:
+            - name: workspaces
+              mountPath: /app/workspaces
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8082
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8082
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: workspaces
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: niceagent-sandbox-executor
+  namespace: niceagent
+spec:
+  type: ClusterIP
+  selector:
+    app: niceagent-sandbox-executor
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082

@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: niceagent-control-plane
+  namespace: niceagent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: niceagent-control-plane
+  template:
+    metadata:
+      labels:
+        app: niceagent-control-plane
+    spec:
+      containers:
+        - name: control-plane
+          image: registry.example.com/niceagent/niceagent-control-plane:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: CONTROL_PLANE_ADDR
+              value: ":8080"
+            - name: WEB_DIST_DIR
+              value: "/app/frontend/dist"
+            - name: DISPATCH_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: DISPATCH_MODE
+            - name: AGENT_RUNTIME_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: AGENT_RUNTIME_URL
+            - name: CONTROL_PLANE_PUBLIC_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: CONTROL_PLANE_PUBLIC_URL
+            - name: REDIS_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: REDIS_ADDR
+            - name: INTERNAL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-internal-api
+                  key: token
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: niceagent-control-plane
+  namespace: niceagent
+spec:
+  type: LoadBalancer
+  selector:
+    app: niceagent-control-plane
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

@@ -14,6 +14,8 @@ packages/common              公共 Go module，放共享协议、平台工具�
 frontend                     React + Rspack 前端应用
 migrations                   Postgres schema
 deployments                  Docker Compose 拓扑
+build/docker                 三个后端服务的生产镜像 Dockerfile
+.github/workflows            CI 和阿里云 CD 工作流
 docs                         中文架构、API、开发、路线图和运维文档
 ```
 
@@ -60,6 +62,7 @@ make build-web
 make test
 make check-js
 make compose-config
+make docker-build
 git diff --check
 ```
 
@@ -77,3 +80,4 @@ GOCACHE=/private/tmp/niceagent-go-cache make test
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)：本地开发指南。
 - [docs/ROADMAP.md](docs/ROADMAP.md)：下一阶段行动计划。
 - [docs/OPERATIONS.md](docs/OPERATIONS.md)：运行和排障说明。
+- [docs/CICD.md](docs/CICD.md)：CI/CD 和阿里云发布说明。

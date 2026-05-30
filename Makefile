@@ -1,4 +1,7 @@
-.PHONY: run-control run-runtime run-sandbox run-web build-web test compose-up compose-down compose-config check-js
+IMAGE_REGISTRY ?= niceagent
+IMAGE_TAG ?= local
+
+.PHONY: run-control run-runtime run-sandbox run-web build-web test compose-up compose-down compose-config check-js docker-build docker-build-control docker-build-runtime docker-build-sandbox
 
 run-control:
 	cd services/control-plane && go run ./cmd
@@ -34,3 +37,14 @@ compose-down:
 
 compose-config:
 	docker compose -f deployments/docker-compose.yml config
+
+docker-build: docker-build-control docker-build-runtime docker-build-sandbox
+
+docker-build-control:
+	docker build -f build/docker/control-plane.Dockerfile -t $(IMAGE_REGISTRY)/niceagent-control-plane:$(IMAGE_TAG) .
+
+docker-build-runtime:
+	docker build -f build/docker/agent-runtime.Dockerfile -t $(IMAGE_REGISTRY)/niceagent-agent-runtime:$(IMAGE_TAG) .
+
+docker-build-sandbox:
+	docker build -f build/docker/sandbox-executor.Dockerfile -t $(IMAGE_REGISTRY)/niceagent-sandbox-executor:$(IMAGE_TAG) .

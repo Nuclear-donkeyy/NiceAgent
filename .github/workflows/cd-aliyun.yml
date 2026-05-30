@@ -1,0 +1,116 @@
+name: CD Aliyun
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "GitHub environment name"
+        required: true
+        default: "staging"
+      image_tag:
+        description: "Image tag. Empty value uses the current commit SHA."
+        required: false
+        default: ""
+      deploy_to_ack:
+        description: "Apply Kubernetes manifests to ACK when kubeconfig secret exists."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  publish:
+    name: Build and publish images
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag != '' && inputs.image_tag || github.sha }}
+      ACR_REGISTRY: ${{ secrets.ALIYUN_ACR_REGISTRY }}
+      ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Alibaba Cloud ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ALIYUN_ACR_REGISTRY }}
+          username: ${{ secrets.ALIYUN_ACR_USERNAME }}
+          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+
+      - name: Build and push control-plane
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: build/docker/control-plane.Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-control-plane:${{ env.IMAGE_TAG }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-control-plane:latest
+
+      - name: Build and push agent-runtime
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: build/docker/agent-runtime.Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-agent-runtime:${{ env.IMAGE_TAG }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-agent-runtime:latest
+
+      - name: Build and push sandbox-executor
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: build/docker/sandbox-executor.Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-sandbox-executor:${{ env.IMAGE_TAG }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-sandbox-executor:latest
+
+      - name: Setup kubectl
+        if: inputs.deploy_to_ack == 'true'
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure ACK kubeconfig
+        if: inputs.deploy_to_ack == 'true'
+        id: kubeconfig
+        env:
+          ALIYUN_ACK_KUBE_CONFIG: ${{ secrets.ALIYUN_ACK_KUBE_CONFIG }}
+        run: |
+          if [ -z "$ALIYUN_ACK_KUBE_CONFIG" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "ALIYUN_ACK_KUBE_CONFIG is empty; skip ACK deployment."
+            exit 0
+          fi
+          mkdir -p "$HOME/.kube"
+          printf "%s" "$ALIYUN_ACK_KUBE_CONFIG" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to ACK
+        if: inputs.deploy_to_ack == 'true' && steps.kubeconfig.outputs.configured == 'true'
+        env:
+          CONTROL_PLANE_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-control-plane:${{ env.IMAGE_TAG }}
+          AGENT_RUNTIME_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-agent-runtime:${{ env.IMAGE_TAG }}
+          SANDBOX_EXECUTOR_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/niceagent-sandbox-executor:${{ env.IMAGE_TAG }}
+        run: |
+          kubectl apply -f deployments/k8s/namespace.yaml
+          kubectl apply -f deployments/k8s/configmap.yaml
+          kubectl apply -f deployments/k8s/redis.yaml
+          kubectl apply -f deployments/k8s/sandbox-executor.yaml
+          kubectl apply -f deployments/k8s/agent-runtime.yaml
+          kubectl apply -f deployments/k8s/control-plane.yaml
+          kubectl -n niceagent set image deployment/niceagent-control-plane control-plane="$CONTROL_PLANE_IMAGE"
+          kubectl -n niceagent set image deployment/niceagent-agent-runtime agent-runtime="$AGENT_RUNTIME_IMAGE"
+          kubectl -n niceagent set image deployment/niceagent-sandbox-executor sandbox-executor="$SANDBOX_EXECUTOR_IMAGE"
+          kubectl -n niceagent rollout status deployment/niceagent-control-plane --timeout=180s
+          kubectl -n niceagent rollout status deployment/niceagent-agent-runtime --timeout=180s
+          kubectl -n niceagent rollout status deployment/niceagent-sandbox-executor --timeout=180s

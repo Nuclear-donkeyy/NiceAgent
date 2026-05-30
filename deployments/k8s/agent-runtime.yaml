@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: niceagent-agent-runtime
+  namespace: niceagent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: niceagent-agent-runtime
+  template:
+    metadata:
+      labels:
+        app: niceagent-agent-runtime
+    spec:
+      containers:
+        - name: agent-runtime
+          image: registry.example.com/niceagent/niceagent-agent-runtime:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+          env:
+            - name: AGENT_RUNTIME_ADDR
+              value: ":8081"
+            - name: CONTROL_PLANE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: CONTROL_PLANE_URL
+            - name: SANDBOX_EXECUTOR_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SANDBOX_EXECUTOR_URL
+            - name: REDIS_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: REDIS_ADDR
+            - name: INTERNAL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-internal-api
+                  key: token
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: niceagent-agent-runtime
+  namespace: niceagent
+spec:
+  type: ClusterIP
+  selector:
+    app: niceagent-agent-runtime
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081

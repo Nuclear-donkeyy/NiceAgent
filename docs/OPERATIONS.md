@@ -6,6 +6,7 @@
 
 - memory demo：直接启动 `services/control-plane`，无需 Postgres/Redis，适合本地验证 UI、API 和事件流。
 - Compose 拓扑：通过 `deployments/docker-compose.yml` 启动服务和依赖，适合验证后续 Postgres/Redis 接入路径。
+- ACK 拓扑：通过 `deployments/k8s` 将三服务发布到阿里云 ACK，适合验证镜像发布和服务解耦链路。
 - 前端开发：启动 `frontend` 的 Rspack dev server，并通过代理访问 Control Plane API。
 
 ## 状态与数据
@@ -71,6 +72,12 @@ make test
 
 ```bash
 git diff --check
+```
+
+构建三服务容器镜像：
+
+```bash
+make docker-build
 ```
 
 ## 当前限制
