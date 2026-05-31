@@ -106,22 +106,116 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	}
 }
 
+func TestPostgresStoreSearchesArchivesAndRestoresChatsWhenConfigured(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("set TEST_DATABASE_URL to run postgres repository tests")
+	}
+	db, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	defer db.Close()
+	if err := db.PingContext(context.Background()); err != nil {
+		t.Fatalf("ping postgres: %v", err)
+	}
+	applyTestMigration(t, db)
+
+	store := NewPostgresStore(db)
+	title := "searchable chat " + time.Now().Format("20060102150405.000000000")
+	chat, err := store.CreateChat("demo-user", title)
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	matches := store.ListChats("demo-user", ChatListOptions{Query: title})
+	if len(matches) != 1 || matches[0].ID != chat.ID {
+		t.Fatalf("search matches = %#v, want created chat", matches)
+	}
+
+	archived, err := store.SetChatArchived(chat.ID, "demo-user", true)
+	if err != nil {
+		t.Fatalf("archive chat: %v", err)
+	}
+	if !archived.Archived {
+		t.Fatalf("archived chat = %#v, want archived", archived)
+	}
+	matches = store.ListChats("demo-user", ChatListOptions{Query: title})
+	if len(matches) != 0 {
+		t.Fatalf("active search matches after archive = %#v, want none", matches)
+	}
+	matches = store.ListChats("demo-user", ChatListOptions{Query: title, IncludeArchived: true})
+	if len(matches) != 1 || !matches[0].Archived {
+		t.Fatalf("archived search matches = %#v, want archived chat", matches)
+	}
+
+	restored, err := store.SetChatArchived(chat.ID, "demo-user", false)
+	if err != nil {
+		t.Fatalf("restore chat: %v", err)
+	}
+	if restored.Archived {
+		t.Fatalf("restored chat = %#v, want active", restored)
+	}
+}
+
+func TestPostgresStoreListsUserSkillGrantsWhenConfigured(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("set TEST_DATABASE_URL to run postgres repository tests")
+	}
+	db, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	defer db.Close()
+	if err := db.PingContext(context.Background()); err != nil {
+		t.Fatalf("ping postgres: %v", err)
+	}
+	applyTestMigration(t, db)
+
+	store := NewPostgresStore(db)
+	skills := store.ListSkillsForUser("demo-user", "demo-project")
+	if len(skills) == 0 {
+		t.Fatal("expected demo user skills")
+	}
+	var foundCLI bool
+	for _, skill := range skills {
+		if skill.ID == "cli.exec" {
+			foundCLI = true
+			if skill.RequiresAuth {
+				t.Fatalf("cli.exec requires auth = true, want false")
+			}
+		}
+	}
+	if !foundCLI {
+		t.Fatalf("skills = %#v, want cli.exec", skills)
+	}
+}
+
 func applyTestMigration(t *testing.T, db *sql.DB) {
 	t.Helper()
-	raw, err := os.ReadFile("../../../../migrations/001_init.sql")
+	entries, err := os.ReadDir("../../../../migrations")
 	if err != nil {
-		t.Fatalf("read migration: %v", err)
+		t.Fatalf("read migrations dir: %v", err)
 	}
-	for _, stmt := range strings.Split(string(raw), ";") {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
-		if _, err := db.Exec(stmt); err != nil {
-			if strings.Contains(err.Error(), "already exists") {
+		raw, err := os.ReadFile("../../../../migrations/" + entry.Name())
+		if err != nil {
+			t.Fatalf("read migration %s: %v", entry.Name(), err)
+		}
+		for _, stmt := range strings.Split(string(raw), ";") {
+			stmt = strings.TrimSpace(stmt)
+			if stmt == "" {
 				continue
 			}
-			t.Fatalf("apply migration statement %q: %v", stmt, err)
+			if _, err := db.Exec(stmt); err != nil {
+				if strings.Contains(err.Error(), "already exists") {
+					continue
+				}
+				t.Fatalf("apply migration %s statement %q: %v", entry.Name(), stmt, err)
+			}
 		}
 	}
 }

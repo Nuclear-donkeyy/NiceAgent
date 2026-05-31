@@ -44,13 +44,16 @@ func (d *HTTPDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMes
 }
 
 func (d *HTTPDispatcher) dispatch(ctx context.Context, run protocol.Run, userMessage string) {
+	runtimeSkills := runtimeSkillsForRun(d.repo, run)
+	skills := skillIDsFromRuntimeSkills(runtimeSkills)
 	request := protocol.RunExecutionRequest{
 		Request: protocol.RunRequest{
 			RunID:       run.ID,
 			ChatID:      run.ChatID,
 			UserID:      run.UserID,
 			WorkspaceID: run.WorkspaceID,
-			SkillIDs:    []string{"workspace.read", "cli.exec"},
+			SkillIDs:    skills,
+			Skills:      runtimeSkills,
 			ModelPolicy: "mock-default",
 		},
 		UserMessage:     userMessage,

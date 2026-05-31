@@ -35,22 +35,29 @@ func (d *LocalDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMe
 		_ = sink.Emit(run.ID, protocol.EventModelToken, content, nil)
 		time.Sleep(30 * time.Millisecond)
 		if command, ok := parseLocalCLI(userMessage); ok {
+			if !containsSkillID(skillIDsForRun(d.repo, run), "cli.exec") {
+				content += "\n\n当前用户未启用系统 CLI 工具，无法执行 /cli 请求。"
+				if err := sink.Complete(run.ID, content); err != nil {
+					d.log.Warn("local run failed", "run_id", run.ID, "error", err)
+				}
+				return
+			}
 			_ = sink.Emit(run.ID, protocol.EventToolStarted, "Starting cli.exec skill.", map[string]any{"command": command})
 			result := d.sandbox.Execute(ctx, protocol.SandboxCommand{
 				RunID:          run.ID,
 				WorkspaceID:    run.WorkspaceID,
 				Command:        command,
 				TimeoutSeconds: 10,
-				Network:        false,
+				Network:        true,
 			})
 			_ = sink.Emit(run.ID, protocol.EventToolOutput, "CLI command completed.", result)
 			_ = sink.Emit(run.ID, protocol.EventToolFinished, "Finished cli.exec skill.", map[string]any{"exit_code": result.ExitCode})
-			content += "\n\nCLI 执行结果：\n" + result.Stdout
+			content += "\n\nCLI 获取结果：\n" + result.Stdout
 			if result.Stderr != "" {
 				content += result.Stderr
 			}
 			if result.Error != "" {
-				content += "执行错误: " + result.Error
+				content += "系统 CLI 策略拒绝或执行错误: " + result.Error
 			}
 		}
 		if err := sink.Complete(run.ID, content); err != nil {
@@ -70,21 +77,52 @@ func parseLocalCLI(content string) ([]string, bool) {
 }
 
 type QueueDispatcher struct {
+	repo  Repository
 	queue RunQueue
 }
 
-func NewQueueDispatcher(queue RunQueue) *QueueDispatcher {
-	return &QueueDispatcher{queue: queue}
+func NewQueueDispatcher(repo Repository, queue RunQueue) *QueueDispatcher {
+	return &QueueDispatcher{repo: repo, queue: queue}
 }
 
 func (d *QueueDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMessage string) error {
+	runtimeSkills := runtimeSkillsForRun(d.repo, run)
 	return d.queue.Enqueue(ctx, QueuedRun{
 		RunID:       run.ID,
 		ChatID:      run.ChatID,
 		UserID:      run.UserID,
 		WorkspaceID: run.WorkspaceID,
 		UserMessage: userMessage,
-		SkillIDs:    []string{"workspace.read", "cli.exec"},
+		SkillIDs:    skillIDsFromRuntimeSkills(runtimeSkills),
 		ModelPolicy: "mock-default",
 	})
+}
+
+func skillIDsForRun(repo Repository, run protocol.Run) []string {
+	return skillIDsFromRuntimeSkills(runtimeSkillsForRun(repo, run))
+}
+
+func runtimeSkillsForRun(repo Repository, run protocol.Run) []protocol.RuntimeSkill {
+	chat, _, err := repo.GetChat(run.ChatID)
+	if err != nil {
+		return nil
+	}
+	return repo.ListRuntimeSkillsForUser(run.UserID, chat.ProjectID)
+}
+
+func skillIDsFromRuntimeSkills(skills []protocol.RuntimeSkill) []string {
+	ids := make([]string, 0, len(skills))
+	for _, runtimeSkill := range skills {
+		ids = append(ids, runtimeSkill.Skill.ID)
+	}
+	return ids
+}
+
+func containsSkillID(skillIDs []string, id string) bool {
+	for _, skillID := range skillIDs {
+		if skillID == id {
+			return true
+		}
+	}
+	return false
 }

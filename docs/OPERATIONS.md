@@ -16,7 +16,7 @@ memory 模式的权威状态在进程内存中，进程重启会丢失数据。P
 - 用户、组织、项目。
 - 聊天会话和消息。
 - runs、run events、artifacts。
-- skills、审批、配额、审计记录。
+- skills、skill_versions、用户/项目 skill_grants、skill_secrets、配额、审计记录。
 
 当前 Postgres 模式支持单 Control Plane 进程内 SSE fanout 和基于数据库的 `RunEvent` replay。Redis Streams 后续用于多实例 run dispatch 和 event fanout，但不应替代 Postgres 的权威持久化。
 
@@ -30,7 +30,18 @@ Agent Runtime 默认使用 `MODEL_PROVIDER=mock`，适合本地演示和 CI。�
 - `MODEL_NAME`：请求体中的 `model`。
 - `MODEL_TIMEOUT_SECONDS`：模型 HTTP 请求超时，默认 120 秒。
 
-模型流式输出统一写成 `model.token` run event。非 2xx、流式 JSON 解析失败、网络超时都会让 runtime 通过 Control Plane 写入 `run.failed`。
+Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 执行 agentic loop。模型流式输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。非 2xx、流式 JSON 解析失败、网络超时都会让 runtime 通过 Control Plane 写入 `run.failed`。
+
+## Skill 与 Secret 排查
+
+Skill 存储分为四层：
+
+- `skills`：稳定身份、scope、kind、owner、status。
+- `skill_versions`：name、description、JSON schema、MCP 风格 annotations、runtime_config。
+- `skill_grants`：用户/项目可用性。
+- `skill_secrets`：secret 引用或本地开发密文。
+
+前端 `GET /api/skills` 不返回 secret。Runtime 通过 Control Plane 下发的内部 `RuntimeSkill` 获取执行所需 secret。当前本地开发允许把 bearer token 存入 `encrypted_value`；生产环境应替换为阿里云 KMS、Vault 或 External Secrets。
 
 ## Postgres 模式排查
 
@@ -75,19 +86,19 @@ docker compose -f deployments/docker-compose.yml down -v
 - 容器或更强隔离边界。
 - CPU、内存、磁盘、进程数和超时限制。
 - workspace 只读/读写挂载策略。
-- 网络默认关闭或按策略开启。
+- 网络按只读外部信息获取策略开启。
 - 输出大小限制和敏感信息过滤。
-- 高风险命令审批和完整审计。
+- 高风险命令策略拒绝和完整审计。
 
 ## CLI 策略排查
 
-当前 CLI policy 分三类：
+当前 CLI 是系统级 agent 工具，不需要用户逐次授权。CLI policy 分三类：
 
-- allowlist 命令：例如 `echo`、`pwd`、`ls`、`date`，会正常执行并产生 `tool.output`。
-- dangerous 命令：例如 `rm`、`sudo`、`chmod`、`curl`，不会执行，会产生 `approval.needed`，run 进入 `waiting_for_approval`。
-- 非 allowlist 命令：直接策略拒绝，作为普通 tool error 暴露，不进入审批。
+- allowlist 命令：例如 `curl`、`wget`、`dig`、`nslookup`、`echo`、`pwd`、`ls`、`date`，会正常执行并产生 `tool.output`。
+- dangerous 命令：例如 `rm`、`sudo`、`chmod`、`chown`、shell 启动和文件写入类命令，不会执行，会作为普通 tool error 返回给 Agent Runtime。
+- 非 allowlist 命令：直接策略拒绝，作为普通 tool error 暴露。
 
-`approval.needed` 目前只表示“已进入等待授权状态”，审批后恢复执行仍在后续阶段实现。
+`approval.needed` 事件保留给未来真正需要用户确认的非 CLI skill。系统 CLI 不再使用该事件，也不会让 run 进入 `waiting_for_approval`。
 
 ## 常用运维检查
 
@@ -130,6 +141,6 @@ make docker-build
 ## 当前限制
 
 - memory store 无法支撑多实例共享状态；Postgres 模式当前先服务单 Control Plane 副本。
-- OpenAI-compatible provider 已支持真实流式模型输出，但 runtime 还不具备模型工具规划和长任务恢复能力。
+- OpenAI-compatible provider 已支持真实流式模型输出；当前 Eino loop 仍通过项目内模型桥接器适配，后续应替换为原生支持 tool calling 的 Eino ChatModel provider。
 - local executor 不提供生产级命令隔离。
 - sandbox、认证、租户配额、审批和审计仍需继续完善。

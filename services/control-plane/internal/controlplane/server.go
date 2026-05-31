@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -54,7 +55,11 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		platform.WriteJSON(w, http.StatusOK, map[string]any{"chats": s.repo.ListChats(demoUserID)})
+		opts := ChatListOptions{
+			Query:           r.URL.Query().Get("q"),
+			IncludeArchived: parseBool(r.URL.Query().Get("include_archived")),
+		}
+		platform.WriteJSON(w, http.StatusOK, map[string]any{"chats": s.repo.ListChats(demoUserID, opts)})
 	case http.MethodPost:
 		var input struct {
 			Title string `json:"title"`
@@ -89,6 +94,24 @@ func (s *Server) chatSubroutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "messages" && r.Method == http.MethodPost {
 		s.createMessage(w, r, chatID)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "archive" && r.Method == http.MethodPost {
+		chat, err := s.repo.SetChatArchived(chatID, demoUserID, true)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		platform.WriteJSON(w, http.StatusOK, chat)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "restore" && r.Method == http.MethodPost {
+		chat, err := s.repo.SetChatArchived(chatID, demoUserID, false)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		platform.WriteJSON(w, http.StatusOK, chat)
 		return
 	}
 	platform.WriteError(w, http.StatusNotFound, "chat route not found")
@@ -195,11 +218,41 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, runID string)
 }
 
 func (s *Server) skills(w http.ResponseWriter, _ *http.Request) {
-	platform.WriteJSON(w, http.StatusOK, map[string]any{"skills": s.repo.ListSkills()})
+	skills := s.repo.ListSkillsForUser(demoUserID, "demo-project")
+	platform.WriteJSON(w, http.StatusOK, protocol.SkillsResponse{
+		Skills: skills,
+		Groups: groupSkills(skills),
+	})
 }
 
 func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 	parts := splitPath(strings.TrimPrefix(r.URL.Path, "/api/skills/"))
+	if len(parts) == 1 && parts[0] == "http" && r.Method == http.MethodPost {
+		s.createHTTPSkill(w, r)
+		return
+	}
+	if len(parts) == 1 && r.Method == http.MethodPatch {
+		s.updateHTTPSkill(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "enable" && r.Method == http.MethodPost {
+		skill, err := s.repo.SetSkillEnabled(demoUserID, parts[0], true)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		platform.WriteJSON(w, http.StatusOK, skill)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "disable" && r.Method == http.MethodPost {
+		skill, err := s.repo.SetSkillEnabled(demoUserID, parts[0], false)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		platform.WriteJSON(w, http.StatusOK, skill)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "approve" && r.Method == http.MethodPost {
 		platform.WriteJSON(w, http.StatusAccepted, map[string]any{
 			"skill_id": parts[0],
@@ -208,6 +261,79 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platform.WriteError(w, http.StatusNotFound, "skill route not found")
+}
+
+func (s *Server) createHTTPSkill(w http.ResponseWriter, r *http.Request) {
+	var input protocol.HTTPSkillInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if err := validateHTTPSkillInput(input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	skill, err := s.repo.CreateHTTPSkill(demoUserID, "demo-project", input)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	platform.WriteJSON(w, http.StatusCreated, skill)
+}
+
+func (s *Server) updateHTTPSkill(w http.ResponseWriter, r *http.Request, skillID string) {
+	var input protocol.HTTPSkillInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if err := validateHTTPSkillInput(input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	skill, err := s.repo.UpdateHTTPSkill(demoUserID, skillID, input)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	platform.WriteJSON(w, http.StatusOK, skill)
+}
+
+func validateHTTPSkillInput(input protocol.HTTPSkillInput) error {
+	if strings.TrimSpace(input.Name) == "" {
+		return errors.New("name is required")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(input.URL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("valid url is required")
+	}
+	method := strings.ToUpper(strings.TrimSpace(input.Method))
+	if method == "" {
+		method = http.MethodPost
+	}
+	if method != http.MethodGet && method != http.MethodPost {
+		return errors.New("method must be GET or POST")
+	}
+	authType := strings.TrimSpace(input.AuthType)
+	if authType != "" && authType != "none" && authType != "bearer" {
+		return errors.New("auth_type must be none or bearer")
+	}
+	return nil
+}
+
+func groupSkills(skills []protocol.Skill) protocol.SkillGroups {
+	groups := protocol.SkillGroups{
+		System: []protocol.Skill{},
+		User:   []protocol.Skill{},
+	}
+	for _, skill := range skills {
+		if skill.Scope == protocol.SkillScopeUser {
+			groups.User = append(groups.User, skill)
+		} else {
+			groups.System = append(groups.System, skill)
+		}
+	}
+	return groups
 }
 
 func (s *Server) internalRunSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -378,6 +504,15 @@ func splitPath(path string) []string {
 		}
 	}
 	return parts
+}
+
+func parseBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func requestLogger(log *slog.Logger, next http.Handler) http.Handler {

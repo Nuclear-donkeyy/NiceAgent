@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"strings"
 	"testing"
 
 	"niceagent/common/protocol"
@@ -35,6 +36,107 @@ func TestStoreCreatesChatMessageRunAndEvents(t *testing.T) {
 	events := store.ListEvents(run.ID, 0)
 	if len(events) != 1 {
 		t.Fatalf("events len = %d, want 1", len(events))
+	}
+}
+
+func TestStoreListsSearchesArchivesAndRestoresChats(t *testing.T) {
+	store := NewStore()
+	alpha := mustCreateChat(t, store, "demo-user", "Alpha project")
+	beta := mustCreateChat(t, store, "demo-user", "Beta project")
+
+	list := store.ListChats("demo-user", ChatListOptions{})
+	if len(list) != 2 {
+		t.Fatalf("active chats len = %d, want 2", len(list))
+	}
+	matches := store.ListChats("demo-user", ChatListOptions{Query: "alpha"})
+	if len(matches) != 1 || matches[0].ID != alpha.ID {
+		t.Fatalf("search matches = %#v, want alpha chat", matches)
+	}
+
+	archived, err := store.SetChatArchived(beta.ID, "demo-user", true)
+	if err != nil {
+		t.Fatalf("archive chat: %v", err)
+	}
+	if !archived.Archived {
+		t.Fatal("expected archived chat")
+	}
+	list = store.ListChats("demo-user", ChatListOptions{})
+	if len(list) != 1 || list[0].ID != alpha.ID {
+		t.Fatalf("active chats after archive = %#v, want alpha only", list)
+	}
+	list = store.ListChats("demo-user", ChatListOptions{IncludeArchived: true})
+	if len(list) != 2 {
+		t.Fatalf("all chats after archive = %d, want 2", len(list))
+	}
+
+	restored, err := store.SetChatArchived(beta.ID, "demo-user", false)
+	if err != nil {
+		t.Fatalf("restore chat: %v", err)
+	}
+	if restored.Archived {
+		t.Fatal("expected restored chat")
+	}
+}
+
+func TestStoreListsSkillsForUserWithoutCLIApproval(t *testing.T) {
+	store := NewStore()
+	skills := store.ListSkillsForUser("demo-user", "demo-project")
+	if len(skills) == 0 {
+		t.Fatal("expected demo user skills")
+	}
+	var foundCLI bool
+	for _, skill := range skills {
+		if skill.ID == "cli.exec" {
+			foundCLI = true
+			if skill.RequiresAuth {
+				t.Fatalf("cli.exec requires auth = true, want false")
+			}
+			if skill.Risk != protocol.SkillRiskMedium {
+				t.Fatalf("cli.exec risk = %q, want medium", skill.Risk)
+			}
+		}
+	}
+	if !foundCLI {
+		t.Fatalf("skills = %#v, want cli.exec", skills)
+	}
+}
+
+func TestStoreCreatesUserHTTPSkillWithoutExposingSecret(t *testing.T) {
+	store := NewStore()
+	skill, err := store.CreateHTTPSkill("demo-user", "demo-project", protocol.HTTPSkillInput{
+		Name:        "Weather API",
+		Description: "Fetch weather information",
+		Method:      "POST",
+		URL:         "https://example.com/weather",
+		AuthType:    "bearer",
+		BearerToken: "secret-token",
+	})
+	if err != nil {
+		t.Fatalf("create http skill: %v", err)
+	}
+	if skill.Scope != protocol.SkillScopeUser || skill.Kind != protocol.SkillKindHTTP {
+		t.Fatalf("skill scope/kind = %q/%q, want user/http", skill.Scope, skill.Kind)
+	}
+	if strings.Contains(skill.RuntimeConfig, "secret-token") {
+		t.Fatalf("runtime config leaked token: %s", skill.RuntimeConfig)
+	}
+
+	skills := store.ListSkillsForUser("demo-user", "demo-project")
+	if !containsSkill(skills, skill.ID) {
+		t.Fatalf("skills = %#v, want created skill", skills)
+	}
+	runtimeSkills := store.ListRuntimeSkillsForUser("demo-user", "demo-project")
+	var found bool
+	for _, runtimeSkill := range runtimeSkills {
+		if runtimeSkill.Skill.ID == skill.ID {
+			found = true
+			if runtimeSkill.Secrets["bearer_token"] != "secret-token" {
+				t.Fatalf("runtime secret = %#v, want bearer token", runtimeSkill.Secrets)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("runtime skills = %#v, want created skill", runtimeSkills)
 	}
 }
 
@@ -153,4 +255,13 @@ func mustCreateChat(t *testing.T, repo Repository, userID, title string) protoco
 		t.Fatalf("create chat: %v", err)
 	}
 	return chat
+}
+
+func containsSkill(skills []protocol.Skill, id string) bool {
+	for _, skill := range skills {
+		if skill.ID == id {
+			return true
+		}
+	}
+	return false
 }

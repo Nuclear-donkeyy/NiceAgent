@@ -52,6 +52,8 @@ docker compose -f deployments/docker-compose.yml up
 
 Compose 会启动 Postgres、Redis、Control Plane、Agent Runtime 和 Sandbox Executor。Control Plane 在该拓扑中使用 `STORE_DRIVER=postgres`，数据库连接来自 `DATABASE_URL`。重启 Control Plane 后，会话、消息、run 和 run events 应继续保留。
 
+Skill manifest 会写入 `skills`、`skill_versions`、`skill_grants` 和 `skill_secrets`。如果本地 schema 已经旧了，可以用 `docker compose -f deployments/docker-compose.yml down -v` 清理 volume 后重新启动。
+
 如果只想本机直接连接已有 Postgres：
 
 ```bash

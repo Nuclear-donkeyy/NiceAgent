@@ -123,6 +123,132 @@ func TestServerReplaysRunEventsAfterSeq(t *testing.T) {
 	}
 }
 
+func TestServerSearchesArchivesAndRestoresChats(t *testing.T) {
+	_, handler := newTestHandler()
+	alpha := createChatWithHandler(t, handler, "Alpha planning")
+	beta := createChatWithHandler(t, handler, "Beta archived")
+
+	search := httptest.NewRequest(http.MethodGet, "/api/chats?q=alpha", nil)
+	searchResponse := httptest.NewRecorder()
+	handler.ServeHTTP(searchResponse, search)
+	if searchResponse.Code != http.StatusOK {
+		t.Fatalf("search chats status = %d, body = %s", searchResponse.Code, searchResponse.Body.String())
+	}
+	var searchOutput struct {
+		Chats []protocol.ChatSession `json:"chats"`
+	}
+	decodeJSON(t, searchResponse.Body, &searchOutput)
+	if len(searchOutput.Chats) != 1 || searchOutput.Chats[0].ID != alpha.ID {
+		t.Fatalf("search chats = %#v, want alpha", searchOutput.Chats)
+	}
+
+	archive := httptest.NewRequest(http.MethodPost, "/api/chats/"+beta.ID+"/archive", nil)
+	archiveResponse := httptest.NewRecorder()
+	handler.ServeHTTP(archiveResponse, archive)
+	if archiveResponse.Code != http.StatusOK {
+		t.Fatalf("archive chat status = %d, body = %s", archiveResponse.Code, archiveResponse.Body.String())
+	}
+	var archived protocol.ChatSession
+	decodeJSON(t, archiveResponse.Body, &archived)
+	if !archived.Archived {
+		t.Fatalf("archived chat = %#v, want archived", archived)
+	}
+
+	list := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	var listOutput struct {
+		Chats []protocol.ChatSession `json:"chats"`
+	}
+	decodeJSON(t, listResponse.Body, &listOutput)
+	if len(listOutput.Chats) != 1 || listOutput.Chats[0].ID != alpha.ID {
+		t.Fatalf("active chats = %#v, want alpha only", listOutput.Chats)
+	}
+
+	all := httptest.NewRequest(http.MethodGet, "/api/chats?include_archived=true", nil)
+	allResponse := httptest.NewRecorder()
+	handler.ServeHTTP(allResponse, all)
+	var allOutput struct {
+		Chats []protocol.ChatSession `json:"chats"`
+	}
+	decodeJSON(t, allResponse.Body, &allOutput)
+	if len(allOutput.Chats) != 2 {
+		t.Fatalf("all chats len = %d, want 2", len(allOutput.Chats))
+	}
+
+	restore := httptest.NewRequest(http.MethodPost, "/api/chats/"+beta.ID+"/restore", nil)
+	restoreResponse := httptest.NewRecorder()
+	handler.ServeHTTP(restoreResponse, restore)
+	if restoreResponse.Code != http.StatusOK {
+		t.Fatalf("restore chat status = %d, body = %s", restoreResponse.Code, restoreResponse.Body.String())
+	}
+	var restored protocol.ChatSession
+	decodeJSON(t, restoreResponse.Body, &restored)
+	if restored.Archived {
+		t.Fatalf("restored chat = %#v, want active", restored)
+	}
+}
+
+func TestServerListsCurrentUserSkills(t *testing.T) {
+	_, handler := newTestHandler()
+	request := httptest.NewRequest(http.MethodGet, "/api/skills", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("skills status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var output struct {
+		Skills []protocol.Skill     `json:"skills"`
+		Groups protocol.SkillGroups `json:"groups"`
+	}
+	decodeJSON(t, response.Body, &output)
+	if len(output.Skills) == 0 {
+		t.Fatal("expected skills")
+	}
+	if len(output.Groups.System) == 0 {
+		t.Fatalf("groups = %#v, want system skills", output.Groups)
+	}
+	for _, skill := range output.Skills {
+		if skill.ID == "cli.exec" && skill.RequiresAuth {
+			t.Fatalf("cli.exec requires auth = true, want false")
+		}
+	}
+}
+
+func TestServerCreatesUserHTTPSkill(t *testing.T) {
+	_, handler := newTestHandler()
+	request := httptest.NewRequest(http.MethodPost, "/api/skills/http", jsonBody(t, protocol.HTTPSkillInput{
+		Name:        "Weather API",
+		Description: "Fetch weather",
+		Method:      "POST",
+		URL:         "https://example.com/weather",
+		AuthType:    "bearer",
+		BearerToken: "secret-token",
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create skill status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var skill protocol.Skill
+	decodeJSON(t, response.Body, &skill)
+	if skill.Scope != protocol.SkillScopeUser || skill.Kind != protocol.SkillKindHTTP {
+		t.Fatalf("skill scope/kind = %q/%q, want user/http", skill.Scope, skill.Kind)
+	}
+	if strings.Contains(response.Body.String(), "secret-token") {
+		t.Fatalf("response leaked bearer token: %s", response.Body.String())
+	}
+
+	list := httptest.NewRequest(http.MethodGet, "/api/skills", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	var output protocol.SkillsResponse
+	decodeJSON(t, listResponse.Body, &output)
+	if len(output.Groups.User) != 1 || output.Groups.User[0].ID != skill.ID {
+		t.Fatalf("user groups = %#v, want created skill", output.Groups.User)
+	}
+}
+
 func TestControlPlaneHTTPRuntimeContract(t *testing.T) {
 	store := NewStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -288,6 +414,19 @@ func createChatViaAPI(t *testing.T, baseURL string) protocol.ChatSession {
 	if response.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(response.Body)
 		t.Fatalf("create chat status = %d, body = %s", response.StatusCode, body)
+	}
+	var chat protocol.ChatSession
+	decodeJSON(t, response.Body, &chat)
+	return chat
+}
+
+func createChatWithHandler(t *testing.T, handler http.Handler, title string) protocol.ChatSession {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/api/chats", jsonBody(t, map[string]string{"title": title}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create chat status = %d, body = %s", response.Code, response.Body.String())
 	}
 	var chat protocol.ChatSession
 	decodeJSON(t, response.Body, &chat)

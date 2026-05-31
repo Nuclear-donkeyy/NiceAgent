@@ -69,6 +69,11 @@ func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessa
 	}
 
 	if command, ok := parseCLICommand(userMessage); ok {
+		if !hasSkill(req.SkillIDs, "cli.exec") {
+			message := "当前用户未启用系统 CLI 工具，无法执行 /cli 请求。"
+			_ = sink.Fail(req.RunID, message)
+			return protocol.RunResult{RunID: req.RunID, Status: protocol.RunFailed, Error: message}
+		}
 		if e.Sandbox == nil {
 			_ = sink.Fail(req.RunID, "sandbox executor is not configured")
 			return protocol.RunResult{RunID: req.RunID, Status: protocol.RunFailed, Error: "sandbox executor is not configured"}
@@ -79,25 +84,11 @@ func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessa
 			WorkspaceID:    req.WorkspaceID,
 			Command:        command,
 			TimeoutSeconds: 10,
-			Network:        false,
+			Network:        true,
 		})
-		if result.ApprovalRequired {
-			reason := result.Reason
-			if reason == "" {
-				reason = result.Error
-			}
-			_ = sink.Emit(req.RunID, protocol.EventApprovalNeeded, "CLI command requires approval.", map[string]any{
-				"skill_id":     "cli.exec",
-				"command":      command,
-				"reason":       reason,
-				"policy":       result.Policy,
-				"workspace_id": req.WorkspaceID,
-			})
-			return protocol.RunResult{RunID: req.RunID, Status: protocol.RunWaitingForApproval}
-		}
 		_ = sink.Emit(req.RunID, protocol.EventToolOutput, "CLI command completed.", result)
 		_ = sink.Emit(req.RunID, protocol.EventToolFinished, "Finished cli.exec skill.", map[string]any{"exit_code": result.ExitCode})
-		writeToken("\n\nCLI 执行结果：\n")
+		writeToken("\n\nCLI 获取结果：\n")
 		if result.Stdout != "" {
 			writeToken(result.Stdout)
 		}
@@ -105,7 +96,7 @@ func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessa
 			writeToken(result.Stderr)
 		}
 		if result.Error != "" {
-			writeToken("执行错误: " + result.Error)
+			writeToken("系统 CLI 策略拒绝或执行错误: " + result.Error)
 		}
 		if sink.IsCanceled(req.RunID) {
 			return protocol.RunResult{RunID: req.RunID, Status: protocol.RunCanceled}
@@ -113,7 +104,7 @@ func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessa
 	} else {
 		_ = sink.Emit(req.RunID, protocol.EventToolStarted, "Selecting available skills.", map[string]any{"skills": req.SkillIDs})
 		_ = sink.Emit(req.RunID, protocol.EventToolFinished, "No tool call required for this turn.", nil)
-		writeToken("\n\n你可以发送 `/cli echo hello` 来测试远端 CLI skill 的事件链路。")
+		writeToken("\n\n你可以发送 `/cli curl https://example.com` 来测试系统 CLI 获取外部信息的链路。")
 	}
 
 	content := answer.String()
@@ -179,6 +170,15 @@ func parseCLICommand(content string) ([]string, bool) {
 		return nil, false
 	}
 	return parts, true
+}
+
+func hasSkill(skillIDs []string, id string) bool {
+	for _, skillID := range skillIDs {
+		if skillID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func estimateTokens(s string) int {

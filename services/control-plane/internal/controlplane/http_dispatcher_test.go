@@ -44,6 +44,9 @@ func TestHTTPDispatcherCallsRuntime(t *testing.T) {
 		if request.Request.RunID != run.ID {
 			t.Fatalf("run id = %q, want %q", request.Request.RunID, run.ID)
 		}
+		if !containsString(request.Request.SkillIDs, "cli.exec") || !containsString(request.Request.SkillIDs, "workspace.read") {
+			t.Fatalf("skill ids = %#v, want user skills", request.Request.SkillIDs)
+		}
 		if request.UserMessage != "hello" {
 			t.Fatalf("user message = %q, want hello", request.UserMessage)
 		}
@@ -87,4 +90,13 @@ func TestHTTPDispatcherMarksRunFailedWhenRuntimeFails(t *testing.T) {
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

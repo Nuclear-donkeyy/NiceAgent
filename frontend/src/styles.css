@@ -21,6 +21,7 @@ body {
 }
 
 button,
+input,
 textarea {
   font: inherit;
 }
@@ -116,9 +117,54 @@ small {
   color: var(--black);
 }
 
+.section-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.mini-button {
+  min-height: 28px;
+  padding: 4px 9px;
+}
+
+.chat-filters {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-filters input[type="text"],
+.chat-filters input:not([type]) {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--black);
+  min-height: 36px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.chat-filters input:focus {
+  border-color: var(--black);
+}
+
+.chat-filters label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat-filters input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--black);
+}
+
 .chat-list,
-.skill-list,
-.event-list {
+.skill-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -143,9 +189,26 @@ small {
 }
 
 .chat-row span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-row.archived {
+  color: var(--muted);
+}
+
+.chat-row em {
+  border: 1px solid var(--line);
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-style: normal;
+  padding: 1px 5px;
 }
 
 .skill-card {
@@ -173,9 +236,35 @@ small {
   line-height: 1.45;
 }
 
+.skill-form {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.skill-form textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+
+.skill-form select {
+  background: var(--white);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  padding: 9px 10px;
+}
+
+.skill-form-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
 .main {
   display: grid;
-  grid-template-rows: auto minmax(260px, 1fr) 230px auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   min-width: 0;
   min-height: 100vh;
   background: var(--paper);
@@ -188,6 +277,12 @@ small {
   border-bottom: 1px solid var(--line);
   background: var(--paper);
   padding: 18px 28px;
+}
+
+.topbar-note {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .run-state {
@@ -218,6 +313,11 @@ small {
 .status.canceled {
   color: var(--white);
   background: var(--black);
+}
+
+.status.waiting_for_approval {
+  border-color: var(--black);
+  background: var(--warm);
 }
 
 .conversation {
@@ -267,73 +367,19 @@ small {
 
 .message p {
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
-.activity {
-  border-top: 1px solid var(--line);
-  background: var(--white);
-  padding: 14px 28px;
-}
-
-.activity-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.activity-head p {
-  margin-top: 4px;
+.agent-status,
+.muted-text {
   color: var(--muted);
   font-size: 13px;
 }
 
-.activity-head > span {
-  border: 1px solid var(--black);
-  min-width: 32px;
-  padding: 4px 8px;
-  text-align: center;
-}
-
-.activity-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 18px;
-  height: 155px;
-  margin-top: 12px;
-}
-
-.event-row {
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  gap: 12px;
-  border-top: 1px solid var(--line);
-  padding: 8px 0;
-  font-size: 13px;
-}
-
-.event-row div {
-  display: grid;
-  gap: 2px;
-}
-
-.event-row p {
-  overflow: hidden;
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cli-output {
-  margin: 0;
-  border-left: 1px solid var(--line);
-  background: var(--paper);
-  color: var(--ink);
-  overflow: auto;
-  padding: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.5;
+.agent-status {
+  border-left: 2px solid var(--black);
+  margin: 8px 0 10px;
+  padding-left: 10px;
 }
 
 .composer {
@@ -381,19 +427,7 @@ textarea:focus {
     border-bottom: 1px solid var(--line);
   }
 
-  .activity-grid {
-    grid-template-columns: 1fr;
-    height: auto;
-  }
-
-  .cli-output {
-    min-height: 120px;
-    border-left: 0;
-    border-top: 1px solid var(--line);
-  }
-
   .composer {
     grid-template-columns: 1fr;
   }
 }
-

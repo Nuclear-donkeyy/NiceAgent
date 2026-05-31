@@ -28,7 +28,7 @@ type ModelChunk struct {
 }
 
 type ToolBridge interface {
-	Definitions(ctx context.Context, skillIDs []string) ([]ToolDefinition, error)
+	Definitions(ctx context.Context, skills []protocol.RuntimeSkill) ([]ToolDefinition, error)
 	Invoke(ctx context.Context, invocation protocol.SkillInvocation) (any, error)
 }
 
