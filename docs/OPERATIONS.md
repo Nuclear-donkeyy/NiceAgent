@@ -30,7 +30,7 @@ Agent Runtime 默认使用 `MODEL_PROVIDER=mock`，适合本地演示和 CI。�
 - `MODEL_NAME`：请求体中的 `model`。
 - `MODEL_TIMEOUT_SECONDS`：模型 HTTP 请求超时，默认 120 秒。
 
-Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 执行 agentic loop。模型流式输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。非 2xx、流式 JSON 解析失败、网络超时都会让 runtime 通过 Control Plane 写入 `run.failed`。
+Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，模型 HTTP 错误、tool calling 错误和网络超时都会让 runtime 通过 Control Plane 写入 `run.failed`。
 
 ## Skill 与 Secret 排查
 
@@ -141,6 +141,6 @@ make docker-build
 ## 当前限制
 
 - memory store 无法支撑多实例共享状态；Postgres 模式当前先服务单 Control Plane 副本。
-- OpenAI-compatible provider 已支持真实流式模型输出；当前 Eino loop 仍通过项目内模型桥接器适配，后续应替换为原生支持 tool calling 的 Eino ChatModel provider。
+- OpenAI-compatible provider 已切到 Eino 原生 ChatModel；不同 OpenAI-compatible 服务的非标准参数兼容性仍需在后续按 provider-specific option 补强。
 - local executor 不提供生产级命令隔离。
 - sandbox、认证、租户配额、审批和审计仍需继续完善。

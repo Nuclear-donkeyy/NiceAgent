@@ -8,7 +8,7 @@
 
 - 前端：`frontend` 使用 React + Rspack + TypeScript + SCSS Modules，已拆分为 `app`、`api`、`domain`、`features`、`components` 和 `styles`，支持会话管理、assistant 流式回复、agent 状态折叠、系统能力/我的能力展示和 HTTP Skill 添加/启停。
 - Control Plane：`services/control-plane` 负责 chats、messages、runs、events、skills、SSE 和调度，已按 `httpapi`、`app`、`repository`、`dispatch`、`events` 分层，支持 memory store 与 Postgres repository。
-- Agent Runtime：`services/agent-runtime` 已接入 Eino ADK `ChatModelAgent + Runner` 主路径，支持 mock provider、OpenAI-compatible provider、ToolBridge、系统 CLI 和用户 HTTP Skill。
+- Agent Runtime：`services/agent-runtime` 已接入 Eino ADK `ChatModelAgent + Runner` 主路径，模型层切到 Eino 原生 `ToolCallingChatModel`，支持 mock provider、OpenAI-compatible provider、ToolBridge、系统 CLI 和用户 HTTP Skill。
 - Sandbox Executor：`services/sandbox-executor` 已独立成服务，作为系统级 CLI 执行边界，当前以只读网络型命令、策略拒绝、超时和输出截断为主。
 - 公共协议：`packages/common` 保存跨服务 protocol、platform helper 和 sandbox executor client，不跨服务 import 其他服务的 `internal` 包。
 - 部署与工程化：已有 Docker Compose、本地 kind K8s 路径、GitHub Actions CI/CD 基础、服务级 `AGENTS.md`、ADR、Prettier、前端检查和 Go 测试入口。
@@ -17,7 +17,7 @@
 
 当前系统已经具备可演示链路，但还不能被描述为生产可用的远端 agent 平台：
 
-- Runtime 的 Eino loop 仍通过项目内模型桥接器适配现有 provider，tool selection 带有启发式逻辑；下一步应让 OpenAI-compatible provider 支持模型原生 tool calling，并让 agentic loop 由模型真实选择工具。
+- Runtime 的模型层已经切到 Eino 原生 ChatModel，下一步仍需继续压实真实模型 tool calling 的端到端覆盖，并减少 provider-specific 兼容风险。
 - Skill registry 已有 metadata、version、grant、secret 存储模型，但 schema validation、HTTP Skill 错误模型、secret backend 抽象、OpenAPI/MCP 导入还不完整。
 - Sandbox 还不是强隔离生产沙箱。当前 CLI 策略偏本地开发可用，仍需容器默认执行路径、workspace 隔离、artifact 归档、网络策略和资源配额。
 - 前端已经隐藏原始事件面板，但 artifact 展示、skill 配置校验、端到端测试和错误恢复体验还需要补强。
@@ -36,12 +36,12 @@
 
 ## 建议 PR 顺序
 
-### Phase 6A：Runtime 原生 Tool Calling
+### Phase 6A：Runtime 原生 Tool Calling（当前落地）
 
-- 升级 OpenAI-compatible provider，使其支持 chat completions tool/function calling 协议。
-- 调整 Eino model bridge，优先使用模型返回的 tool calls，减少当前基于关键词和 `/cli` 的启发式选择。
-- 保留 `/cli ...` 作为开发测试入口，但产品主路径改为模型在 agentic loop 中自主选择 `cli.exec` 或用户 HTTP Skill。
-- 补测试：fake OpenAI-compatible server 返回 tool call、Runtime 执行 builtin/http tool、tool result 回到模型、最终 assistant 回复成功。
+- OpenAI-compatible provider 改为通过 Eino `eino-ext` OpenAI ChatModel 接入。
+- Runtime engine 直接使用 Eino `ToolCallingChatModel`，删除项目内自定义模型桥接主路径。
+- 保留 `/cli ...` 作为开发测试入口；普通自然语言不再靠关键词启发式触发工具。
+- 补测试：fake Eino model 返回 tool call、Runtime 执行 builtin/http tool、tool result 回到模型、最终 assistant 回复成功。
 
 验收标准：
 

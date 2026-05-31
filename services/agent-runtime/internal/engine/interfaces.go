@@ -3,7 +3,8 @@ package engine
 import (
 	"context"
 
-	"niceagent/agent-runtime/internal/modelprovider"
+	"github.com/cloudwego/eino/components/model"
+
 	"niceagent/agent-runtime/internal/tools"
 	"niceagent/common/protocol"
 )
@@ -13,5 +14,5 @@ type AgentEngine interface {
 }
 
 type ModelProvider interface {
-	Stream(ctx context.Context, request modelprovider.Request) (<-chan modelprovider.Chunk, error)
+	model.ToolCallingChatModel
 }

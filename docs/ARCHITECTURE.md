@@ -47,11 +47,11 @@ Agent Runtime 是独立部署的 agent 实例服务，不应由 Control Plane �
 
 - `internal/httpapi`：内部执行 API 和 Control Plane sink 装配。
 - `internal/engine`：AgentEngine、Eino agentic loop 和循环限制。
-- `internal/modelprovider`：mock 与 OpenAI-compatible 模型供应商适配。
+- `internal/modelprovider`：Eino `ToolCallingChatModel` factory，提供 mock 与 OpenAI-compatible 模型入口。
 - `internal/tools`：平台 skill 到 runtime tool 的桥，以及 SandboxExecutor 端口。
 - `internal/sink`：Control Plane event/status/complete/fail 回写客户端。
 
-当前主路径已经接入 Eino ADK `ChatModelAgent + Runner`。Runtime 会接收 Control Plane 下发的 `RuntimeSkill` manifest，通过 ToolBridge 构造 Eino tools；系统 CLI 和用户 HTTP Skill 都作为 tool 被 agentic loop 调用。当前模型桥接器先兼容现有 mock/OpenAI-compatible provider，后续可以替换为原生支持 tool calling 的 Eino ChatModel provider。
+当前主路径已经接入 Eino ADK `ChatModelAgent + Runner`。Runtime 会接收 Control Plane 下发的 `RuntimeSkill` manifest，通过 ToolBridge 构造 Eino tools；系统 CLI 和用户 HTTP Skill 都作为 tool 被 agentic loop 调用。模型层已切到 Eino 原生 `ToolCallingChatModel`：mock provider 直接实现 Eino 接口，OpenAI-compatible provider 通过 `github.com/cloudwego/eino-ext/components/model/openai` 接入。
 
 ## Sandbox Executor
 

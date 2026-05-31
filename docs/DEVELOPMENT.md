@@ -52,7 +52,7 @@ SANDBOX_EXECUTOR_URL=http://127.0.0.1:8082 \
 make run-runtime
 ```
 
-`MODEL_BASE_URL` 不需要包含 `/v1/chat/completions`，runtime 会自动调用 `{MODEL_BASE_URL}/v1/chat/completions` 并解析 SSE token。
+`MODEL_BASE_URL` 不需要包含 `/v1/chat/completions`，runtime 会通过 Eino `eino-ext` OpenAI ChatModel 调用 `{MODEL_BASE_URL}/v1/chat/completions`，并使用 Eino 原生 tool calling 能力。
 
 Postgres 持久化路径：
 
