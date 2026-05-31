@@ -81,6 +81,20 @@ func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessa
 			TimeoutSeconds: 10,
 			Network:        false,
 		})
+		if result.ApprovalRequired {
+			reason := result.Reason
+			if reason == "" {
+				reason = result.Error
+			}
+			_ = sink.Emit(req.RunID, protocol.EventApprovalNeeded, "CLI command requires approval.", map[string]any{
+				"skill_id":     "cli.exec",
+				"command":      command,
+				"reason":       reason,
+				"policy":       result.Policy,
+				"workspace_id": req.WorkspaceID,
+			})
+			return protocol.RunResult{RunID: req.RunID, Status: protocol.RunWaitingForApproval}
+		}
 		_ = sink.Emit(req.RunID, protocol.EventToolOutput, "CLI command completed.", result)
 		_ = sink.Emit(req.RunID, protocol.EventToolFinished, "Finished cli.exec skill.", map[string]any{"exit_code": result.ExitCode})
 		writeToken("\n\nCLI 执行结果：\n")

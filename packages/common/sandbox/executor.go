@@ -15,6 +15,10 @@ import (
 	"niceagent/common/protocol"
 )
 
+const (
+	PolicyDangerousCommand = "dangerous_command"
+)
+
 type Executor struct {
 	AllowedCommands []string
 	Dangerous       []string
@@ -33,7 +37,7 @@ func NewExecutor() *Executor {
 
 func (e *Executor) Execute(ctx context.Context, request protocol.SandboxCommand) protocol.SandboxResult {
 	start := time.Now()
-	result := protocol.SandboxResult{RunID: request.RunID}
+	result := protocol.SandboxResult{RunID: request.RunID, Command: append([]string(nil), request.Command...)}
 	if len(request.Command) == 0 {
 		result.ExitCode = -1
 		result.Error = "empty command"
@@ -44,6 +48,10 @@ func (e *Executor) Execute(ctx context.Context, request protocol.SandboxCommand)
 		result.ExitCode = -1
 		result.Error = err.Error()
 		result.ApprovalRequired = errors.Is(err, ErrApprovalRequired)
+		if result.ApprovalRequired {
+			result.Reason = "command requires explicit approval"
+			result.Policy = PolicyDangerousCommand
+		}
 		result.Duration = time.Since(start).String()
 		return result
 	}

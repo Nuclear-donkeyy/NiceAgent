@@ -66,7 +66,7 @@ func TestEngineRunsAllowedCLICommand(t *testing.T) {
 	}
 }
 
-func TestEngineSurfacesCLICommandFailure(t *testing.T) {
+func TestEngineWaitsForApprovalOnDangerousCLICommand(t *testing.T) {
 	sink := &recordingSink{}
 	engine := NewEngine(sandbox.NewExecutor())
 
@@ -79,18 +79,21 @@ func TestEngineSurfacesCLICommandFailure(t *testing.T) {
 		ModelPolicy: "mock",
 	}, "/cli rm -rf /", sink)
 
-	if result.Status != protocol.RunSucceeded {
-		t.Fatalf("status = %q, want succeeded with surfaced tool error", result.Status)
+	if result.Status != protocol.RunWaitingForApproval {
+		t.Fatalf("status = %q, want waiting_for_approval", result.Status)
 	}
-	payload, ok := sink.lastPayload(protocol.EventToolOutput).(protocol.SandboxResult)
+	payload, ok := sink.lastPayload(protocol.EventApprovalNeeded).(map[string]any)
 	if !ok {
-		t.Fatalf("tool output payload = %#v, want protocol.SandboxResult", sink.lastPayload(protocol.EventToolOutput))
+		t.Fatalf("approval payload = %#v, want map", sink.lastPayload(protocol.EventApprovalNeeded))
 	}
-	if payload.Error == "" {
-		t.Fatalf("tool output payload = %#v, want policy error", payload)
+	if payload["skill_id"] != "cli.exec" || payload["reason"] != "command requires explicit approval" {
+		t.Fatalf("approval payload = %#v", payload)
 	}
-	if !strings.Contains(sink.completed, "执行错误") {
-		t.Fatalf("completed content = %q, want surfaced execution error", sink.completed)
+	if sink.saw(protocol.EventToolOutput) {
+		t.Fatalf("events = %v, want no ordinary tool output for approval", sink.events)
+	}
+	if sink.completed != "" {
+		t.Fatalf("completed content = %q, want no completion while waiting for approval", sink.completed)
 	}
 }
 

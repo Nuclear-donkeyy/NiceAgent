@@ -224,12 +224,15 @@ type SandboxCommand struct {
 }
 
 type SandboxResult struct {
-	RunID            string `json:"run_id"`
-	ExitCode         int    `json:"exit_code"`
-	Stdout           string `json:"stdout"`
-	Stderr           string `json:"stderr"`
-	Duration         string `json:"duration"`
-	Truncated        bool   `json:"truncated"`
-	ApprovalRequired bool   `json:"approval_required"`
-	Error            string `json:"error,omitempty"`
+	RunID            string   `json:"run_id"`
+	ExitCode         int      `json:"exit_code"`
+	Stdout           string   `json:"stdout"`
+	Stderr           string   `json:"stderr"`
+	Duration         string   `json:"duration"`
+	Truncated        bool     `json:"truncated"`
+	ApprovalRequired bool     `json:"approval_required"`
+	Reason           string   `json:"reason,omitempty"`
+	Policy           string   `json:"policy,omitempty"`
+	Command          []string `json:"command,omitempty"`
+	Error            string   `json:"error,omitempty"`
 }

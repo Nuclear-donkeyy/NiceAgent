@@ -47,6 +47,15 @@ func TestExecutorRequiresApprovalForDangerousCommand(t *testing.T) {
 	if !strings.Contains(result.Error, "approval required") {
 		t.Fatalf("error = %q, want approval policy error", result.Error)
 	}
+	if result.Policy != PolicyDangerousCommand {
+		t.Fatalf("policy = %q, want %q", result.Policy, PolicyDangerousCommand)
+	}
+	if result.Reason != "command requires explicit approval" {
+		t.Fatalf("reason = %q, want explicit approval reason", result.Reason)
+	}
+	if strings.Join(result.Command, " ") != "rm -rf /" {
+		t.Fatalf("command = %v, want rm -rf /", result.Command)
+	}
 }
 
 func TestExecutorRejectsDisallowedCommand(t *testing.T) {
@@ -63,6 +72,9 @@ func TestExecutorRejectsDisallowedCommand(t *testing.T) {
 	}
 	if !strings.Contains(result.Error, "not allowed") {
 		t.Fatalf("error = %q, want allowlist policy error", result.Error)
+	}
+	if result.ApprovalRequired {
+		t.Fatal("disallowed command should not require approval")
 	}
 }
 

@@ -257,6 +257,9 @@ func (s *Server) internalWriteRunEvent(w http.ResponseWriter, r *http.Request, r
 	if input.Type == protocol.EventRunStarted {
 		_, _ = s.repo.UpdateRunStatus(runID, protocol.RunRunning, "")
 	}
+	if input.Type == protocol.EventApprovalNeeded {
+		_, _ = s.repo.UpdateRunStatus(runID, protocol.RunWaitingForApproval, "")
+	}
 	platform.WriteJSON(w, http.StatusCreated, event)
 }
 

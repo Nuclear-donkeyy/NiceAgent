@@ -79,6 +79,16 @@ docker compose -f deployments/docker-compose.yml down -v
 - 输出大小限制和敏感信息过滤。
 - 高风险命令审批和完整审计。
 
+## CLI 策略排查
+
+当前 CLI policy 分三类：
+
+- allowlist 命令：例如 `echo`、`pwd`、`ls`、`date`，会正常执行并产生 `tool.output`。
+- dangerous 命令：例如 `rm`、`sudo`、`chmod`、`curl`，不会执行，会产生 `approval.needed`，run 进入 `waiting_for_approval`。
+- 非 allowlist 命令：直接策略拒绝，作为普通 tool error 暴露，不进入审批。
+
+`approval.needed` 目前只表示“已进入等待授权状态”，审批后恢复执行仍在后续阶段实现。
+
 ## 常用运维检查
 
 检查 Compose 配置：
