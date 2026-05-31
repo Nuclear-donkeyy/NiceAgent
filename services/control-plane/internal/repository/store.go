@@ -19,6 +19,8 @@ type Store struct {
 	messages     map[string][]protocol.Message
 	runs         map[string]protocol.Run
 	events       map[string][]protocol.RunEvent
+	workspaces   map[string]protocol.Workspace
+	artifacts    map[string]protocol.Artifact
 	skills       map[string]protocol.Skill
 	skillGrants  map[string][]string
 	skillSecrets map[string]map[string]string
@@ -34,6 +36,8 @@ func NewStore() *Store {
 		messages:     map[string][]protocol.Message{},
 		runs:         map[string]protocol.Run{},
 		events:       map[string][]protocol.RunEvent{},
+		workspaces:   map[string]protocol.Workspace{},
+		artifacts:    map[string]protocol.Artifact{},
 		skills:       map[string]protocol.Skill{},
 		skillGrants:  map[string][]string{},
 		skillSecrets: map[string]map[string]string{},
@@ -184,6 +188,15 @@ func (s *Store) AddUserMessage(chatID, userID, content string) (protocol.Message
 	s.messages[chatID] = append(s.messages[chatID], msg)
 	s.chats[chatID] = chat
 	s.runs[run.ID] = run
+	s.workspaces[run.WorkspaceID] = protocol.Workspace{
+		ID:        run.WorkspaceID,
+		UserID:    userID,
+		ProjectID: chat.ProjectID,
+		ChatID:    chatID,
+		RunID:     run.ID,
+		RootPath:  run.WorkspaceID,
+		CreatedAt: now,
+	}
 	return msg, run, nil
 }
 
@@ -317,6 +330,77 @@ func (s *Store) Subscribe(runID string) (<-chan protocol.RunEvent, func()) {
 		}
 	}
 	return ch, cancel
+}
+
+func (s *Store) AddWorkspace(workspace protocol.Workspace) (protocol.Workspace, error) {
+	if workspace.ID == "" {
+		workspace.ID = platform.NewID("ws")
+	}
+	if workspace.CreatedAt.IsZero() {
+		workspace.CreatedAt = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.workspaces[workspace.ID] = workspace
+	return workspace, nil
+}
+
+func (s *Store) GetWorkspace(workspaceID string) (protocol.Workspace, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	workspace, ok := s.workspaces[workspaceID]
+	if !ok {
+		return protocol.Workspace{}, app.ErrNotFound
+	}
+	return workspace, nil
+}
+
+func (s *Store) AddArtifact(artifact protocol.Artifact) (protocol.Artifact, error) {
+	if artifact.ID == "" {
+		artifact.ID = platform.NewID("art")
+	}
+	if artifact.CreatedAt.IsZero() {
+		artifact.CreatedAt = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if artifact.RunID != "" {
+		if run, ok := s.runs[artifact.RunID]; ok {
+			artifact.ChatID = firstNonEmpty(artifact.ChatID, run.ChatID)
+			artifact.UserID = firstNonEmpty(artifact.UserID, run.UserID)
+			artifact.WorkspaceID = firstNonEmpty(artifact.WorkspaceID, run.WorkspaceID)
+			if chat, ok := s.chats[run.ChatID]; ok {
+				artifact.ProjectID = firstNonEmpty(artifact.ProjectID, chat.ProjectID)
+			}
+		}
+	}
+	s.artifacts[artifact.ID] = artifact
+	return artifact, nil
+}
+
+func (s *Store) ListArtifacts(runID string) []protocol.Artifact {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	artifacts := make([]protocol.Artifact, 0)
+	for _, artifact := range s.artifacts {
+		if artifact.RunID == runID && artifact.DeletedAt == nil {
+			artifacts = append(artifacts, artifact)
+		}
+	}
+	sort.Slice(artifacts, func(i, j int) bool {
+		return artifacts[i].CreatedAt.Before(artifacts[j].CreatedAt)
+	})
+	return artifacts
+}
+
+func (s *Store) GetArtifact(artifactID string) (protocol.Artifact, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	artifact, ok := s.artifacts[artifactID]
+	if !ok || artifact.DeletedAt != nil {
+		return protocol.Artifact{}, app.ErrNotFound
+	}
+	return artifact, nil
 }
 
 func (s *Store) ListSkillsForUser(userID, projectID string) []protocol.Skill {
@@ -491,6 +575,15 @@ func httpSkillFromInput(skillID, versionID, userID, projectID, version string, i
 
 func redactSkill(skill protocol.Skill) protocol.Skill {
 	return skill
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func titleFromContent(content string) string {

@@ -165,6 +165,10 @@ func (s *PostgresStore) AddUserMessage(chatID, userID, content string) (protocol
 		run.ID, run.ChatID, run.UserID, run.WorkspaceID, run.Status, run.CreatedAt, run.UpdatedAt); err != nil {
 		return protocol.Message{}, protocol.Run{}, err
 	}
+	if _, err := tx.Exec(`INSERT INTO workspaces (id, user_id, project_id, chat_id, run_id, root_path, created_at) VALUES ($1, $2, (SELECT project_id FROM chat_sessions WHERE id = $3), $3, $4, $5, $6)`,
+		run.WorkspaceID, run.UserID, run.ChatID, run.ID, run.WorkspaceID, now); err != nil {
+		return protocol.Message{}, protocol.Run{}, err
+	}
 	if _, err := tx.Exec(`INSERT INTO messages (id, chat_id, run_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 		msg.ID, msg.ChatID, msg.RunID, msg.Role, msg.Content, msg.CreatedAt); err != nil {
 		return protocol.Message{}, protocol.Run{}, err
@@ -353,6 +357,133 @@ func (s *PostgresStore) Subscribe(runID string) (<-chan protocol.RunEvent, func(
 		s.mu.Unlock()
 	}
 	return ch, cancel
+}
+
+func (s *PostgresStore) AddWorkspace(workspace protocol.Workspace) (protocol.Workspace, error) {
+	if workspace.ID == "" {
+		workspace.ID = platform.NewID("ws")
+	}
+	if workspace.CreatedAt.IsZero() {
+		workspace.CreatedAt = time.Now().UTC()
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO workspaces (id, user_id, project_id, chat_id, run_id, root_path, created_at)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7)
+		ON CONFLICT (id)
+		DO UPDATE SET user_id = EXCLUDED.user_id,
+		              project_id = EXCLUDED.project_id,
+		              chat_id = EXCLUDED.chat_id,
+		              run_id = EXCLUDED.run_id,
+		              root_path = EXCLUDED.root_path`,
+		workspace.ID, workspace.UserID, workspace.ProjectID, workspace.ChatID, workspace.RunID, workspace.RootPath, workspace.CreatedAt)
+	if err != nil {
+		return protocol.Workspace{}, err
+	}
+	return workspace, nil
+}
+
+func (s *PostgresStore) GetWorkspace(workspaceID string) (protocol.Workspace, error) {
+	var workspace protocol.Workspace
+	if err := s.db.QueryRow(`
+		SELECT id, user_id, COALESCE(project_id, ''), COALESCE(chat_id, ''), COALESCE(run_id, ''), root_path, created_at
+		FROM workspaces
+		WHERE id = $1`, workspaceID).Scan(
+		&workspace.ID, &workspace.UserID, &workspace.ProjectID, &workspace.ChatID, &workspace.RunID, &workspace.RootPath, &workspace.CreatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.Workspace{}, app.ErrNotFound
+		}
+		return protocol.Workspace{}, err
+	}
+	return workspace, nil
+}
+
+func (s *PostgresStore) AddArtifact(artifact protocol.Artifact) (protocol.Artifact, error) {
+	if artifact.ID == "" {
+		artifact.ID = platform.NewID("art")
+	}
+	if artifact.CreatedAt.IsZero() {
+		artifact.CreatedAt = time.Now().UTC()
+	}
+	if artifact.RunID != "" && (artifact.ChatID == "" || artifact.UserID == "" || artifact.WorkspaceID == "" || artifact.ProjectID == "") {
+		run, err := s.GetRun(artifact.RunID)
+		if err == nil {
+			artifact.ChatID = firstNonEmpty(artifact.ChatID, run.ChatID)
+			artifact.UserID = firstNonEmpty(artifact.UserID, run.UserID)
+			artifact.WorkspaceID = firstNonEmpty(artifact.WorkspaceID, run.WorkspaceID)
+			if chat, _, err := s.GetChat(run.ChatID); err == nil {
+				artifact.ProjectID = firstNonEmpty(artifact.ProjectID, chat.ProjectID)
+			}
+		}
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO artifacts (id, run_id, chat_id, user_id, project_id, workspace_id, path, name, mime_type, size_bytes, sha256, storage_backend, storage_key, created_at, deleted_at)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, NULLIF($8, ''), $9, $10, NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), $14, $15)
+		ON CONFLICT (id)
+		DO UPDATE SET path = EXCLUDED.path,
+		              name = EXCLUDED.name,
+		              mime_type = EXCLUDED.mime_type,
+		              size_bytes = EXCLUDED.size_bytes,
+		              sha256 = EXCLUDED.sha256,
+		              storage_backend = EXCLUDED.storage_backend,
+		              storage_key = EXCLUDED.storage_key,
+		              deleted_at = EXCLUDED.deleted_at`,
+		artifact.ID, artifact.RunID, artifact.ChatID, artifact.UserID, artifact.ProjectID, artifact.WorkspaceID,
+		artifact.Path, artifact.Name, artifact.MimeType, artifact.SizeBytes, artifact.SHA256, artifact.StorageBackend, artifact.StorageKey, artifact.CreatedAt, artifact.DeletedAt)
+	if err != nil {
+		return protocol.Artifact{}, err
+	}
+	return artifact, nil
+}
+
+func (s *PostgresStore) ListArtifacts(runID string) []protocol.Artifact {
+	rows, err := s.db.Query(`
+		SELECT id, run_id, COALESCE(chat_id, ''), COALESCE(user_id, ''), COALESCE(project_id, ''), COALESCE(workspace_id, ''),
+		       path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, deleted_at
+		FROM artifacts
+		WHERE run_id = $1 AND deleted_at IS NULL
+		ORDER BY created_at`, runID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var artifacts []protocol.Artifact
+	for rows.Next() {
+		var artifact protocol.Artifact
+		var deletedAt sql.NullTime
+		if err := rows.Scan(
+			&artifact.ID, &artifact.RunID, &artifact.ChatID, &artifact.UserID, &artifact.ProjectID, &artifact.WorkspaceID,
+			&artifact.Path, &artifact.Name, &artifact.MimeType, &artifact.SizeBytes, &artifact.SHA256, &artifact.StorageBackend, &artifact.StorageKey, &artifact.CreatedAt, &deletedAt,
+		); err == nil {
+			if deletedAt.Valid {
+				artifact.DeletedAt = &deletedAt.Time
+			}
+			artifacts = append(artifacts, artifact)
+		}
+	}
+	return artifacts
+}
+
+func (s *PostgresStore) GetArtifact(artifactID string) (protocol.Artifact, error) {
+	var artifact protocol.Artifact
+	var deletedAt sql.NullTime
+	if err := s.db.QueryRow(`
+		SELECT id, run_id, COALESCE(chat_id, ''), COALESCE(user_id, ''), COALESCE(project_id, ''), COALESCE(workspace_id, ''),
+		       path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, deleted_at
+		FROM artifacts
+		WHERE id = $1 AND deleted_at IS NULL`, artifactID).Scan(
+		&artifact.ID, &artifact.RunID, &artifact.ChatID, &artifact.UserID, &artifact.ProjectID, &artifact.WorkspaceID,
+		&artifact.Path, &artifact.Name, &artifact.MimeType, &artifact.SizeBytes, &artifact.SHA256, &artifact.StorageBackend, &artifact.StorageKey, &artifact.CreatedAt, &deletedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.Artifact{}, app.ErrNotFound
+		}
+		return protocol.Artifact{}, err
+	}
+	if deletedAt.Valid {
+		artifact.DeletedAt = &deletedAt.Time
+	}
+	return artifact, nil
 }
 
 func (s *PostgresStore) ListSkillsForUser(userID, projectID string) []protocol.Skill {

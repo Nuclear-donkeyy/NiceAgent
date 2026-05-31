@@ -7,9 +7,18 @@ import (
 )
 
 func WriteSSE(w http.ResponseWriter, event string, value any) error {
+	return WriteSSEWithID(w, "", event, value)
+}
+
+func WriteSSEWithID(w http.ResponseWriter, id string, event string, value any) error {
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return err
+	}
+	if id != "" {
+		if _, err := fmt.Fprintf(w, "id: %s\n", id); err != nil {
+			return err
+		}
 	}
 	if event != "" {
 		if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {

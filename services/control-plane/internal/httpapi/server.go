@@ -37,7 +37,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/skills/", s.skillSubroutes)
 	mux.HandleFunc("/internal/runs/", s.internalRunSubroutes)
 	mux.Handle("/", http.FileServer(http.Dir(staticDir())))
-	return requestLogger(s.log, mux)
+	return requestLogger(s.log, withActor(mux))
 }
 
 func staticDir() string {
@@ -52,19 +52,20 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
+	actor := actorFromRequest(r)
 	switch r.Method {
 	case http.MethodGet:
 		opts := app.ChatListOptions{
 			Query:           r.URL.Query().Get("q"),
 			IncludeArchived: parseBool(r.URL.Query().Get("include_archived")),
 		}
-		platform.WriteJSON(w, http.StatusOK, map[string]any{"chats": s.repo.ListChats(app.DemoUserID, opts)})
+		platform.WriteJSON(w, http.StatusOK, map[string]any{"chats": s.repo.ListChats(actor.UserID, opts)})
 	case http.MethodPost:
 		var input struct {
 			Title string `json:"title"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&input)
-		chat, err := s.repo.CreateChat(app.DemoUserID, input.Title)
+		chat, err := s.repo.CreateChat(actor.UserID, input.Title)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -76,6 +77,7 @@ func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatSubroutes(w http.ResponseWriter, r *http.Request) {
+	actor := actorFromRequest(r)
 	parts := splitPath(strings.TrimPrefix(r.URL.Path, "/api/chats/"))
 	if len(parts) == 0 {
 		platform.WriteError(w, http.StatusNotFound, "chat route not found")
@@ -96,7 +98,7 @@ func (s *Server) chatSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "archive" && r.Method == http.MethodPost {
-		chat, err := s.repo.SetChatArchived(chatID, app.DemoUserID, true)
+		chat, err := s.repo.SetChatArchived(chatID, actor.UserID, true)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -105,7 +107,7 @@ func (s *Server) chatSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "restore" && r.Method == http.MethodPost {
-		chat, err := s.repo.SetChatArchived(chatID, app.DemoUserID, false)
+		chat, err := s.repo.SetChatArchived(chatID, actor.UserID, false)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -117,6 +119,7 @@ func (s *Server) chatSubroutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, chatID string) {
+	actor := actorFromRequest(r)
 	var input struct {
 		Content string `json:"content"`
 	}
@@ -129,7 +132,7 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, chatID st
 		platform.WriteError(w, http.StatusBadRequest, "content is required")
 		return
 	}
-	message, run, err := s.repo.AddUserMessage(chatID, app.DemoUserID, input.Content)
+	message, run, err := s.repo.AddUserMessage(chatID, actor.UserID, input.Content)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -164,6 +167,10 @@ func (s *Server) runSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.runEvents(w, r, runID)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "artifacts" && r.Method == http.MethodGet {
+		platform.WriteJSON(w, http.StatusOK, protocol.ArtifactListResponse{Artifacts: s.repo.ListArtifacts(runID)})
+		return
+	}
 	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
 		run, err := s.repo.UpdateRunStatus(runID, protocol.RunCanceled, "")
 		if err != nil {
@@ -183,9 +190,9 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, runID string)
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	afterSeq, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	afterSeq, _ := strconv.ParseInt(firstNonEmpty(r.URL.Query().Get("after"), r.Header.Get("Last-Event-ID")), 10, 64)
 	for _, event := range s.repo.ListEvents(runID, afterSeq) {
-		if err := platform.WriteSSE(w, string(event.Type), event); err != nil {
+		if err := platform.WriteSSEWithID(w, strconv.FormatInt(event.Seq, 10), string(event.Type), event); err != nil {
 			return
 		}
 		afterSeq = event.Seq
@@ -204,9 +211,10 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, runID string)
 				return
 			}
 			if event.Seq > afterSeq {
-				if err := platform.WriteSSE(w, string(event.Type), event); err != nil {
+				if err := platform.WriteSSEWithID(w, strconv.FormatInt(event.Seq, 10), string(event.Type), event); err != nil {
 					return
 				}
+				afterSeq = event.Seq
 			}
 		case <-ticker.C:
 			if err := platform.WriteSSE(w, "ping", map[string]string{"status": "ok"}); err != nil {
@@ -216,8 +224,9 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, runID string)
 	}
 }
 
-func (s *Server) skills(w http.ResponseWriter, _ *http.Request) {
-	skills := s.repo.ListSkillsForUser(app.DemoUserID, app.DemoProjectID)
+func (s *Server) skills(w http.ResponseWriter, r *http.Request) {
+	actor := actorFromRequest(r)
+	skills := s.repo.ListSkillsForUser(actor.UserID, actor.ProjectID)
 	platform.WriteJSON(w, http.StatusOK, protocol.SkillsResponse{
 		Skills: skills,
 		Groups: groupSkills(skills),
@@ -225,6 +234,7 @@ func (s *Server) skills(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
+	actor := actorFromRequest(r)
 	parts := splitPath(strings.TrimPrefix(r.URL.Path, "/api/skills/"))
 	if len(parts) == 1 && parts[0] == "http" && r.Method == http.MethodPost {
 		s.createHTTPSkill(w, r)
@@ -235,7 +245,7 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "enable" && r.Method == http.MethodPost {
-		skill, err := s.repo.SetSkillEnabled(app.DemoUserID, parts[0], true)
+		skill, err := s.repo.SetSkillEnabled(actor.UserID, parts[0], true)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -244,7 +254,7 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "disable" && r.Method == http.MethodPost {
-		skill, err := s.repo.SetSkillEnabled(app.DemoUserID, parts[0], false)
+		skill, err := s.repo.SetSkillEnabled(actor.UserID, parts[0], false)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -263,6 +273,7 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createHTTPSkill(w http.ResponseWriter, r *http.Request) {
+	actor := actorFromRequest(r)
 	var input protocol.HTTPSkillInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
@@ -272,7 +283,7 @@ func (s *Server) createHTTPSkill(w http.ResponseWriter, r *http.Request) {
 		platform.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	skill, err := s.repo.CreateHTTPSkill(app.DemoUserID, app.DemoProjectID, input)
+	skill, err := s.repo.CreateHTTPSkill(actor.UserID, actor.ProjectID, input)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -281,6 +292,7 @@ func (s *Server) createHTTPSkill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateHTTPSkill(w http.ResponseWriter, r *http.Request, skillID string) {
+	actor := actorFromRequest(r)
 	var input protocol.HTTPSkillInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
@@ -290,7 +302,7 @@ func (s *Server) updateHTTPSkill(w http.ResponseWriter, r *http.Request, skillID
 		platform.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	skill, err := s.repo.UpdateHTTPSkill(app.DemoUserID, skillID, input)
+	skill, err := s.repo.UpdateHTTPSkill(actor.UserID, skillID, input)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -398,6 +410,15 @@ func (s *Server) internalCompleteRun(w http.ResponseWriter, r *http.Request, run
 		writeStoreErr(w, err)
 		return
 	}
+	for _, artifact := range input.Artifacts {
+		artifact.RunID = firstNonEmpty(artifact.RunID, runID)
+		saved, err := s.repo.AddArtifact(artifact)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		_, _ = s.repo.AddEvent(runID, protocol.EventArtifactCreated, "Artifact created.", saved)
+	}
 	run, err := s.repo.GetRun(runID)
 	if err != nil {
 		writeStoreErr(w, err)
@@ -465,6 +486,31 @@ func parseBool(value string) bool {
 	default:
 		return false
 	}
+}
+
+type actorContextKey struct{}
+
+func withActor(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		actor := app.DemoActor()
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
+	})
+}
+
+func actorFromRequest(r *http.Request) app.ActorContext {
+	if actor, ok := r.Context().Value(actorContextKey{}).(app.ActorContext); ok && actor.UserID != "" {
+		return actor
+	}
+	return app.DemoActor()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func requestLogger(log *slog.Logger, next http.Handler) http.Handler {

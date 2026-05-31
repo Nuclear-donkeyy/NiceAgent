@@ -9,7 +9,24 @@ import (
 const (
 	DemoUserID    = "demo-user"
 	DemoProjectID = "demo-project"
+	DemoOrgID     = "demo-org"
 )
+
+type ActorContext struct {
+	UserID    string
+	ProjectID string
+	OrgID     string
+	Roles     []string
+}
+
+func DemoActor() ActorContext {
+	return ActorContext{
+		UserID:    DemoUserID,
+		ProjectID: DemoProjectID,
+		OrgID:     DemoOrgID,
+		Roles:     []string{"owner"},
+	}
+}
 
 type ChatListOptions struct {
 	Query           string
@@ -28,6 +45,11 @@ type Repository interface {
 	AddEvent(runID string, typ protocol.RunEventType, message string, payload any) (protocol.RunEvent, error)
 	ListEvents(runID string, afterSeq int64) []protocol.RunEvent
 	Subscribe(runID string) (<-chan protocol.RunEvent, func())
+	AddWorkspace(workspace protocol.Workspace) (protocol.Workspace, error)
+	GetWorkspace(workspaceID string) (protocol.Workspace, error)
+	AddArtifact(artifact protocol.Artifact) (protocol.Artifact, error)
+	ListArtifacts(runID string) []protocol.Artifact
+	GetArtifact(artifactID string) (protocol.Artifact, error)
 	ListSkillsForUser(userID, projectID string) []protocol.Skill
 	ListRuntimeSkillsForUser(userID, projectID string) []protocol.RuntimeSkill
 	CreateHTTPSkill(userID, projectID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
