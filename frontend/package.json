@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "rspack serve --host 0.0.0.0 --port 3000",
     "build": "rspack build",
-    "check": "node --check src/App.jsx && node --check src/main.jsx"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "check": "npm run typecheck && npm run lint"
   },
   "dependencies": {
     "@rspack/cli": "^1.1.8",
@@ -14,6 +16,12 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^10.4.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.60.0"
+  }
 }
-

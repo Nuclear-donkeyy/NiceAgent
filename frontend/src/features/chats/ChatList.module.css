@@ -1,0 +1,88 @@
+.filters {
+  display: grid;
+  gap: 8px;
+}
+
+.filters input[type="text"],
+.filters input:not([type]) {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--black);
+  min-height: 36px;
+  outline: none;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.filters input:focus {
+  border-color: var(--black);
+}
+
+.filters label {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+}
+
+.filters input[type="checkbox"] {
+  accent-color: var(--black);
+  height: 14px;
+  width: 14px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+}
+
+.row {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--black);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 4px;
+  min-height: 36px;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.row:hover,
+.active {
+  background: var(--paper);
+  border-color: var(--black);
+}
+
+.row span {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archived {
+  color: var(--muted);
+}
+
+.row em {
+  border: 1px solid var(--line);
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-style: normal;
+  padding: 1px 5px;
+}
+
+.row small {
+  color: var(--muted);
+  font-size: 12px;
+}

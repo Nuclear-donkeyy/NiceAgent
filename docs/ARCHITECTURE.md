@@ -19,6 +19,7 @@ services/sandbox-executor
 
 packages/common
   公共 Go module。包含 protocol、platform helper、可复用 sandbox 执行组件。
+  protocol 按 chat、run、event、skill、workspace、model、sandbox 等领域文件维护，package/import path 不变。
 ```
 
 ## Control Plane
@@ -63,6 +64,15 @@ Sandbox Executor 独立部署，负责命令执行策略。当前 `packages/comm
 
 ## 前端
 
-前端位于 `frontend`，使用 React + Rspack。设计风格参考 ChatGPT 网页版：左侧会话、系统能力和我的能力，右侧主对话区和输入框。底层 `RunEvent` 通过 SSE 接收，但会折叠成 assistant 流式文本和 agent 当前状态，不再默认展示原始事件列表或 CLI 调试输出。HTTP Skill 可以在“我的能力”中最小化添加和启停。视觉以黑、白、微黄色为主，减少圆角，强调面性和线性结构。
+前端位于 `frontend`，使用 React + Rspack + TypeScript + CSS Modules。设计风格参考 ChatGPT 网页版：左侧会话、系统能力和我的能力，右侧主对话区和输入框。底层 `RunEvent` 通过 SSE 接收，但会折叠成 assistant 流式文本和 agent 当前状态，不再默认展示原始事件列表或 CLI 调试输出。HTTP Skill 可以在“我的能力”中最小化添加和启停。视觉以黑、白、微黄色为主，减少圆角，强调面性和线性结构。
+
+前端目录按职责分层：
+
+- `src/app`：应用装配和跨 feature 状态编排。
+- `src/api`：HTTP client 和 API 函数。
+- `src/domain`：前端领域类型和展示 label。
+- `src/features`：聊天、对话、Skill 等业务组件。
+- `src/components`：跨 feature 复用的小组件。
+- `src/styles/global.css`：全局 token/reset；组件样式使用 CSS Modules。
 
 开发模式下由 Rspack dev server 代理 API；生产模式下由 Control Plane 托管 `frontend/dist`。

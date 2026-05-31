@@ -3,7 +3,7 @@ const { HtmlRspackPlugin } = require("@rspack/core");
 
 module.exports = {
   context: __dirname,
-  entry: "./src/main.jsx",
+  entry: "./src/main.tsx",
   output: {
     path: path.resolve(__dirname, "dist"),
     filename: "assets/[name].[contenthash:8].js",
@@ -13,14 +13,14 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.jsx?$/,
+        test: /\.[jt]sx?$/,
         exclude: /node_modules/,
         loader: "builtin:swc-loader",
         options: {
           jsc: {
             parser: {
-              syntax: "ecmascript",
-              jsx: true,
+              syntax: "typescript",
+              tsx: true,
             },
             transform: {
               react: {
@@ -32,7 +32,19 @@ module.exports = {
         type: "javascript/auto",
       },
       {
+        test: /\.module\.css$/,
+        type: "css/module",
+        parser: {
+          namedExports: false,
+        },
+        generator: {
+          esModule: true,
+          exportsConvention: "camel-case-only",
+        },
+      },
+      {
         test: /\.css$/,
+        exclude: /\.module\.css$/,
         type: "css",
       },
     ],
@@ -41,7 +53,7 @@ module.exports = {
     css: true,
   },
   resolve: {
-    extensions: [".js", ".jsx"],
+    extensions: [".ts", ".tsx", ".js", ".jsx"],
   },
   plugins: [
     new HtmlRspackPlugin({

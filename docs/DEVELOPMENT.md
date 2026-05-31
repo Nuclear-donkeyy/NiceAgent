@@ -84,6 +84,25 @@ npm run dev
 make build-web
 ```
 
+前端工程化约定：
+
+- 使用 TypeScript，新增文件使用 `.ts` 或 `.tsx`。
+- `src/app` 只负责应用装配和跨 feature 状态编排。
+- `src/api` 放 HTTP client 和 API 函数。
+- `src/domain` 放前端领域类型和展示 label。
+- `src/features` 按业务能力放组件、hook 和同名 CSS Module。
+- `src/components` 放跨 feature 复用的小组件。
+- 样式默认使用 CSS Modules；`src/styles/global.css` 只放 reset、CSS variables 和基础页面背景。
+
+前端检查：
+
+```bash
+cd frontend
+npm run typecheck
+npm run lint
+npm run build
+```
+
 Control Plane 默认托管 `../../frontend/dist`。如需指定其他目录：
 
 ```bash
@@ -164,3 +183,4 @@ docker run --rm -v "$PWD":/workspace -w /workspace golang:1.22 \
 - Control Plane、Agent Runtime、Sandbox Executor 应保持可独立部署。
 - 代码标识符、API path、JSON 字段、环境变量保持英文。
 - 不要在文档中把尚未完成的能力写成已完成能力。
+- AI/子 agent 修改仓库时优先阅读根目录 [AGENTS.md](../AGENTS.md)。

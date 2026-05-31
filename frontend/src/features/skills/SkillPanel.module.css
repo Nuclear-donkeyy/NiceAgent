@@ -1,0 +1,100 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+}
+
+.card {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.head span {
+  border: 1px solid var(--line);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.card p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 8px 0;
+}
+
+.sectionRow {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.miniButton,
+.primaryButton,
+.secondaryButton {
+  border: 1px solid var(--black);
+  cursor: pointer;
+  font: inherit;
+  min-height: 36px;
+  padding: 8px 14px;
+}
+
+.miniButton {
+  background: var(--black);
+  color: var(--white);
+  min-height: 28px;
+  padding: 4px 9px;
+}
+
+.primaryButton {
+  background: var(--black);
+  color: var(--white);
+}
+
+.secondaryButton {
+  background: transparent;
+  color: var(--black);
+}
+
+.form {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.form input,
+.form textarea,
+.form select {
+  background: var(--white);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+  padding: 9px 10px;
+}
+
+.form textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+
+.form input:focus,
+.form textarea:focus,
+.form select:focus {
+  border-color: var(--black);
+}
+
+.formRow {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
