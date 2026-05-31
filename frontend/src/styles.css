@@ -21,6 +21,7 @@ body {
 }
 
 button,
+input,
 textarea {
   font: inherit;
 }
@@ -116,6 +117,40 @@ small {
   color: var(--black);
 }
 
+.chat-filters {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-filters input[type="text"],
+.chat-filters input:not([type]) {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--black);
+  min-height: 36px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.chat-filters input:focus {
+  border-color: var(--black);
+}
+
+.chat-filters label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat-filters input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--black);
+}
+
 .chat-list,
 .skill-list,
 .event-list {
@@ -143,9 +178,26 @@ small {
 }
 
 .chat-row span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-row.archived {
+  color: var(--muted);
+}
+
+.chat-row em {
+  border: 1px solid var(--line);
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-style: normal;
+  padding: 1px 5px;
 }
 
 .skill-card {
@@ -190,6 +242,12 @@ small {
   padding: 18px 28px;
 }
 
+.topbar-note {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .run-state {
   display: flex;
   align-items: center;
@@ -218,6 +276,11 @@ small {
 .status.canceled {
   color: var(--white);
   background: var(--black);
+}
+
+.status.waiting_for_approval {
+  border-color: var(--black);
+  background: var(--warm);
 }
 
 .conversation {
@@ -396,4 +459,3 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
-

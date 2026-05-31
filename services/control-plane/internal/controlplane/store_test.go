@@ -38,6 +38,45 @@ func TestStoreCreatesChatMessageRunAndEvents(t *testing.T) {
 	}
 }
 
+func TestStoreListsSearchesArchivesAndRestoresChats(t *testing.T) {
+	store := NewStore()
+	alpha := mustCreateChat(t, store, "demo-user", "Alpha project")
+	beta := mustCreateChat(t, store, "demo-user", "Beta project")
+
+	list := store.ListChats("demo-user", ChatListOptions{})
+	if len(list) != 2 {
+		t.Fatalf("active chats len = %d, want 2", len(list))
+	}
+	matches := store.ListChats("demo-user", ChatListOptions{Query: "alpha"})
+	if len(matches) != 1 || matches[0].ID != alpha.ID {
+		t.Fatalf("search matches = %#v, want alpha chat", matches)
+	}
+
+	archived, err := store.SetChatArchived(beta.ID, "demo-user", true)
+	if err != nil {
+		t.Fatalf("archive chat: %v", err)
+	}
+	if !archived.Archived {
+		t.Fatal("expected archived chat")
+	}
+	list = store.ListChats("demo-user", ChatListOptions{})
+	if len(list) != 1 || list[0].ID != alpha.ID {
+		t.Fatalf("active chats after archive = %#v, want alpha only", list)
+	}
+	list = store.ListChats("demo-user", ChatListOptions{IncludeArchived: true})
+	if len(list) != 2 {
+		t.Fatalf("all chats after archive = %d, want 2", len(list))
+	}
+
+	restored, err := store.SetChatArchived(beta.ID, "demo-user", false)
+	if err != nil {
+		t.Fatalf("restore chat: %v", err)
+	}
+	if restored.Archived {
+		t.Fatal("expected restored chat")
+	}
+}
+
 func TestStoreUpdatesRunStatus(t *testing.T) {
 	store := NewStore()
 	chat := mustCreateChat(t, store, "demo-user", "status")

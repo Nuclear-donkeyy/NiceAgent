@@ -66,10 +66,18 @@ export default function App() {
   const [cliLines, setCliLines] = useState([]);
   const [input, setInput] = useState("");
   const [notice, setNotice] = useState("准备就绪");
+  const [chatQuery, setChatQuery] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [chatsLoading, setChatsLoading] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const [messageLoading, setMessageLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [eventsReplaying, setEventsReplaying] = useState(false);
   const sourceRef = useRef(null);
   const refreshTimerRef = useRef(null);
 
   const canCancel = runId && !TERMINAL.has(runStatus) && runStatus !== "idle";
+  const canSend = !sending && input.trim().length > 0;
   const eventSummary = events.length > 0 ? events[events.length - 1].message || eventText[events[events.length - 1].type] : "暂无事件";
 
   useEffect(() => {
@@ -77,16 +85,40 @@ export default function App() {
     return () => closeEvents();
   }, []);
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadChats(false);
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [chatQuery, showArchived]);
+
   async function boot() {
-    await Promise.all([loadChats(true), loadSkills()]);
+    try {
+      await Promise.all([loadChats(true), loadSkills()]);
+    } catch (error) {
+      setNotice(error.message);
+    }
   }
 
   async function loadChats(selectFirst = false) {
-    const data = await api("/api/chats");
-    const list = data.chats || [];
-    setChats(list);
-    if (selectFirst && !activeChatId && list.length > 0) {
-      await selectChat(list[0].id);
+    setChatsLoading(true);
+    setChatError("");
+    try {
+      const params = new URLSearchParams();
+      if (chatQuery.trim()) params.set("q", chatQuery.trim());
+      if (showArchived) params.set("include_archived", "true");
+      const path = params.toString() ? `/api/chats?${params.toString()}` : "/api/chats";
+      const data = await api(path);
+      const list = data.chats || [];
+      setChats(list);
+      if (selectFirst && !activeChatId && list.length > 0) {
+        await selectChat(list[0].id);
+      }
+    } catch (error) {
+      setChatError(error.message);
+      setNotice(`会话加载失败：${error.message}`);
+    } finally {
+      setChatsLoading(false);
     }
   }
 
@@ -96,61 +128,80 @@ export default function App() {
   }
 
   async function createChat() {
-    const chat = await api("/api/chats", {
-      method: "POST",
-      body: JSON.stringify({ title: "新的远端任务" }),
-    });
-    await loadChats(false);
-    await selectChat(chat.id);
+    try {
+      const chat = await api("/api/chats", {
+        method: "POST",
+        body: JSON.stringify({ title: "新的远端任务" }),
+      });
+      await loadChats(false);
+      await selectChat(chat.id);
+    } catch (error) {
+      setNotice(`新建会话失败：${error.message}`);
+    }
   }
 
   async function selectChat(chatId) {
     closeEvents();
     resetRunPanels();
     setActiveChatId(chatId);
-    const data = await api(`/api/chats/${chatId}`);
-    setActiveChat(data.chat);
-    setMessages(data.messages || []);
-    if (data.chat?.last_run_id) {
-      await loadRun(data.chat.last_run_id);
+    setMessageLoading(true);
+    try {
+      const data = await api(`/api/chats/${chatId}`);
+      setActiveChat(data.chat);
+      setMessages(data.messages || []);
+      if (data.chat?.last_run_id) {
+        await loadRun(data.chat.last_run_id, chatId);
+      }
+      await loadChats(false);
+    } catch (error) {
+      setNotice(`会话加载失败：${error.message}`);
+    } finally {
+      setMessageLoading(false);
     }
-    await loadChats(false);
   }
 
-  async function loadRun(id) {
+  async function loadRun(id, chatIdForRefresh = activeChatId) {
     const run = await api(`/api/runs/${id}`);
     setRunId(run.id);
     setRunStatus(run.status || "idle");
     setNotice(run.error ? `最近 Run 失败：${run.error}` : `正在查看 Run：${run.id}`);
-    openEvents(run.id);
+    openEvents(run.id, chatIdForRefresh, !TERMINAL.has(run.status || "idle"));
   }
 
   async function sendMessage(event) {
     event.preventDefault();
     const content = input.trim();
     if (!content) return;
-    let chatId = activeChatId;
-    if (!chatId) {
-      const chat = await api("/api/chats", {
+    setSending(true);
+    try {
+      let chatId = activeChatId;
+      if (!chatId) {
+        const chat = await api("/api/chats", {
+          method: "POST",
+          body: JSON.stringify({ title: "新的远端任务" }),
+        });
+        chatId = chat.id;
+        setActiveChatId(chatId);
+        setActiveChat(chat);
+      }
+      setInput("");
+      resetRunPanels();
+      setRunStatus("queued");
+      const response = await api(`/api/chats/${chatId}/messages`, {
         method: "POST",
-        body: JSON.stringify({ title: "新的远端任务" }),
+        body: JSON.stringify({ content }),
       });
-      chatId = chat.id;
-      setActiveChatId(chatId);
-      setActiveChat(chat);
+      setMessages((prev) => [...prev, response.message]);
+      setRunId(response.run.id);
+      setRunStatus(response.run.status);
+      openEvents(response.run.id, chatId, true);
+      await loadChats(false);
+    } catch (error) {
+      setNotice(`发送失败：${error.message}`);
+      setRunStatus("failed");
+    } finally {
+      setSending(false);
     }
-    setInput("");
-    resetRunPanels();
-    setRunStatus("queued");
-    const response = await api(`/api/chats/${chatId}/messages`, {
-      method: "POST",
-      body: JSON.stringify({ content }),
-    });
-    setMessages((prev) => [...prev, response.message]);
-    setRunId(response.run.id);
-    setRunStatus(response.run.status);
-    openEvents(response.run.id);
-    await loadChats(false);
   }
 
   async function cancelRun() {
@@ -165,11 +216,27 @@ export default function App() {
     setNotice(`已记录 ${id} 授权，恢复执行会在后续阶段实现`);
   }
 
-  function openEvents(id) {
+  async function setActiveChatArchived(archived) {
+    if (!activeChatId) return;
+    try {
+      const action = archived ? "archive" : "restore";
+      const chat = await api(`/api/chats/${activeChatId}/${action}`, { method: "POST" });
+      setActiveChat(chat);
+      setNotice(archived ? "会话已归档" : "会话已恢复");
+      await loadChats(false);
+    } catch (error) {
+      setNotice(`${archived ? "归档" : "恢复"}失败：${error.message}`);
+    }
+  }
+
+  function openEvents(id, chatIdForRefresh = activeChatId, refreshOnTerminal = false) {
     closeEvents();
+    setEventsReplaying(true);
     const source = new EventSource(`/api/runs/${id}/events`);
     sourceRef.current = source;
+    source.onopen = () => setEventsReplaying(false);
     source.onerror = () => {
+      setEventsReplaying(false);
       if (!TERMINAL.has(runStatus)) setNotice("事件流暂时中断，浏览器会自动重连");
     };
     Object.keys(eventText).forEach((type) => {
@@ -184,8 +251,11 @@ export default function App() {
           const next = type.replace("run.", "");
           setRunStatus(next);
           if (TERMINAL.has(next)) {
+            setEventsReplaying(false);
             source.close();
-            scheduleChatRefresh();
+            if (refreshOnTerminal) {
+              scheduleChatRefresh(chatIdForRefresh);
+            }
           }
         }
       });
@@ -208,10 +278,10 @@ export default function App() {
     setNotice("等待新的 Run");
   }
 
-  function scheduleChatRefresh() {
+  function scheduleChatRefresh(chatId = activeChatId) {
     clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = setTimeout(async () => {
-      if (activeChatId) await selectChat(activeChatId);
+      if (chatId) await selectChat(chatId);
     }, 250);
   }
 
@@ -257,17 +327,45 @@ export default function App() {
         </div>
 
         <SectionTitle text="会话" />
+        <div className="chat-filters">
+          <input
+            value={chatQuery}
+            onChange={(event) => setChatQuery(event.target.value)}
+            placeholder="搜索会话标题"
+          />
+          <label>
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(event) => setShowArchived(event.target.checked)}
+            />
+            显示归档
+          </label>
+        </div>
         <div className="chat-list">
-          {chats.length === 0 ? (
-            <Empty text="还没有会话" />
+          {chatsLoading ? (
+            <Empty text="正在加载会话" />
+          ) : chatError ? (
+            <Empty text={`会话加载失败：${chatError}`} />
+          ) : chats.length === 0 ? (
+            <Empty text={chatQuery ? "没有匹配的会话" : "还没有会话"} />
           ) : (
             chats.map((chat) => (
               <button
                 key={chat.id}
-                className={chat.id === activeChatId ? "chat-row active" : "chat-row"}
+                className={[
+                  "chat-row",
+                  chat.id === activeChatId ? "active" : "",
+                  chat.archived ? "archived" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 onClick={() => selectChat(chat.id)}
               >
-                <span>{chat.title || "未命名会话"}</span>
+                <span>
+                  {chat.title || "未命名会话"}
+                  {chat.archived && <em>归档</em>}
+                </span>
                 <small>{chat.message_count || 0} 条消息</small>
               </button>
             ))
@@ -294,9 +392,15 @@ export default function App() {
           <div>
             <div className="overline">当前会话</div>
             <h2>{activeChat?.title || "新的对话"}</h2>
+            {activeChat?.archived && <p className="topbar-note">此会话已归档，可恢复后继续使用。</p>}
           </div>
           <div className="run-state">
             <span className={`status ${runStatus}`}>{statusText[runStatus] || runStatus}</span>
+            {activeChat && (
+              <button className="line-button" onClick={() => setActiveChatArchived(!activeChat.archived)}>
+                {activeChat.archived ? "恢复" : "归档"}
+              </button>
+            )}
             <button className="line-button" disabled={!canCancel} onClick={cancelRun}>
               取消
             </button>
@@ -304,7 +408,9 @@ export default function App() {
         </header>
 
         <section className="conversation">
-          {messages.length === 0 ? (
+          {messageLoading ? (
+            <Empty text="正在加载消息" />
+          ) : messages.length === 0 ? (
             <div className="welcome">
               <h3>今天要让远端 agent 做什么？</h3>
               <p>可以先试试 `/cli echo hello`，观察右侧事件和 CLI 输出。</p>
@@ -318,7 +424,7 @@ export default function App() {
           <div className="activity-head">
             <div>
               <SectionTitle text="运行事件" />
-              <p>{eventSummary}</p>
+              <p>{eventsReplaying ? "正在恢复事件流" : eventSummary}</p>
             </div>
             <span>{events.length}</span>
           </div>
@@ -340,8 +446,9 @@ export default function App() {
             onChange={(event) => setInput(event.target.value)}
             placeholder="发送消息给远端 agent"
             rows={3}
+            disabled={sending}
           />
-          <button type="submit">发送</button>
+          <button type="submit" disabled={!canSend}>{sending ? "发送中" : "发送"}</button>
         </form>
         <div className="notice">{notice}</div>
       </section>

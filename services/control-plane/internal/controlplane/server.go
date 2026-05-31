@@ -54,7 +54,11 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		platform.WriteJSON(w, http.StatusOK, map[string]any{"chats": s.repo.ListChats(demoUserID)})
+		opts := ChatListOptions{
+			Query:           r.URL.Query().Get("q"),
+			IncludeArchived: parseBool(r.URL.Query().Get("include_archived")),
+		}
+		platform.WriteJSON(w, http.StatusOK, map[string]any{"chats": s.repo.ListChats(demoUserID, opts)})
 	case http.MethodPost:
 		var input struct {
 			Title string `json:"title"`
@@ -89,6 +93,24 @@ func (s *Server) chatSubroutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "messages" && r.Method == http.MethodPost {
 		s.createMessage(w, r, chatID)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "archive" && r.Method == http.MethodPost {
+		chat, err := s.repo.SetChatArchived(chatID, demoUserID, true)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		platform.WriteJSON(w, http.StatusOK, chat)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "restore" && r.Method == http.MethodPost {
+		chat, err := s.repo.SetChatArchived(chatID, demoUserID, false)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		platform.WriteJSON(w, http.StatusOK, chat)
 		return
 	}
 	platform.WriteError(w, http.StatusNotFound, "chat route not found")
@@ -378,6 +400,15 @@ func splitPath(path string) []string {
 		}
 	}
 	return parts
+}
+
+func parseBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func requestLogger(log *slog.Logger, next http.Handler) http.Handler {

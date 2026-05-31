@@ -2,7 +2,7 @@
 
 ## 阶段目标
 
-当前仓库已经完成多 Go module 拆分、React + Rspack 前端迁移、三服务 HTTP 解耦链路、本地 K8s 验证路径和 CI/CD 基础。下一阶段目标是把状态持久化打稳，再继续补 agent runtime 和 sandbox 生产化能力。
+当前仓库已经完成多 Go module 拆分、React + Rspack 前端迁移、三服务 HTTP 解耦链路、Postgres 持久化基础、本地 K8s 验证路径和 CI/CD 基础。下一阶段目标是继续补 agent runtime、sandbox 生产化能力和前端产品体验。
 
 优先级从高到低：
 
@@ -27,7 +27,7 @@
 - 启动 Control Plane、Agent Runtime 和 Sandbox Executor 三个进程后，普通消息和 `/cli echo hello` 能走跨服务链路。
 - Agent Runtime 重启或不可用时，Control Plane 能将 run 标记为失败或保留可重试状态。
 
-## Phase 2：状态持久化（当前落地）
+## Phase 2：状态持久化（基础完成）
 
 - 将 memory store 切换为可配置 repository。
 - 补齐 Postgres repository 的错误处理、事务一致性和测试。
@@ -41,7 +41,7 @@
 - SSE `after` replay 使用数据库事件序号。
 - memory 模式和 Postgres 模式都有清晰启动方式。
 
-## Phase 3：Agent Runtime 能力（Phase 3A 当前落地）
+## Phase 3：Agent Runtime 能力（Phase 3A 基础完成）
 
 - Phase 3A：落地 OpenAI-compatible provider，并保留 mock provider 作为默认本地路径。
 - 后续接入 Eino adapter 边界。
@@ -55,7 +55,7 @@
 - 工具调用、工具失败、模型错误都会产生标准化 `RunEvent`。
 - 取消 run 后，runtime 不再写入成功终态。
 
-## Phase 4：Sandbox 与 CLI（Phase 4A 当前落地）
+## Phase 4：Sandbox 与 CLI（Phase 4A 基础完成）
 
 - `services/sandbox-executor` 成为远端 CLI 的默认执行路径。
 - Agent Runtime 通过 HTTP 调用 Sandbox Executor。
@@ -70,11 +70,11 @@
 - 高风险命令不会直接执行，会返回 approval-needed 或策略拒绝事件。
 - stdout/stderr 超长输出会被截断并标记。
 
-## Phase 5：前端产品化
+## Phase 5：前端产品化（Phase 5A 当前落地）
 
 - React 前端继续贴近 ChatGPT 网页版风格。
-- 完善会话搜索、归档、run replay、artifact 展示、skill 授权和错误恢复。
-- 增加 API loading、error、empty 状态。
+- Phase 5A：完善会话搜索、归档/恢复、最近 run replay 和基础 loading/error/empty 状态。
+- 后续补 artifact 展示、skill 授权恢复闭环和更完整的错误恢复。
 - 保持黑、白、微黄色，少圆角，面性+线性风格。
 - 增加前端侧基础测试或至少稳定的 Rspack build 检查。
 

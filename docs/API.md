@@ -10,11 +10,24 @@
 
 `GET /api/chats`
 
-获取当前用户的活跃聊天会话列表。
+获取当前用户的聊天会话列表。默认只返回未归档会话。
+
+查询参数：
+
+- `q`：按会话标题搜索，大小写不敏感。
+- `include_archived=true`：同时返回已归档会话。
 
 `GET /api/chats/{chat_id}`
 
 获取一个聊天会话及其消息。
+
+`POST /api/chats/{chat_id}/archive`
+
+归档一个会话。归档不会删除消息、run 或 events；归档会话默认不出现在 `GET /api/chats` 结果中。
+
+`POST /api/chats/{chat_id}/restore`
+
+恢复一个已归档会话。
 
 `POST /api/chats/{chat_id}/messages`
 

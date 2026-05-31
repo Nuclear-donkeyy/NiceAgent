@@ -106,6 +106,57 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	}
 }
 
+func TestPostgresStoreSearchesArchivesAndRestoresChatsWhenConfigured(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("set TEST_DATABASE_URL to run postgres repository tests")
+	}
+	db, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	defer db.Close()
+	if err := db.PingContext(context.Background()); err != nil {
+		t.Fatalf("ping postgres: %v", err)
+	}
+	applyTestMigration(t, db)
+
+	store := NewPostgresStore(db)
+	title := "searchable chat " + time.Now().Format("20060102150405.000000000")
+	chat, err := store.CreateChat("demo-user", title)
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	matches := store.ListChats("demo-user", ChatListOptions{Query: title})
+	if len(matches) != 1 || matches[0].ID != chat.ID {
+		t.Fatalf("search matches = %#v, want created chat", matches)
+	}
+
+	archived, err := store.SetChatArchived(chat.ID, "demo-user", true)
+	if err != nil {
+		t.Fatalf("archive chat: %v", err)
+	}
+	if !archived.Archived {
+		t.Fatalf("archived chat = %#v, want archived", archived)
+	}
+	matches = store.ListChats("demo-user", ChatListOptions{Query: title})
+	if len(matches) != 0 {
+		t.Fatalf("active search matches after archive = %#v, want none", matches)
+	}
+	matches = store.ListChats("demo-user", ChatListOptions{Query: title, IncludeArchived: true})
+	if len(matches) != 1 || !matches[0].Archived {
+		t.Fatalf("archived search matches = %#v, want archived chat", matches)
+	}
+
+	restored, err := store.SetChatArchived(chat.ID, "demo-user", false)
+	if err != nil {
+		t.Fatalf("restore chat: %v", err)
+	}
+	if restored.Archived {
+		t.Fatalf("restored chat = %#v, want active", restored)
+	}
+}
+
 func applyTestMigration(t *testing.T, db *sql.DB) {
 	t.Helper()
 	raw, err := os.ReadFile("../../../../migrations/001_init.sql")

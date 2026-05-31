@@ -3,6 +3,7 @@ package controlplane
 import (
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,15 +67,23 @@ func NewStore() *Store {
 	return store
 }
 
-func (s *Store) ListChats(userID string) []protocol.ChatSession {
+func (s *Store) ListChats(userID string, opts ChatListOptions) []protocol.ChatSession {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	query := strings.ToLower(strings.TrimSpace(opts.Query))
 	chats := make([]protocol.ChatSession, 0, len(s.chats))
 	for _, chat := range s.chats {
-		if chat.UserID == userID && !chat.Archived {
-			chat.MessageCount = len(s.messages[chat.ID])
-			chats = append(chats, chat)
+		if chat.UserID != userID {
+			continue
 		}
+		if chat.Archived && !opts.IncludeArchived {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(chat.Title), query) {
+			continue
+		}
+		chat.MessageCount = len(s.messages[chat.ID])
+		chats = append(chats, chat)
 	}
 	sort.Slice(chats, func(i, j int) bool {
 		return chats[i].UpdatedAt.After(chats[j].UpdatedAt)
@@ -111,6 +120,20 @@ func (s *Store) GetChat(chatID string) (protocol.ChatSession, []protocol.Message
 	msgs := append([]protocol.Message(nil), s.messages[chatID]...)
 	chat.MessageCount = len(msgs)
 	return chat, msgs, nil
+}
+
+func (s *Store) SetChatArchived(chatID, userID string, archived bool) (protocol.ChatSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chat, ok := s.chats[chatID]
+	if !ok || chat.UserID != userID {
+		return protocol.ChatSession{}, ErrNotFound
+	}
+	chat.Archived = archived
+	chat.UpdatedAt = time.Now().UTC()
+	chat.MessageCount = len(s.messages[chat.ID])
+	s.chats[chatID] = chat
+	return chat, nil
 }
 
 func (s *Store) AddUserMessage(chatID, userID, content string) (protocol.Message, protocol.Run, error) {

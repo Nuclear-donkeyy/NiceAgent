@@ -3,6 +3,7 @@ package controlplane
 import (
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,15 +24,18 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	}
 }
 
-func (s *PostgresStore) ListChats(userID string) []protocol.ChatSession {
+func (s *PostgresStore) ListChats(userID string, opts ChatListOptions) []protocol.ChatSession {
+	query := "%" + strings.ToLower(strings.TrimSpace(opts.Query)) + "%"
 	rows, err := s.db.Query(`
 		SELECT c.id, c.user_id, c.project_id, c.title, c.archived, COALESCE(c.last_run_id, ''),
 		       c.created_at, c.updated_at, COUNT(m.id)
 		FROM chat_sessions c
 		LEFT JOIN messages m ON m.chat_id = c.id
-		WHERE c.user_id = $1 AND c.archived = false
+		WHERE c.user_id = $1
+		  AND ($2 OR c.archived = false)
+		  AND ($3 = '%%' OR LOWER(c.title) LIKE $3)
 		GROUP BY c.id
-		ORDER BY c.updated_at DESC`, userID)
+		ORDER BY c.updated_at DESC`, userID, opts.IncludeArchived, query)
 	if err != nil {
 		return nil
 	}
@@ -103,6 +107,26 @@ func (s *PostgresStore) GetChat(chatID string) (protocol.ChatSession, []protocol
 	}
 	chat.MessageCount = len(messages)
 	return chat, messages, rows.Err()
+}
+
+func (s *PostgresStore) SetChatArchived(chatID, userID string, archived bool) (protocol.ChatSession, error) {
+	now := time.Now().UTC()
+	result, err := s.db.Exec(`
+		UPDATE chat_sessions
+		SET archived = $1, updated_at = $2
+		WHERE id = $3 AND user_id = $4`, archived, now, chatID, userID)
+	if err != nil {
+		return protocol.ChatSession{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return protocol.ChatSession{}, err
+	}
+	if affected == 0 {
+		return protocol.ChatSession{}, ErrNotFound
+	}
+	chat, _, err := s.GetChat(chatID)
+	return chat, err
 }
 
 func (s *PostgresStore) AddUserMessage(chatID, userID, content string) (protocol.Message, protocol.Run, error) {

@@ -2,10 +2,16 @@ package controlplane
 
 import "niceagent/common/protocol"
 
+type ChatListOptions struct {
+	Query           string
+	IncludeArchived bool
+}
+
 type Repository interface {
-	ListChats(userID string) []protocol.ChatSession
+	ListChats(userID string, opts ChatListOptions) []protocol.ChatSession
 	CreateChat(userID, title string) (protocol.ChatSession, error)
 	GetChat(chatID string) (protocol.ChatSession, []protocol.Message, error)
+	SetChatArchived(chatID, userID string, archived bool) (protocol.ChatSession, error)
 	AddUserMessage(chatID, userID, content string) (protocol.Message, protocol.Run, error)
 	AddAssistantMessage(chatID, runID, content string) (protocol.Message, error)
 	GetRun(runID string) (protocol.Run, error)
