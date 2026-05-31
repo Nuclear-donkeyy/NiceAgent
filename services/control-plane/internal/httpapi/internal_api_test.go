@@ -80,6 +80,43 @@ func TestInternalRunAPIsWriteEventsCompleteFailAndStatus(t *testing.T) {
 		t.Fatalf("complete response usage = %#v", completedResponse.Usage)
 	}
 
+	duplicateComplete := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/complete", jsonBody(t, protocol.RunCompleteRequest{
+		Content: "duplicate completion",
+	}))
+	duplicateCompleteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(duplicateCompleteResponse, duplicateComplete)
+	if duplicateCompleteResponse.Code != http.StatusOK {
+		t.Fatalf("duplicate complete status = %d, body = %s", duplicateCompleteResponse.Code, duplicateCompleteResponse.Body.String())
+	}
+	lateFail := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/fail", jsonBody(t, protocol.RunFailRequest{
+		Error: "late failure",
+	}))
+	lateFailResponse := httptest.NewRecorder()
+	handler.ServeHTTP(lateFailResponse, lateFail)
+	if lateFailResponse.Code != http.StatusOK {
+		t.Fatalf("late fail status = %d, body = %s", lateFailResponse.Code, lateFailResponse.Body.String())
+	}
+	_, messages, err := store.GetChat(chat.ID)
+	if err != nil {
+		t.Fatalf("get chat after duplicate terminal callbacks: %v", err)
+	}
+	var assistantMessages int
+	for _, message := range messages {
+		if message.RunID == run.ID && message.Role == protocol.RoleAssistant {
+			assistantMessages++
+			if message.Content != "done" {
+				t.Fatalf("assistant message content = %q, want original completion", message.Content)
+			}
+		}
+	}
+	if assistantMessages != 1 {
+		t.Fatalf("assistant messages for run = %d, want 1", assistantMessages)
+	}
+	terminalEvents := terminalEventCounts(store.ListEvents(run.ID, 0))
+	if terminalEvents[protocol.EventRunSucceeded] != 1 || terminalEvents[protocol.EventRunFailed] != 0 {
+		t.Fatalf("terminal events = %#v, want one succeeded and no late failed event", terminalEvents)
+	}
+
 	_, failedRun, err := store.AddUserMessage(chat.ID, "demo-user", "fail")
 	if err != nil {
 		t.Fatalf("add failed user message: %v", err)
@@ -174,4 +211,14 @@ func TestInternalRunAPIApprovalNeededSetsWaitingStatus(t *testing.T) {
 	if gotRun.Status != protocol.RunCanceled {
 		t.Fatalf("late complete overwrote status to %q", gotRun.Status)
 	}
+}
+
+func terminalEventCounts(events []protocol.RunEvent) map[protocol.RunEventType]int {
+	counts := map[protocol.RunEventType]int{}
+	for _, event := range events {
+		if event.Type == protocol.EventRunSucceeded || event.Type == protocol.EventRunFailed || event.Type == protocol.EventRunCanceled {
+			counts[event.Type]++
+		}
+	}
+	return counts
 }

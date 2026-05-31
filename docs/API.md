@@ -4,6 +4,15 @@
 
 ## 外部 API
 
+### 认证与请求标识
+
+Control Plane 支持 `AUTH_MODE=demo|oidc`：
+
+- `demo`：默认模式，所有外部 API 映射到 `demo-user/demo-project`，用于本地开发和演示。
+- `oidc`：当前是最小边界实现，要求上游已完成 OIDC/session 校验，并在外部 API 请求中传入 `X-NiceAgent-User-ID` 和 `X-NiceAgent-Project-ID`。可选传入 `X-NiceAgent-Org-ID`、`X-NiceAgent-Roles`。缺少 actor header 时返回 401。完整 OIDC 登录、JWT 校验和用户/项目成员关系仍是后续工作。
+
+所有请求都会返回 `X-Request-ID`。如果请求头已提供合法 `X-Request-ID`，服务会透传；否则服务会生成一个新的 request id。request log 和 audit event 会记录同一个 request id，便于串联排障。
+
 `POST /api/chats`
 
 创建聊天会话。
@@ -45,7 +54,7 @@
 
 `GET /api/runs/{run_id}/events`
 
-订阅 run 的 Server-Sent Events。使用 `?after={seq}` 可以重放断线期间错过的事件。
+订阅 run 的 Server-Sent Events。服务端会把事件 `seq` 写为 SSE `id`，并按 `?after={seq}` 或请求头 `Last-Event-ID` 重放断线期间错过的事件；`?after` 优先级高于 `Last-Event-ID`。前端应记录每个 run 已处理的最大 `seq`，重连时带 `after`，并在应用事件前丢弃 `seq <= lastSeq` 的重复事件。
 
 `GET /api/runs/{run_id}/artifacts`
 
@@ -126,6 +135,29 @@
 
 已废弃的占位接口。当前前端不调用它；未来如果某些非 CLI skill 需要用户确认，可在此基础上扩展 run-specific approval API。
 
+`GET /api/audit/events`
+
+列出当前 actor 在当前项目下最近的 audit events。支持 `limit`、`request_id`、`run_id`、`action`、`resource_id` 过滤，`limit` 最大 100。audit metadata 会按敏感 key 脱敏，API key、Authorization header、token、secret、password 和 cookie 不应出现在响应中。
+
+```json
+{
+  "events": [
+    {
+      "id": "audit_xxx",
+      "actor_user_id": "demo-user",
+      "actor_project_id": "demo-project",
+      "action": "run.create",
+      "resource_type": "run",
+      "resource_id": "run_xxx",
+      "decision": "allow",
+      "request_id": "req_xxx",
+      "run_id": "run_xxx",
+      "created_at": "2026-05-31T00:00:00Z"
+    }
+  ]
+}
+```
+
 ## 内部 API
 
 `POST /internal/runs/execute`
@@ -141,6 +173,7 @@ Agent Runtime 执行 `RunExecutionRequest` 的入口，由 Control Plane 的 HTT
     "chat_id": "chat_xxx",
     "user_id": "demo-user",
     "workspace_id": "ws_xxx",
+    "attempt_id": "attempt_xxx",
     "skill_ids": ["workspace.read", "cli.exec"],
     "skills": [
       {

@@ -26,10 +26,14 @@ func TestServerCreatesChatSendsMessageAndCancelsRun(t *testing.T) {
 	createChat := httptest.NewRequest(http.MethodPost, "/api/chats", jsonBody(t, map[string]string{
 		"title": "集成测试",
 	}))
+	createChat.Header.Set("X-Request-ID", "test-request-create-chat")
 	createChatResponse := httptest.NewRecorder()
 	handler.ServeHTTP(createChatResponse, createChat)
 	if createChatResponse.Code != http.StatusCreated {
 		t.Fatalf("create chat status = %d, body = %s", createChatResponse.Code, createChatResponse.Body.String())
+	}
+	if got := createChatResponse.Header().Get("X-Request-ID"); got != "test-request-create-chat" {
+		t.Fatalf("x-request-id = %q, want propagated request id", got)
 	}
 	var chat protocol.ChatSession
 	decodeJSON(t, createChatResponse.Body, &chat)
@@ -88,6 +92,11 @@ func TestServerCreatesChatSendsMessageAndCancelsRun(t *testing.T) {
 	if len(chatResponse.Messages) == 0 {
 		t.Fatal("expected at least one persisted message")
 	}
+
+	auditEvents := store.ListAuditEvents(app.DemoActor(), app.AuditEventListOptions{RequestID: "test-request-create-chat"})
+	if len(auditEvents) != 1 || auditEvents[0].Action != "chat.create" || auditEvents[0].RequestID != "test-request-create-chat" {
+		t.Fatalf("audit events = %#v, want chat.create with request id", auditEvents)
+	}
 }
 
 func TestServerReplaysRunEventsAfterSeq(t *testing.T) {
@@ -120,11 +129,117 @@ func TestServerReplaysRunEventsAfterSeq(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("events len = %d, want 2, body = %s", len(events), response.Body.String())
 	}
+	if !strings.Contains(response.Body.String(), "id: 2\n") || !strings.Contains(response.Body.String(), "id: 3\n") {
+		t.Fatalf("sse body = %s, want id lines for replayed seq", response.Body.String())
+	}
 	if events[0].Seq != 2 || events[0].Type != protocol.EventRunStarted {
 		t.Fatalf("first replay event = seq %d type %q, want seq 2 run.started", events[0].Seq, events[0].Type)
 	}
 	if events[1].Seq != 3 || events[1].Type != protocol.EventRunSucceeded {
 		t.Fatalf("second replay event = seq %d type %q, want seq 3 run.succeeded", events[1].Seq, events[1].Type)
+	}
+}
+
+func TestServerReplaysRunEventsAfterLastEventID(t *testing.T) {
+	store, handler := newTestHandler()
+	chat := mustCreateChat(t, store, "demo-user", "sse")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "events")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	if _, err := store.AddEvent(run.ID, protocol.EventRunQueued, "queued", nil); err != nil {
+		t.Fatalf("add queued event: %v", err)
+	}
+	if _, err := store.AddEvent(run.ID, protocol.EventRunStarted, "started", nil); err != nil {
+		t.Fatalf("add started event: %v", err)
+	}
+	if _, err := store.AddEvent(run.ID, protocol.EventRunSucceeded, "succeeded", nil); err != nil {
+		t.Fatalf("add succeeded event: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodGet, "/api/runs/"+run.ID+"/events", nil).WithContext(ctx)
+	request.Header.Set("Last-Event-ID", "2")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	events := decodeSSEEvents(t, response.Body.String())
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want 1, body = %s", len(events), response.Body.String())
+	}
+	if events[0].Seq != 3 || events[0].Type != protocol.EventRunSucceeded {
+		t.Fatalf("replayed event = seq %d type %q, want seq 3 run.succeeded", events[0].Seq, events[0].Type)
+	}
+	if !strings.Contains(response.Body.String(), "id: 3\n") || strings.Contains(response.Body.String(), "id: 2\n") {
+		t.Fatalf("sse body = %s, want only id 3 after Last-Event-ID", response.Body.String())
+	}
+}
+
+func TestServerOIDCModeRequiresActorAndIsolatesUsers(t *testing.T) {
+	_, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "oidc"})
+
+	unauthorized := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	unauthorizedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorizedResponse, unauthorized)
+	if unauthorizedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, body = %s", unauthorizedResponse.Code, unauthorizedResponse.Body.String())
+	}
+	if unauthorizedResponse.Header().Get("X-Request-ID") == "" {
+		t.Fatal("expected request id on unauthorized response")
+	}
+
+	createChat := httptest.NewRequest(http.MethodPost, "/api/chats", jsonBody(t, map[string]string{"title": "private"}))
+	setOIDCActor(createChat, "user-a", "project-a")
+	createChatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createChatResponse, createChat)
+	if createChatResponse.Code != http.StatusCreated {
+		t.Fatalf("create chat status = %d, body = %s", createChatResponse.Code, createChatResponse.Body.String())
+	}
+	var chat protocol.ChatSession
+	decodeJSON(t, createChatResponse.Body, &chat)
+	if chat.UserID != "user-a" || chat.ProjectID != "project-a" {
+		t.Fatalf("chat actor fields = %#v", chat)
+	}
+
+	getAsOtherUser := httptest.NewRequest(http.MethodGet, "/api/chats/"+chat.ID, nil)
+	setOIDCActor(getAsOtherUser, "user-b", "project-a")
+	getAsOtherUserResponse := httptest.NewRecorder()
+	handler.ServeHTTP(getAsOtherUserResponse, getAsOtherUser)
+	if getAsOtherUserResponse.Code != http.StatusNotFound {
+		t.Fatalf("cross-user get chat status = %d, body = %s", getAsOtherUserResponse.Code, getAsOtherUserResponse.Body.String())
+	}
+
+	listAsOtherProject := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	setOIDCActor(listAsOtherProject, "user-a", "project-b")
+	listAsOtherProjectResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listAsOtherProjectResponse, listAsOtherProject)
+	var listOutput struct {
+		Chats []protocol.ChatSession `json:"chats"`
+	}
+	decodeJSON(t, listAsOtherProjectResponse.Body, &listOutput)
+	if len(listOutput.Chats) != 0 {
+		t.Fatalf("cross-project chats = %#v, want none", listOutput.Chats)
+	}
+
+	createMessage := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "hello"}))
+	setOIDCActor(createMessage, "user-a", "project-a")
+	createMessageResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createMessageResponse, createMessage)
+	if createMessageResponse.Code != http.StatusAccepted {
+		t.Fatalf("create message status = %d, body = %s", createMessageResponse.Code, createMessageResponse.Body.String())
+	}
+	var messageResponse struct {
+		Run protocol.Run `json:"run"`
+	}
+	decodeJSON(t, createMessageResponse.Body, &messageResponse)
+
+	cancelAsOtherUser := httptest.NewRequest(http.MethodPost, "/api/runs/"+messageResponse.Run.ID+"/cancel", nil)
+	setOIDCActor(cancelAsOtherUser, "user-b", "project-a")
+	cancelAsOtherUserResponse := httptest.NewRecorder()
+	handler.ServeHTTP(cancelAsOtherUserResponse, cancelAsOtherUser)
+	if cancelAsOtherUserResponse.Code != http.StatusNotFound {
+		t.Fatalf("cross-user cancel status = %d, body = %s", cancelAsOtherUserResponse.Code, cancelAsOtherUserResponse.Body.String())
 	}
 }
 
@@ -251,6 +366,21 @@ func TestServerCreatesUserHTTPSkill(t *testing.T) {
 	decodeJSON(t, listResponse.Body, &output)
 	if len(output.Groups.User) != 1 || output.Groups.User[0].ID != skill.ID {
 		t.Fatalf("user groups = %#v, want created skill", output.Groups.User)
+	}
+
+	auditRequest := httptest.NewRequest(http.MethodGet, "/api/audit/events?action=skill.create", nil)
+	auditResponse := httptest.NewRecorder()
+	handler.ServeHTTP(auditResponse, auditRequest)
+	if auditResponse.Code != http.StatusOK {
+		t.Fatalf("audit status = %d, body = %s", auditResponse.Code, auditResponse.Body.String())
+	}
+	if strings.Contains(auditResponse.Body.String(), "secret-token") {
+		t.Fatalf("audit response leaked bearer token: %s", auditResponse.Body.String())
+	}
+	var auditOutput protocol.AuditEventsResponse
+	decodeJSON(t, auditResponse.Body, &auditOutput)
+	if len(auditOutput.Events) != 1 || auditOutput.Events[0].ResourceID != skill.ID {
+		t.Fatalf("audit events = %#v, want skill.create for created skill", auditOutput.Events)
 	}
 }
 
@@ -555,10 +685,21 @@ func (f dispatchFunc) Dispatch(ctx context.Context, run protocol.Run, userMessag
 }
 
 func newTestHandler() (*repository.Store, http.Handler) {
+	return newTestHandlerWithOptions(ServerOptions{})
+}
+
+func newTestHandlerWithOptions(opts ServerOptions) (*repository.Store, http.Handler) {
 	store := repository.NewStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	dispatcher := dispatch.NewLocalDispatcher(store, log)
-	return store, NewServer(store, dispatcher, log).Handler()
+	return store, NewServerWithOptions(store, dispatcher, log, opts).Handler()
+}
+
+func setOIDCActor(request *http.Request, userID, projectID string) {
+	request.Header.Set("X-NiceAgent-User-ID", userID)
+	request.Header.Set("X-NiceAgent-Project-ID", projectID)
+	request.Header.Set("X-NiceAgent-Org-ID", "org-"+projectID)
+	request.Header.Set("X-NiceAgent-Roles", "owner")
 }
 
 func jsonBody(t *testing.T, value any) io.Reader {
@@ -608,7 +749,7 @@ func createChatWithHandler(t *testing.T, handler http.Handler, title string) pro
 
 func mustCreateChat(t *testing.T, repo app.Repository, userID, title string) protocol.ChatSession {
 	t.Helper()
-	chat, err := repo.CreateChat(userID, title)
+	chat, err := repo.CreateChat(userID, app.DemoProjectID, title)
 	if err != nil {
 		t.Fatalf("create chat: %v", err)
 	}

@@ -33,9 +33,17 @@ type ChatListOptions struct {
 	IncludeArchived bool
 }
 
+type AuditEventListOptions struct {
+	Limit      int
+	RequestID  string
+	RunID      string
+	Action     string
+	ResourceID string
+}
+
 type Repository interface {
-	ListChats(userID string, opts ChatListOptions) []protocol.ChatSession
-	CreateChat(userID, title string) (protocol.ChatSession, error)
+	ListChats(userID, projectID string, opts ChatListOptions) []protocol.ChatSession
+	CreateChat(userID, projectID, title string) (protocol.ChatSession, error)
 	GetChat(chatID string) (protocol.ChatSession, []protocol.Message, error)
 	SetChatArchived(chatID, userID string, archived bool) (protocol.ChatSession, error)
 	AddUserMessage(chatID, userID, content string) (protocol.Message, protocol.Run, error)
@@ -57,6 +65,8 @@ type Repository interface {
 	CreateHTTPSkill(userID, projectID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
 	UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
 	SetSkillEnabled(userID, skillID string, enabled bool) (protocol.Skill, error)
+	AddAuditEvent(input protocol.AuditEventInput) (protocol.AuditEvent, error)
+	ListAuditEvents(actor ActorContext, opts AuditEventListOptions) []protocol.AuditEvent
 }
 
 type RunDispatcher interface {

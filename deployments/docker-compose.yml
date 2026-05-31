@@ -17,7 +17,7 @@ services:
       - "6379:6379"
 
   control-plane:
-    image: golang:1.22-alpine
+    image: golang:1.23-alpine
     working_dir: /workspace/services/control-plane
     command: go run ./cmd
     environment:
@@ -39,7 +39,7 @@ services:
       - redis
 
   agent-runtime:
-    image: golang:1.22-alpine
+    image: golang:1.23-alpine
     working_dir: /workspace/services/agent-runtime
     command: go run ./cmd
     environment:
@@ -59,7 +59,7 @@ services:
       - sandbox-executor
 
   sandbox-executor:
-    image: golang:1.22-alpine
+    image: golang:1.23-alpine
     working_dir: /workspace/services/sandbox-executor
     command: go run ./cmd
     environment:

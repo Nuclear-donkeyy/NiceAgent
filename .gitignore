@@ -11,6 +11,8 @@ coverage.out
 node_modules/
 dist/
 .next/
+test-results/
+playwright-report/
 
 # Local runtime state
 .cache/

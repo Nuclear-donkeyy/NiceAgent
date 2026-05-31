@@ -18,7 +18,7 @@ memory 模式的权威状态在进程内存中，进程重启会丢失数据。P
 - runs、run events、artifacts。
 - skills、skill_versions、用户/项目 skill_grants、skill_secrets、配额、审计记录。
 
-当前 Postgres 模式支持单 Control Plane 进程内 SSE fanout 和基于数据库的 `RunEvent` replay。Redis Streams 后续用于多实例 run dispatch 和 event fanout，但不应替代 Postgres 的权威持久化。
+当前 Postgres 模式支持单 Control Plane 进程内 SSE fanout 和基于数据库的 `RunEvent` replay。Redis Streams 已有基础 run queue adapter：`DISPATCH_MODE=redis` 时 Control Plane 会把 run 写入 `RUN_QUEUE_STREAM`，供后续 Runtime worker 通过 consumer group 消费；现阶段 Runtime consumer loop 和跨副本 event fanout 仍是后续工作，Redis 不替代 Postgres 的权威持久化。
 
 ## 模型 Provider
 
@@ -69,6 +69,18 @@ docker compose -f deployments/docker-compose.yml restart control-plane
 ```
 
 重启后访问 `GET /api/chats` 和 `GET /api/runs/{run_id}/events?after=0`，确认会话、消息、run 和 events 仍可恢复。
+
+Redis run queue 基础配置：
+
+```bash
+DISPATCH_MODE=redis
+REDIS_ADDR=redis:6379
+RUN_QUEUE_STREAM=niceagent:runs
+RUN_QUEUE_GROUP=agent-runtimes
+RUN_QUEUE_CONSUMER=control-plane-1
+```
+
+该模式需要 Control Plane module 的 `github.com/redis/go-redis/v9` 依赖。当前 adapter 提供 `XADD`、`XGROUP CREATE MKSTREAM`、`XREADGROUP` 和成功处理后的 `XACK`；处理失败时不 ack，消息保留在 pending entries 中等待后续 retry/claim 策略。
 
 清理本地持久化数据：
 

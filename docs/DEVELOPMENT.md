@@ -78,6 +78,14 @@ Compose 会启动 Postgres、Redis、Control Plane、Agent Runtime 和 Sandbox E
 
 Skill manifest 会写入 `skills`、`skill_versions`、`skill_grants` 和 `skill_secrets`。如果本地 schema 已经旧了，可以用 `docker compose -f deployments/docker-compose.yml down -v` 清理 volume 后重新启动。
 
+如需验证 Redis Streams 入队路径，可以把 Control Plane 切到：
+
+```bash
+DISPATCH_MODE=redis REDIS_ADDR=localhost:6379 RUN_QUEUE_STREAM=niceagent:runs make run-control
+```
+
+该模式目前只负责 Control Plane 入队和基础 consumer group adapter；Agent Runtime 的 Redis worker loop 尚未接入，完整端到端执行仍使用默认 `DISPATCH_MODE=http`。
+
 如果只想本机直接连接已有 Postgres：
 
 ```bash
@@ -198,7 +206,7 @@ GOCACHE=/private/tmp/niceagent-go-cache make test
 如果不想在本机装 Go，可以用 Docker：
 
 ```bash
-docker run --rm -v "$PWD":/workspace -w /workspace golang:1.22 \
+docker run --rm -v "$PWD":/workspace -w /workspace golang:1.23 \
   go test ./packages/common/... ./services/control-plane/... ./services/agent-runtime/... ./services/sandbox-executor/...
 ```
 

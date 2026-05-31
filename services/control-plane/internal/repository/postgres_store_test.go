@@ -30,7 +30,7 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	applyTestMigration(t, db)
 
 	store := NewPostgresStore(db)
-	chat, err := store.CreateChat("demo-user", "postgres")
+	chat, err := store.CreateChat("demo-user", app.DemoProjectID, "postgres")
 	if err != nil {
 		t.Fatalf("create chat: %v", err)
 	}
@@ -137,11 +137,11 @@ func TestPostgresStoreSearchesArchivesAndRestoresChatsWhenConfigured(t *testing.
 
 	store := NewPostgresStore(db)
 	title := "searchable chat " + time.Now().Format("20060102150405.000000000")
-	chat, err := store.CreateChat("demo-user", title)
+	chat, err := store.CreateChat("demo-user", app.DemoProjectID, title)
 	if err != nil {
 		t.Fatalf("create chat: %v", err)
 	}
-	matches := store.ListChats("demo-user", app.ChatListOptions{Query: title})
+	matches := store.ListChats("demo-user", app.DemoProjectID, app.ChatListOptions{Query: title})
 	if len(matches) != 1 || matches[0].ID != chat.ID {
 		t.Fatalf("search matches = %#v, want created chat", matches)
 	}
@@ -153,11 +153,11 @@ func TestPostgresStoreSearchesArchivesAndRestoresChatsWhenConfigured(t *testing.
 	if !archived.Archived {
 		t.Fatalf("archived chat = %#v, want archived", archived)
 	}
-	matches = store.ListChats("demo-user", app.ChatListOptions{Query: title})
+	matches = store.ListChats("demo-user", app.DemoProjectID, app.ChatListOptions{Query: title})
 	if len(matches) != 0 {
 		t.Fatalf("active search matches after archive = %#v, want none", matches)
 	}
-	matches = store.ListChats("demo-user", app.ChatListOptions{Query: title, IncludeArchived: true})
+	matches = store.ListChats("demo-user", app.DemoProjectID, app.ChatListOptions{Query: title, IncludeArchived: true})
 	if len(matches) != 1 || !matches[0].Archived {
 		t.Fatalf("archived search matches = %#v, want archived chat", matches)
 	}

@@ -29,7 +29,7 @@ docs                         中文架构、API、开发、路线图和运维文
 - Sandbox 当前提供独立 Sandbox Executor 服务、local executor 和 container executor 入口；系统 CLI 是 agent runtime 的无用户授权工具，按只读网络型策略执行或拒绝命令。
 - Frontend 使用 React + Rspack + TypeScript + SCSS Modules，支持会话搜索、归档/恢复、最近 run replay、系统能力/我的能力分组展示和 HTTP Skill 添加入口；主界面以聊天和 agent 当前状态为中心。
 - Skill 元数据采用 Postgres/memory 双实现，按用户/项目 grant 加载；HTTP Skill 的 bearer token 不返回前端，生产级 KMS/Vault/External Secret 后续补齐。
-- Redis Streams、集中式 secret backend、认证、多租户、配额和完整审批闭环仍在后续阶段。
+- Redis Streams 已有 Control Plane 入队基础 adapter；Agent Runtime Redis worker、跨副本 event fanout、集中式 secret backend、认证、多租户、配额和完整审批闭环仍在后续阶段。
 
 ## 本地运行
 

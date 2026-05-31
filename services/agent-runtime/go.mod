@@ -1,6 +1,6 @@
 module niceagent/agent-runtime
 
-go 1.22
+go 1.23.0
 
 require (
 	github.com/cloudwego/eino v0.9.2
@@ -19,6 +19,7 @@ require (
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.17 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/evanphx/json-patch v0.5.2 // indirect
+	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

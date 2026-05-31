@@ -20,6 +20,7 @@ type Store struct {
 	runs         map[string]protocol.Run
 	runUsage     map[string]protocol.RunUsage
 	events       map[string][]protocol.RunEvent
+	auditEvents  []protocol.AuditEvent
 	workspaces   map[string]protocol.Workspace
 	artifacts    map[string]protocol.Artifact
 	skills       map[string]protocol.Skill
@@ -38,6 +39,7 @@ func NewStore() *Store {
 		runs:         map[string]protocol.Run{},
 		runUsage:     map[string]protocol.RunUsage{},
 		events:       map[string][]protocol.RunEvent{},
+		auditEvents:  []protocol.AuditEvent{},
 		workspaces:   map[string]protocol.Workspace{},
 		artifacts:    map[string]protocol.Artifact{},
 		skills:       map[string]protocol.Skill{},
@@ -88,13 +90,13 @@ func NewStore() *Store {
 	return store
 }
 
-func (s *Store) ListChats(userID string, opts app.ChatListOptions) []protocol.ChatSession {
+func (s *Store) ListChats(userID, projectID string, opts app.ChatListOptions) []protocol.ChatSession {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	query := strings.ToLower(strings.TrimSpace(opts.Query))
 	chats := make([]protocol.ChatSession, 0, len(s.chats))
 	for _, chat := range s.chats {
-		if chat.UserID != userID {
+		if chat.UserID != userID || chat.ProjectID != projectID {
 			continue
 		}
 		if chat.Archived && !opts.IncludeArchived {
@@ -112,7 +114,7 @@ func (s *Store) ListChats(userID string, opts app.ChatListOptions) []protocol.Ch
 	return chats
 }
 
-func (s *Store) CreateChat(userID, title string) (protocol.ChatSession, error) {
+func (s *Store) CreateChat(userID, projectID, title string) (protocol.ChatSession, error) {
 	now := time.Now().UTC()
 	if title == "" {
 		title = "New chat"
@@ -120,7 +122,7 @@ func (s *Store) CreateChat(userID, title string) (protocol.ChatSession, error) {
 	chat := protocol.ChatSession{
 		ID:        platform.NewID("chat"),
 		UserID:    userID,
-		ProjectID: "demo-project",
+		ProjectID: projectID,
 		Title:     title,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -543,6 +545,35 @@ func (s *Store) SetSkillEnabled(userID, skillID string, enabled bool) (protocol.
 	return redactSkill(skill), nil
 }
 
+func (s *Store) AddAuditEvent(input protocol.AuditEventInput) (protocol.AuditEvent, error) {
+	event := auditEventFromInput(input)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.auditEvents = append(s.auditEvents, event)
+	return event, nil
+}
+
+func (s *Store) ListAuditEvents(actor app.ActorContext, opts app.AuditEventListOptions) []protocol.AuditEvent {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	limit := opts.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	events := make([]protocol.AuditEvent, 0, limit)
+	for i := len(s.auditEvents) - 1; i >= 0 && len(events) < limit; i-- {
+		event := s.auditEvents[i]
+		if event.ActorUserID != actor.UserID || event.ActorProjectID != actor.ProjectID {
+			continue
+		}
+		if !auditEventMatches(event, opts) {
+			continue
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
 func skillGrantKey(userID, projectID string) string {
 	return userID + "\x00" + projectID
 }
@@ -604,6 +635,47 @@ func httpSkillFromInput(skillID, versionID, userID, projectID, version string, i
 
 func redactSkill(skill protocol.Skill) protocol.Skill {
 	return skill
+}
+
+func auditEventFromInput(input protocol.AuditEventInput) protocol.AuditEvent {
+	decision := input.Decision
+	if decision == "" {
+		decision = protocol.AuditDecisionAllow
+	}
+	return protocol.AuditEvent{
+		ID:             platform.NewID("audit"),
+		ActorUserID:    input.ActorUserID,
+		ActorProjectID: input.ActorProjectID,
+		ActorOrgID:     input.ActorOrgID,
+		Action:         input.Action,
+		ResourceType:   input.ResourceType,
+		ResourceID:     input.ResourceID,
+		Decision:       decision,
+		Reason:         input.Reason,
+		RequestID:      input.RequestID,
+		TraceID:        input.TraceID,
+		RunID:          input.RunID,
+		IP:             input.IP,
+		UserAgent:      input.UserAgent,
+		Metadata:       platform.RedactMap(input.Metadata),
+		CreatedAt:      time.Now().UTC(),
+	}
+}
+
+func auditEventMatches(event protocol.AuditEvent, opts app.AuditEventListOptions) bool {
+	if opts.RequestID != "" && event.RequestID != opts.RequestID {
+		return false
+	}
+	if opts.RunID != "" && event.RunID != opts.RunID {
+		return false
+	}
+	if opts.Action != "" && event.Action != opts.Action {
+		return false
+	}
+	if opts.ResourceID != "" && event.ResourceID != opts.ResourceID {
+		return false
+	}
+	return true
 }
 
 func firstNonEmpty(values ...string) string {

@@ -25,7 +25,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	}
 }
 
-func (s *PostgresStore) ListChats(userID string, opts app.ChatListOptions) []protocol.ChatSession {
+func (s *PostgresStore) ListChats(userID, projectID string, opts app.ChatListOptions) []protocol.ChatSession {
 	query := "%" + strings.ToLower(strings.TrimSpace(opts.Query)) + "%"
 	rows, err := s.db.Query(`
 		SELECT c.id, c.user_id, c.project_id, c.title, c.archived, COALESCE(c.last_run_id, ''),
@@ -33,10 +33,11 @@ func (s *PostgresStore) ListChats(userID string, opts app.ChatListOptions) []pro
 		FROM chat_sessions c
 		LEFT JOIN messages m ON m.chat_id = c.id
 		WHERE c.user_id = $1
-		  AND ($2 OR c.archived = false)
-		  AND ($3 = '%%' OR LOWER(c.title) LIKE $3)
+		  AND c.project_id = $2
+		  AND ($3 OR c.archived = false)
+		  AND ($4 = '%%' OR LOWER(c.title) LIKE $4)
 		GROUP BY c.id
-		ORDER BY c.updated_at DESC`, userID, opts.IncludeArchived, query)
+		ORDER BY c.updated_at DESC`, userID, projectID, opts.IncludeArchived, query)
 	if err != nil {
 		return nil
 	}
@@ -51,7 +52,7 @@ func (s *PostgresStore) ListChats(userID string, opts app.ChatListOptions) []pro
 	return chats
 }
 
-func (s *PostgresStore) CreateChat(userID, title string) (protocol.ChatSession, error) {
+func (s *PostgresStore) CreateChat(userID, projectID, title string) (protocol.ChatSession, error) {
 	now := time.Now().UTC()
 	if title == "" {
 		title = "New chat"
@@ -59,7 +60,7 @@ func (s *PostgresStore) CreateChat(userID, title string) (protocol.ChatSession, 
 	chat := protocol.ChatSession{
 		ID:        platform.NewID("chat"),
 		UserID:    userID,
-		ProjectID: "demo-project",
+		ProjectID: projectID,
 		Title:     title,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -778,6 +779,79 @@ func (s *PostgresStore) SetSkillEnabled(userID, skillID string, enabled bool) (p
 		return protocol.Skill{}, app.ErrNotFound
 	}
 	return s.getOwnedHTTPSkill(userID, skillID)
+}
+
+func (s *PostgresStore) AddAuditEvent(input protocol.AuditEventInput) (protocol.AuditEvent, error) {
+	event := auditEventFromInput(input)
+	metadataJSON, err := json.Marshal(event.Metadata)
+	if err != nil {
+		return protocol.AuditEvent{}, err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO audit_events (
+			id, actor_user_id, actor_project_id, actor_org_id, action, resource_type,
+			resource_id, decision, reason, request_id, trace_id, run_id, ip, user_agent,
+			metadata, created_at
+		)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6,
+		        NULLIF($7, ''), $8, NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''),
+		        NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''), $15::jsonb, $16)`,
+		event.ID, event.ActorUserID, event.ActorProjectID, event.ActorOrgID, event.Action, event.ResourceType,
+		event.ResourceID, event.Decision, event.Reason, event.RequestID, event.TraceID, event.RunID, event.IP,
+		event.UserAgent, string(metadataJSON), event.CreatedAt)
+	if err != nil {
+		return protocol.AuditEvent{}, err
+	}
+	return event, nil
+}
+
+func (s *PostgresStore) ListAuditEvents(actor app.ActorContext, opts app.AuditEventListOptions) []protocol.AuditEvent {
+	limit := opts.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	rows, err := s.db.Query(`
+		SELECT id, COALESCE(actor_user_id, ''), COALESCE(actor_project_id, ''), COALESCE(actor_org_id, ''),
+		       action, resource_type, COALESCE(resource_id, ''), decision, COALESCE(reason, ''),
+		       COALESCE(request_id, ''), COALESCE(trace_id, ''), COALESCE(run_id, ''),
+		       COALESCE(ip, ''), COALESCE(user_agent, ''), metadata, created_at
+		FROM audit_events
+		WHERE actor_user_id = $1
+		  AND actor_project_id = $2
+		  AND ($3 = '' OR request_id = $3)
+		  AND ($4 = '' OR run_id = $4)
+		  AND ($5 = '' OR action = $5)
+		  AND ($6 = '' OR resource_id = $6)
+		ORDER BY created_at DESC
+		LIMIT $7`,
+		actor.UserID, actor.ProjectID, opts.RequestID, opts.RunID, opts.Action, opts.ResourceID, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	events := make([]protocol.AuditEvent, 0)
+	for rows.Next() {
+		var event protocol.AuditEvent
+		var decision string
+		var rawMetadata []byte
+		if err := rows.Scan(
+			&event.ID, &event.ActorUserID, &event.ActorProjectID, &event.ActorOrgID,
+			&event.Action, &event.ResourceType, &event.ResourceID, &decision, &event.Reason,
+			&event.RequestID, &event.TraceID, &event.RunID, &event.IP, &event.UserAgent,
+			&rawMetadata, &event.CreatedAt,
+		); err != nil {
+			return events
+		}
+		event.Decision = protocol.AuditDecision(decision)
+		if len(rawMetadata) > 0 && string(rawMetadata) != "null" {
+			var metadata map[string]any
+			if err := json.Unmarshal(rawMetadata, &metadata); err == nil {
+				event.Metadata = metadata
+			}
+		}
+		events = append(events, event)
+	}
+	return events
 }
 
 func (s *PostgresStore) getOwnedHTTPSkill(userID, skillID string) (protocol.Skill, error) {

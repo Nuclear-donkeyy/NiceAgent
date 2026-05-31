@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 	"niceagent/common/sandbox"
 	"niceagent/control-plane/internal/app"
@@ -92,7 +93,15 @@ func (d *QueueDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMe
 		UserID:      run.UserID,
 		WorkspaceID: run.WorkspaceID,
 		UserMessage: userMessage,
+		AttemptID:   firstNonEmpty(run.AttemptID, platform.NewID("attempt")),
 		SkillIDs:    app.SkillIDsFromRuntimeSkills(runtimeSkills),
 		ModelPolicy: "mock-default",
 	})
+}
+
+func firstNonEmpty(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }

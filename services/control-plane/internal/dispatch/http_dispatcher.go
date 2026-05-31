@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 	"niceagent/control-plane/internal/app"
 )
@@ -53,6 +54,7 @@ func (d *HTTPDispatcher) dispatch(ctx context.Context, run protocol.Run, userMes
 			ChatID:      run.ChatID,
 			UserID:      run.UserID,
 			WorkspaceID: run.WorkspaceID,
+			AttemptID:   firstNonEmpty(run.AttemptID, platform.NewID("attempt")),
 			SkillIDs:    skills,
 			Skills:      runtimeSkills,
 			ModelPolicy: "mock-default",
