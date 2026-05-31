@@ -1,0 +1,174 @@
+# 模型运营与 DeepSeek 接入
+
+## 产品功能
+
+模型层要从“能连 OpenAI-compatible provider”推进到“可运营的模型服务”。用户感知是 agent 回复稳定、工具调用可靠、失败可读；平台侧需要知道 token、成本、延迟、错误、限流、fallback 和日志安全。
+
+近期重点：
+
+- 接入真实 DeepSeek API key。
+- 验证 Eino `ToolCallingChatModel` + DeepSeek/OpenAI-compatible 的 tool calling 链路。
+- 记录真实 token usage 和成本。
+- 对 429/5xx/超时做重试和 fallback。
+- 模型日志、tool output、event payload 默认脱敏。
+
+## 成熟方案调研
+
+Eino 已提供 ChatModel 和 ADK `ChatModelAgent` 抽象，当前仓库使用 `ToolCallingChatModel` 是正确方向。Eino ChatModel 支持 `Generate`、`Stream`、tool calling 和 callback/trace 扩展。参考：[Eino ChatModel 指南](https://www.cloudwego.io/zh/docs/eino/core_modules/components/chat_model_guide/)、[Eino ADK ChatModelAgent](https://www.cloudwego.io/docs/eino/core_modules/eino_adk/agent_implementation/chat_model/)。
+
+DeepSeek 官方 API 兼容 OpenAI/Anthropic API。按官方文档，OpenAI-compatible `base_url` 可用 `https://api.deepseek.com`，请求仍走 chat completions 风格；`MODEL_BASE_URL` 不应包含最终的 `/chat/completions` endpoint。参考：[DeepSeek API Docs](https://api-docs.deepseek.com/)。
+
+截至 2026-05-31，DeepSeek 官方文档展示的当前模型包括 `deepseek-v4-flash`、`deepseek-v4-pro`，并说明旧的 `deepseek-chat`、`deepseek-reasoner` 将在 2026-07-24 后废弃。模型名以后仍以官方文档为准。
+
+DeepSeek 官方错误码包括 400、401、402、422、429、500、503。401/402/422 属于配置或请求问题，不应重试；429、500、503 和网络瞬时错误可退避重试。参考：[DeepSeek Error Codes](https://api-docs.deepseek.com/quick_start/error_codes)。
+
+DeepSeek 有账号级并发限制和 `user_id` isolation。应把 NiceAgent 内部 user/project 映射为 provider 侧 `user_id` 或 metadata，但不要包含隐私信息。参考：[DeepSeek Rate Limit & Isolation](https://api-docs.deepseek.com/quick_start/rate_limit)。
+
+日志脱敏参考 OWASP Logging Cheat Sheet，不记录 access token、API key、密码、session id、连接串等敏感材料。参考：[OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html)。
+
+## 当前仓库现状
+
+Agent Runtime 已有配置：
+
+- `MODEL_PROVIDER=mock|openai-compatible`
+- `MODEL_BASE_URL`
+- `MODEL_API_KEY`
+- `MODEL_NAME`
+- `MODEL_TIMEOUT_SECONDS`
+
+`openai-compatible` provider 会校验 base URL、API key、model 非空，并通过 `github.com/cloudwego/eino-ext/components/model/openai` 创建 Eino OpenAI ChatModel。
+
+Runtime engine 已使用 `model.ToolCallingChatModel`，按 run 下发 skills 构造 Eino tools，并用 `guardedToolModel` 阻止模型调用未授权 tool。`/cli ...` 仍保留为开发测试入口。
+
+当前 token usage 只是粗略估算。`RunCompleteRequest` 已包含 `TokenUsage`，但 Runtime sink 没有发送完整 usage，Control Plane complete handler 也没有持久化 token/cost。
+
+日志方面，主入口记录 provider/base_url/model，不记录 API key；但还没有中心化 redactor。`tool.output` 可能保存 HTTP Skill 原始输出，未来可能包含敏感数据。
+
+K8s 部署已经把 `MODEL_API_KEY` 从 `niceagent-model-provider` Secret 注入，`.env.example` 只放空值，方向正确。
+
+## 扩展点
+
+- `modelprovider` 增加 provider wrapper：统一 rate limit、retry、fallback、usage callback、redaction。
+- `RunCompleteRequest` 和 Control Plane repository 落地 token usage 持久化。
+- 增加 `model_usage` 或 `run_usage` 表，记录 provider、model、input/output/reasoning/cached tokens、latency、cost、currency。
+- 增加 `model_pricing` 配置或表，按生效日期维护不同 provider/model 价格。
+- 日志和 event 增加统一 `Redactor`，覆盖 prompt、completion、tool output、headers、secret key。
+- 增加 provider health、错误分类、fallback 记录和告警指标。
+
+## 技术架构
+
+推荐链路：
+
+```text
+EinoAgentEngine
+  -> ModelProviderWrapper
+       -> RateLimiter
+       -> RetryPolicy
+       -> Eino ToolCallingChatModel
+       -> UsageCollector
+       -> Redactor
+       -> FallbackPolicy
+  -> ToolBridge
+  -> ControlPlaneSink
+  -> RunUsage / RunEvent / Audit
+```
+
+错误分类建议：
+
+- `config_error`：缺 API key、base URL、model，不重试。
+- `auth_error`：401，不重试。
+- `billing_error`：402，不重试。
+- `request_error`：400、422，不重试。
+- `rate_limited`：429，指数退避，可 fallback。
+- `provider_unavailable`：500、503，可退避重试，可 fallback。
+- `network_error`：timeout、connection reset，可退避重试。
+- `tool_schema_error`：工具 schema 或 tool call 参数错误，不 fallback 到其他模型，先修 skill/model prompt。
+
+## 技术方案
+
+DeepSeek 本地接入示例：
+
+```bash
+MODEL_PROVIDER=openai-compatible
+MODEL_BASE_URL=https://api.deepseek.com
+MODEL_API_KEY=sk-...
+MODEL_NAME=deepseek-v4-flash
+MODEL_TIMEOUT_SECONDS=120
+```
+
+本地不要把 API key 写入仓库。可以放在未提交的 `.env`、shell 环境变量或 Docker Compose override；K8s 使用 `niceagent-model-provider` Secret。
+
+接入检查清单：
+
+- 在 DeepSeek 控制台创建 API key。
+- 确认账户余额充足，避免 402。
+- 确认 `MODEL_BASE_URL` 是 `https://api.deepseek.com`，不包含最终 endpoint。
+- 使用官方当前模型名，例如 `deepseek-v4-flash` 或 `deepseek-v4-pro`。
+- 启动三服务后测试普通消息。
+- 测试一次 tool calling，例如 `/cli echo hello` 或模型自主调用 `cli.exec`。
+- 测试错误 key，确认 401 日志脱敏。
+- 测试超时/取消路径，确认不会写成功终态。
+- 检查日志、event、前端响应不出现 API key 或 Authorization header。
+
+usage/cost 方案：
+
+- 优先从 Eino callback 或 provider response usage 读取真实 usage。
+- mock provider 和缺失 usage 时保留估算 token。
+- cost 计算不要写死在 engine，使用 provider/model pricing 配置。
+- usage 写入 run-level 聚合，后续用于 quota、账单和排障。
+
+retry/fallback 方案：
+
+- 尊重 `Retry-After`。
+- 指数退避 + jitter。
+- 限制最大尝试次数和总耗时。
+- 只对 429、500、503、network timeout、connection reset 重试。
+- 401、402、400、422 不重试。
+- fallback 只对 provider 瞬时问题生效，记录 `fallback_from`、`fallback_to`、error_class、retry_count。
+
+日志脱敏方案：
+
+- 默认不记录完整 prompt、completion、tool raw output。
+- headers 中的 `Authorization`、`Cookie`、`Set-Cookie` 永远不写日志。
+- 对 key 名包含 `api_key`、`authorization`、`bearer`、`token`、`secret`、`password` 的字段做掩码。
+- `tool.output` 根据 skill 配置决定是否允许持久化 raw output；默认保存摘要和大小。
+
+## 分阶段落地
+
+1. DeepSeek 冒烟：补文档和本地检查命令，验证普通回复和 tool calling。
+2. Usage 持久化：从 Eino callback/provider response 收集 token usage，写入 Control Plane。
+3. Retry/rate limit：增加 provider wrapper，处理 429/5xx/timeout。
+4. Fallback：支持多 provider/model 策略和错误分类。
+5. 日志脱敏：统一 redactor，覆盖 model、tool、event、audit。
+6. 模型运营面板：展示 provider health、latency、token、cost、错误和 fallback。
+
+## 风险与验收
+
+风险：
+
+- API key 被提交到仓库、镜像、日志或前端。
+- `MODEL_BASE_URL` 配到最终 endpoint 导致 Eino adapter 拼接错误。
+- provider 不完全兼容 OpenAI tool calling。
+- DeepSeek reasoning/thinking 参数和 tool calling 组合有 provider-specific 行为。
+- token usage 缺失导致 quota/cost 不准。
+- 过度 retry 造成成本放大。
+
+验收：
+
+- DeepSeek 普通消息可成功回复。
+- DeepSeek tool calling 能执行已授权 `cli.exec` 或用户 HTTP Skill。
+- 错误 key 返回 401，日志和 event 不泄露 key。
+- 402 不重试，429/503 按策略退避。
+- 取消 run 后不写成功终态。
+- usage/cost 能按 run 查询，缺失 usage 时明确标记为 estimate。
+- 日志默认不包含 prompt、completion、Authorization header、API key、tool secret。
+
+## 参考资料
+
+- [Eino ChatModel 指南](https://www.cloudwego.io/zh/docs/eino/core_modules/components/chat_model_guide/)
+- [Eino ADK ChatModelAgent](https://www.cloudwego.io/docs/eino/core_modules/eino_adk/agent_implementation/chat_model/)
+- [DeepSeek API Docs](https://api-docs.deepseek.com/)
+- [DeepSeek Function Calling](https://api-docs.deepseek.com/guides/function_calling)
+- [DeepSeek Rate Limit & Isolation](https://api-docs.deepseek.com/quick_start/rate_limit)
+- [DeepSeek Error Codes](https://api-docs.deepseek.com/quick_start/error_codes)
+- [OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html)
