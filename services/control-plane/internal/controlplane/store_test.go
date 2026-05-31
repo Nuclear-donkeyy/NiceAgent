@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"strings"
 	"testing"
 
 	"niceagent/common/protocol"
@@ -97,6 +98,45 @@ func TestStoreListsSkillsForUserWithoutCLIApproval(t *testing.T) {
 	}
 	if !foundCLI {
 		t.Fatalf("skills = %#v, want cli.exec", skills)
+	}
+}
+
+func TestStoreCreatesUserHTTPSkillWithoutExposingSecret(t *testing.T) {
+	store := NewStore()
+	skill, err := store.CreateHTTPSkill("demo-user", "demo-project", protocol.HTTPSkillInput{
+		Name:        "Weather API",
+		Description: "Fetch weather information",
+		Method:      "POST",
+		URL:         "https://example.com/weather",
+		AuthType:    "bearer",
+		BearerToken: "secret-token",
+	})
+	if err != nil {
+		t.Fatalf("create http skill: %v", err)
+	}
+	if skill.Scope != protocol.SkillScopeUser || skill.Kind != protocol.SkillKindHTTP {
+		t.Fatalf("skill scope/kind = %q/%q, want user/http", skill.Scope, skill.Kind)
+	}
+	if strings.Contains(skill.RuntimeConfig, "secret-token") {
+		t.Fatalf("runtime config leaked token: %s", skill.RuntimeConfig)
+	}
+
+	skills := store.ListSkillsForUser("demo-user", "demo-project")
+	if !containsSkill(skills, skill.ID) {
+		t.Fatalf("skills = %#v, want created skill", skills)
+	}
+	runtimeSkills := store.ListRuntimeSkillsForUser("demo-user", "demo-project")
+	var found bool
+	for _, runtimeSkill := range runtimeSkills {
+		if runtimeSkill.Skill.ID == skill.ID {
+			found = true
+			if runtimeSkill.Secrets["bearer_token"] != "secret-token" {
+				t.Fatalf("runtime secret = %#v, want bearer token", runtimeSkill.Secrets)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("runtime skills = %#v, want created skill", runtimeSkills)
 	}
 }
 
@@ -215,4 +255,13 @@ func mustCreateChat(t *testing.T, repo Repository, userID, title string) protoco
 		t.Fatalf("create chat: %v", err)
 	}
 	return chat
+}
+
+func containsSkill(skills []protocol.Skill, id string) bool {
+	for _, skill := range skills {
+		if skill.ID == id {
+			return true
+		}
+	}
+	return false
 }

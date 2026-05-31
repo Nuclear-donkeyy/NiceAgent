@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -17,30 +18,32 @@ var (
 )
 
 type Store struct {
-	mu          sync.RWMutex
-	users       map[string]protocol.User
-	chats       map[string]protocol.ChatSession
-	messages    map[string][]protocol.Message
-	runs        map[string]protocol.Run
-	events      map[string][]protocol.RunEvent
-	skills      map[string]protocol.Skill
-	skillGrants map[string][]string
-	subscribers map[string]map[chan protocol.RunEvent]struct{}
-	seq         map[string]int64
+	mu           sync.RWMutex
+	users        map[string]protocol.User
+	chats        map[string]protocol.ChatSession
+	messages     map[string][]protocol.Message
+	runs         map[string]protocol.Run
+	events       map[string][]protocol.RunEvent
+	skills       map[string]protocol.Skill
+	skillGrants  map[string][]string
+	skillSecrets map[string]map[string]string
+	subscribers  map[string]map[chan protocol.RunEvent]struct{}
+	seq          map[string]int64
 }
 
 func NewStore() *Store {
 	now := time.Now().UTC()
 	store := &Store{
-		users:       map[string]protocol.User{},
-		chats:       map[string]protocol.ChatSession{},
-		messages:    map[string][]protocol.Message{},
-		runs:        map[string]protocol.Run{},
-		events:      map[string][]protocol.RunEvent{},
-		skills:      map[string]protocol.Skill{},
-		skillGrants: map[string][]string{},
-		subscribers: map[string]map[chan protocol.RunEvent]struct{}{},
-		seq:         map[string]int64{},
+		users:        map[string]protocol.User{},
+		chats:        map[string]protocol.ChatSession{},
+		messages:     map[string][]protocol.Message{},
+		runs:         map[string]protocol.Run{},
+		events:       map[string][]protocol.RunEvent{},
+		skills:       map[string]protocol.Skill{},
+		skillGrants:  map[string][]string{},
+		skillSecrets: map[string]map[string]string{},
+		subscribers:  map[string]map[chan protocol.RunEvent]struct{}{},
+		seq:          map[string]int64{},
 	}
 	store.users["demo-user"] = protocol.User{
 		ID:        "demo-user",
@@ -50,21 +53,35 @@ func NewStore() *Store {
 		CreatedAt: now,
 	}
 	store.skills["cli.exec"] = protocol.Skill{
-		ID:           "cli.exec",
-		Name:         "System CLI",
-		Version:      "0.1.0",
-		Description:  "Fetch external information through a read-only sandboxed CLI.",
-		Risk:         protocol.SkillRiskMedium,
-		RequiresAuth: false,
-		InputSchema:  `{"type":"object","required":["command"],"properties":{"command":{"type":"array","items":{"type":"string"}}}}`,
+		ID:            "cli.exec",
+		Slug:          "cli.exec",
+		Scope:         protocol.SkillScopeSystem,
+		Kind:          protocol.SkillKindBuiltin,
+		Status:        protocol.SkillStatusEnabled,
+		Name:          "System CLI",
+		Version:       "0.1.0",
+		Description:   "Fetch external information through a read-only sandboxed CLI.",
+		Risk:          protocol.SkillRiskMedium,
+		RequiresAuth:  false,
+		InputSchema:   `{"type":"object","required":["command"],"properties":{"command":{"type":"array","items":{"type":"string"}}}}`,
+		Annotations:   `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":false,"openWorldHint":true}`,
+		RuntimeConfig: `{"type":"builtin","executor":"sandbox"}`,
+		Enabled:       true,
 	}
 	store.skills["workspace.read"] = protocol.Skill{
-		ID:           "workspace.read",
-		Name:         "Workspace Reader",
-		Version:      "0.1.0",
-		Description:  "Inspect files and artifacts attached to a run workspace.",
-		Risk:         protocol.SkillRiskLow,
-		RequiresAuth: false,
+		ID:            "workspace.read",
+		Slug:          "workspace.read",
+		Scope:         protocol.SkillScopeSystem,
+		Kind:          protocol.SkillKindBuiltin,
+		Status:        protocol.SkillStatusEnabled,
+		Name:          "Workspace Reader",
+		Version:       "0.1.0",
+		Description:   "Inspect files and artifacts attached to a run workspace.",
+		Risk:          protocol.SkillRiskLow,
+		RequiresAuth:  false,
+		Annotations:   `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}`,
+		RuntimeConfig: `{"type":"builtin"}`,
+		Enabled:       true,
 	}
 	store.skillGrants[skillGrantKey("demo-user", "demo-project")] = []string{"cli.exec", "workspace.read"}
 	return store
@@ -314,6 +331,28 @@ func (s *Store) Subscribe(runID string) (<-chan protocol.RunEvent, func()) {
 func (s *Store) ListSkillsForUser(userID, projectID string) []protocol.Skill {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.listSkillsForUserLocked(userID, projectID)
+}
+
+func (s *Store) ListRuntimeSkillsForUser(userID, projectID string) []protocol.RuntimeSkill {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	skills := s.listSkillsForUserLocked(userID, projectID)
+	runtimeSkills := make([]protocol.RuntimeSkill, 0, len(skills))
+	for _, skill := range skills {
+		if skill.Status != protocol.SkillStatusEnabled || !skill.Enabled {
+			continue
+		}
+		secrets := map[string]string{}
+		for key, value := range s.skillSecrets[skill.ID] {
+			secrets[key] = value
+		}
+		runtimeSkills = append(runtimeSkills, protocol.RuntimeSkill{Skill: skill, Secrets: secrets})
+	}
+	return runtimeSkills
+}
+
+func (s *Store) listSkillsForUserLocked(userID, projectID string) []protocol.Skill {
 	if userID == "" || projectID == "" {
 		return nil
 	}
@@ -321,6 +360,13 @@ func (s *Store) ListSkillsForUser(userID, projectID string) []protocol.Skill {
 	skills := make([]protocol.Skill, 0, len(ids))
 	for _, id := range ids {
 		if skill, ok := s.skills[id]; ok {
+			if skill.Status == protocol.SkillStatusArchived {
+				continue
+			}
+			if skill.Scope == protocol.SkillScopeSystem && !skill.Enabled {
+				continue
+			}
+			skill = redactSkill(skill)
 			skills = append(skills, skill)
 		}
 	}
@@ -330,8 +376,130 @@ func (s *Store) ListSkillsForUser(userID, projectID string) []protocol.Skill {
 	return skills
 }
 
+func (s *Store) CreateHTTPSkill(userID, projectID string, input protocol.HTTPSkillInput) (protocol.Skill, error) {
+	now := time.Now().UTC()
+	skillID := platform.NewID("skill")
+	versionID := platform.NewID("skv")
+	skill, secret := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	skill.Enabled = true
+	skill.Status = protocol.SkillStatusEnabled
+	_ = now
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.skills[skill.ID] = skill
+	if secret != "" {
+		s.skillSecrets[skill.ID] = map[string]string{"bearer_token": secret}
+	}
+	key := skillGrantKey(userID, projectID)
+	s.skillGrants[key] = appendUnique(s.skillGrants[key], skill.ID)
+	return redactSkill(skill), nil
+}
+
+func (s *Store) UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkillInput) (protocol.Skill, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.skills[skillID]
+	if !ok || current.OwnerUserID != userID || current.Kind != protocol.SkillKindHTTP {
+		return protocol.Skill{}, ErrNotFound
+	}
+	updated, secret := httpSkillFromInput(skillID, platform.NewID("skv"), userID, current.ProjectID, current.Version, input)
+	updated.Enabled = current.Enabled
+	updated.Status = current.Status
+	s.skills[skillID] = updated
+	if secret != "" {
+		if s.skillSecrets[skillID] == nil {
+			s.skillSecrets[skillID] = map[string]string{}
+		}
+		s.skillSecrets[skillID]["bearer_token"] = secret
+	}
+	return redactSkill(updated), nil
+}
+
+func (s *Store) SetSkillEnabled(userID, skillID string, enabled bool) (protocol.Skill, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	skill, ok := s.skills[skillID]
+	if !ok || skill.OwnerUserID != userID || skill.Scope != protocol.SkillScopeUser {
+		return protocol.Skill{}, ErrNotFound
+	}
+	skill.Enabled = enabled
+	if enabled {
+		skill.Status = protocol.SkillStatusEnabled
+	} else {
+		skill.Status = protocol.SkillStatusDisabled
+	}
+	s.skills[skillID] = skill
+	return redactSkill(skill), nil
+}
+
 func skillGrantKey(userID, projectID string) string {
 	return userID + "\x00" + projectID
+}
+
+func appendUnique(values []string, next string) []string {
+	for _, value := range values {
+		if value == next {
+			return values
+		}
+	}
+	return append(values, next)
+}
+
+func httpSkillFromInput(skillID, versionID, userID, projectID, version string, input protocol.HTTPSkillInput) (protocol.Skill, string) {
+	method := strings.ToUpper(strings.TrimSpace(input.Method))
+	if method == "" {
+		method = "POST"
+	}
+	timeout := input.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = 15
+	}
+	authType := strings.TrimSpace(input.AuthType)
+	if authType == "" {
+		authType = "none"
+	}
+	config := map[string]any{
+		"type":            "http",
+		"method":          method,
+		"url":             strings.TrimSpace(input.URL),
+		"timeout_seconds": timeout,
+		"auth_type":       authType,
+	}
+	configBytes, _ := json.Marshal(config)
+	annotations := `{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":false,"openWorldHint":true}`
+	inputSchema := strings.TrimSpace(input.InputSchema)
+	if inputSchema == "" {
+		inputSchema = `{"type":"object","additionalProperties":true}`
+	}
+	description := strings.TrimSpace(input.Description)
+	if description == "" {
+		description = "User-provided HTTP skill."
+	}
+	skill := protocol.Skill{
+		ID:               skillID,
+		Slug:             skillID,
+		Scope:            protocol.SkillScopeUser,
+		Kind:             protocol.SkillKindHTTP,
+		OwnerUserID:      userID,
+		ProjectID:        projectID,
+		Status:           protocol.SkillStatusEnabled,
+		CurrentVersionID: versionID,
+		Name:             strings.TrimSpace(input.Name),
+		Version:          version,
+		Description:      description,
+		Risk:             protocol.SkillRiskMedium,
+		RequiresAuth:     false,
+		InputSchema:      inputSchema,
+		OutputSchema:     strings.TrimSpace(input.OutputSchema),
+		Annotations:      annotations,
+		RuntimeConfig:    string(configBytes),
+		Enabled:          true,
+	}
+	return skill, strings.TrimSpace(input.BearerToken)
+}
+
+func redactSkill(skill protocol.Skill) protocol.Skill {
+	return skill
 }
 
 func titleFromContent(content string) string {

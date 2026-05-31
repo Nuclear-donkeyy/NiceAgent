@@ -29,7 +29,7 @@ NiceAgent 的目标是构建一个通用的远端 agent 服务框架。产品形
 - 用户、组织、项目、权限和配额。
 - 聊天会话、消息、run、run events 和 artifacts 的权威状态。
 - agent 实例注册、健康检查、调度、取消和重试。
-- skill 注册、用户/项目可用性、版本和审计。
+- skill 注册、manifest 版本、用户/项目可用性、secret 引用和审计。
 - 面向前端的 REST API、SSE/WebSocket 事件流。
 
 Control Plane 不应该承载复杂 agentic loop，也不应该直接执行不受控 CLI。
@@ -46,7 +46,7 @@ Control Plane 不应该承载复杂 agentic loop，也不应该直接执行不�
 - 调用 Sandbox Executor 执行 CLI 或文件系统类操作。
 - 将执行事件和最终结果写回 Control Plane 或事件总线。
 
-Agent Runtime 应该可以横向扩展。一次 query 有可能被任意可用实例处理。
+Agent Runtime 应该可以横向扩展。一次 query 有可能被任意可用实例处理。当前主路径以 Eino ADK `ChatModelAgent + Runner` 承载 agentic loop，长期应允许替换模型 provider 和 tool bridge，而不影响 Control Plane 的会话状态。
 
 ### Sandbox Executor
 
@@ -68,7 +68,7 @@ CLI 是 Agent Runtime 的系统级工具，用来获取外部世界信息，不�
 - 用户级聊天管理。
 - 主聊天对话体验。
 - 把 run 事件折叠成 agent 当前状态。
-- 当前用户可用 skills 展示。
+- 当前用户可用 skills 展示，包括系统固定能力和用户添加能力。
 - artifacts 和错误恢复入口。
 
 视觉风格保持简洁，参考 ChatGPT 网页版，以黑、白、微黄色为主，减少圆角，使用面性和线性结构。
@@ -89,7 +89,7 @@ CLI 是 Agent Runtime 的系统级工具，用来获取外部世界信息，不�
 - Agent Runtime 尽量无状态，方便横向扩展和失败恢复。
 - 每次用户 query 都转化为可追踪、可取消、可重放事件的 `Run`。
 - `RunEvent` 是内部审计、恢复和排障的共同语言，前端默认不直接暴露原始事件列表。
-- Skills 必须可注册、可按用户/项目加载、可版本化、可审计。
+- Skills 必须可注册、可按用户/项目加载、可版本化、可审计；secret 必须和 skill manifest 分离。
 - CLI 必须通过 Sandbox Executor 执行，作为系统级 agent 工具使用。
 - 模型调用层必须支持多 provider 适配。
 - 本地 demo 能力可以存在，但不能成为生产路径的架构依赖。

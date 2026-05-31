@@ -112,15 +112,74 @@ const (
 	SkillRiskHigh   SkillRisk = "high"
 )
 
+type SkillScope string
+
+const (
+	SkillScopeSystem SkillScope = "system"
+	SkillScopeUser   SkillScope = "user"
+)
+
+type SkillKind string
+
+const (
+	SkillKindBuiltin SkillKind = "builtin"
+	SkillKindHTTP    SkillKind = "http"
+)
+
+type SkillStatus string
+
+const (
+	SkillStatusEnabled  SkillStatus = "enabled"
+	SkillStatusDisabled SkillStatus = "disabled"
+	SkillStatusArchived SkillStatus = "archived"
+)
+
 type Skill struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Version      string    `json:"version"`
-	Description  string    `json:"description"`
-	Risk         SkillRisk `json:"risk"`
-	RequiresAuth bool      `json:"requires_auth"`
-	InputSchema  string    `json:"input_schema,omitempty"`
-	OutputSchema string    `json:"output_schema,omitempty"`
+	ID               string      `json:"id"`
+	Slug             string      `json:"slug,omitempty"`
+	Scope            SkillScope  `json:"scope,omitempty"`
+	Kind             SkillKind   `json:"kind,omitempty"`
+	OwnerUserID      string      `json:"owner_user_id,omitempty"`
+	ProjectID        string      `json:"project_id,omitempty"`
+	Status           SkillStatus `json:"status,omitempty"`
+	CurrentVersionID string      `json:"current_version_id,omitempty"`
+	Name             string      `json:"name"`
+	Version          string      `json:"version"`
+	Description      string      `json:"description"`
+	Risk             SkillRisk   `json:"risk"`
+	RequiresAuth     bool        `json:"requires_auth"`
+	InputSchema      string      `json:"input_schema,omitempty"`
+	OutputSchema     string      `json:"output_schema,omitempty"`
+	Annotations      string      `json:"annotations,omitempty"`
+	RuntimeConfig    string      `json:"runtime_config,omitempty"`
+	Enabled          bool        `json:"enabled"`
+}
+
+type RuntimeSkill struct {
+	Skill   Skill             `json:"skill"`
+	Secrets map[string]string `json:"secrets,omitempty"`
+}
+
+type SkillGroups struct {
+	System []Skill `json:"system"`
+	User   []Skill `json:"user"`
+}
+
+type SkillsResponse struct {
+	Skills []Skill     `json:"skills"`
+	Groups SkillGroups `json:"groups"`
+}
+
+type HTTPSkillInput struct {
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	Method         string `json:"method"`
+	URL            string `json:"url"`
+	InputSchema    string `json:"input_schema,omitempty"`
+	OutputSchema   string `json:"output_schema,omitempty"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+	AuthType       string `json:"auth_type,omitempty"`
+	BearerToken    string `json:"bearer_token,omitempty"`
 }
 
 type Workspace struct {
@@ -140,12 +199,13 @@ type ModelProvider struct {
 }
 
 type RunRequest struct {
-	RunID       string   `json:"run_id"`
-	ChatID      string   `json:"chat_id"`
-	UserID      string   `json:"user_id"`
-	WorkspaceID string   `json:"workspace_id"`
-	SkillIDs    []string `json:"skill_ids"`
-	ModelPolicy string   `json:"model_policy"`
+	RunID       string         `json:"run_id"`
+	ChatID      string         `json:"chat_id"`
+	UserID      string         `json:"user_id"`
+	WorkspaceID string         `json:"workspace_id"`
+	SkillIDs    []string       `json:"skill_ids"`
+	Skills      []RuntimeSkill `json:"skills,omitempty"`
+	ModelPolicy string         `json:"model_policy"`
 }
 
 type RunExecutionRequest struct {

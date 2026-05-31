@@ -198,16 +198,54 @@ func TestServerListsCurrentUserSkills(t *testing.T) {
 		t.Fatalf("skills status = %d, body = %s", response.Code, response.Body.String())
 	}
 	var output struct {
-		Skills []protocol.Skill `json:"skills"`
+		Skills []protocol.Skill     `json:"skills"`
+		Groups protocol.SkillGroups `json:"groups"`
 	}
 	decodeJSON(t, response.Body, &output)
 	if len(output.Skills) == 0 {
 		t.Fatal("expected skills")
 	}
+	if len(output.Groups.System) == 0 {
+		t.Fatalf("groups = %#v, want system skills", output.Groups)
+	}
 	for _, skill := range output.Skills {
 		if skill.ID == "cli.exec" && skill.RequiresAuth {
 			t.Fatalf("cli.exec requires auth = true, want false")
 		}
+	}
+}
+
+func TestServerCreatesUserHTTPSkill(t *testing.T) {
+	_, handler := newTestHandler()
+	request := httptest.NewRequest(http.MethodPost, "/api/skills/http", jsonBody(t, protocol.HTTPSkillInput{
+		Name:        "Weather API",
+		Description: "Fetch weather",
+		Method:      "POST",
+		URL:         "https://example.com/weather",
+		AuthType:    "bearer",
+		BearerToken: "secret-token",
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create skill status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var skill protocol.Skill
+	decodeJSON(t, response.Body, &skill)
+	if skill.Scope != protocol.SkillScopeUser || skill.Kind != protocol.SkillKindHTTP {
+		t.Fatalf("skill scope/kind = %q/%q, want user/http", skill.Scope, skill.Kind)
+	}
+	if strings.Contains(response.Body.String(), "secret-token") {
+		t.Fatalf("response leaked bearer token: %s", response.Body.String())
+	}
+
+	list := httptest.NewRequest(http.MethodGet, "/api/skills", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	var output protocol.SkillsResponse
+	decodeJSON(t, listResponse.Body, &output)
+	if len(output.Groups.User) != 1 || output.Groups.User[0].ID != skill.ID {
+		t.Fatalf("user groups = %#v, want created skill", output.Groups.User)
 	}
 }
 

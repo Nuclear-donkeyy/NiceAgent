@@ -20,7 +20,7 @@ import (
 func main() {
 	addr := env("AGENT_RUNTIME_ADDR", ":8081")
 	logger := platform.NewLogger("agent-runtime")
-	engine := runtime.NewEngine(newSandboxExecutor(logger))
+	engine := runtime.NewEinoAgentEngine(newSandboxExecutor(logger))
 	modelProvider, err := modelProviderFromEnv(logger)
 	if err != nil {
 		log.Fatal(err)

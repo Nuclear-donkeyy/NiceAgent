@@ -86,26 +86,34 @@ func NewQueueDispatcher(repo Repository, queue RunQueue) *QueueDispatcher {
 }
 
 func (d *QueueDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMessage string) error {
+	runtimeSkills := runtimeSkillsForRun(d.repo, run)
 	return d.queue.Enqueue(ctx, QueuedRun{
 		RunID:       run.ID,
 		ChatID:      run.ChatID,
 		UserID:      run.UserID,
 		WorkspaceID: run.WorkspaceID,
 		UserMessage: userMessage,
-		SkillIDs:    skillIDsForRun(d.repo, run),
+		SkillIDs:    skillIDsFromRuntimeSkills(runtimeSkills),
 		ModelPolicy: "mock-default",
 	})
 }
 
 func skillIDsForRun(repo Repository, run protocol.Run) []string {
+	return skillIDsFromRuntimeSkills(runtimeSkillsForRun(repo, run))
+}
+
+func runtimeSkillsForRun(repo Repository, run protocol.Run) []protocol.RuntimeSkill {
 	chat, _, err := repo.GetChat(run.ChatID)
 	if err != nil {
 		return nil
 	}
-	skills := repo.ListSkillsForUser(run.UserID, chat.ProjectID)
+	return repo.ListRuntimeSkillsForUser(run.UserID, chat.ProjectID)
+}
+
+func skillIDsFromRuntimeSkills(skills []protocol.RuntimeSkill) []string {
 	ids := make([]string, 0, len(skills))
-	for _, skill := range skills {
-		ids = append(ids, skill.ID)
+	for _, runtimeSkill := range skills {
+		ids = append(ids, runtimeSkill.Skill.ID)
 	}
 	return ids
 }

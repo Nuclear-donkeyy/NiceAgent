@@ -60,6 +60,16 @@ export default function App() {
   const [activeChat, setActiveChat] = useState(null);
   const [messages, setMessages] = useState([]);
   const [skills, setSkills] = useState([]);
+  const [skillGroups, setSkillGroups] = useState({ system: [], user: [] });
+  const [skillFormOpen, setSkillFormOpen] = useState(false);
+  const [skillForm, setSkillForm] = useState({
+    name: "",
+    description: "",
+    url: "",
+    method: "POST",
+    auth_type: "none",
+    bearer_token: "",
+  });
   const [runId, setRunId] = useState(null);
   const [runStatus, setRunStatus] = useState("idle");
   const [assistantDraft, setAssistantDraft] = useState("");
@@ -135,7 +145,53 @@ export default function App() {
 
   async function loadSkills() {
     const data = await api("/api/skills");
-    setSkills(data.skills || []);
+    const nextSkills = data.skills || [];
+    const groups = data.groups || {};
+    setSkills(nextSkills);
+    setSkillGroups({
+      system: groups.system || nextSkills.filter((skill) => skill.scope !== "user"),
+      user: groups.user || nextSkills.filter((skill) => skill.scope === "user"),
+    });
+  }
+
+  async function createHTTPSkill(event) {
+    event.preventDefault();
+    try {
+      const payload = {
+        ...skillForm,
+        input_schema: "{\"type\":\"object\",\"additionalProperties\":true}",
+      };
+      if (payload.auth_type !== "bearer") {
+        payload.bearer_token = "";
+      }
+      await api("/api/skills/http", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setSkillForm({
+        name: "",
+        description: "",
+        url: "",
+        method: "POST",
+        auth_type: "none",
+        bearer_token: "",
+      });
+      setSkillFormOpen(false);
+      setNotice("HTTP Skill 已添加");
+      await loadSkills();
+    } catch (error) {
+      setNotice(`添加 Skill 失败：${error.message}`);
+    }
+  }
+
+  async function setSkillEnabled(skillID, enabled) {
+    try {
+      await api(`/api/skills/${encodeURIComponent(skillID)}/${enabled ? "enable" : "disable"}`, { method: "POST" });
+      setNotice(enabled ? "Skill 已启用" : "Skill 已停用");
+      await loadSkills();
+    } catch (error) {
+      setNotice(`更新 Skill 失败：${error.message}`);
+    }
   }
 
   async function createChat() {
@@ -383,17 +439,85 @@ export default function App() {
           )}
         </div>
 
-        <SectionTitle text="当前可用能力" />
+        <SectionTitle text="系统能力" />
         <div className="skill-list">
-          {skills.map((skill) => (
+          {skillGroups.system.map((skill) => (
             <article className="skill-card" key={skill.id}>
               <div className="skill-head">
                 <strong>{skill.name || skill.id}</strong>
-                <span>{skill.id === "cli.exec" ? "系统" : riskText[skill.risk] || skill.risk || "未知"}</span>
+                <span>系统</span>
               </div>
               <p>{skill.description || "暂无说明"}</p>
             </article>
           ))}
+          {skillGroups.system.length === 0 && <Empty text="暂无系统能力" />}
+        </div>
+
+        <div className="section-row">
+          <SectionTitle text="我的能力" />
+          <button className="mini-button" onClick={() => setSkillFormOpen((value) => !value)}>
+            {skillFormOpen ? "收起" : "添加"}
+          </button>
+        </div>
+        {skillFormOpen && (
+          <form className="skill-form" onSubmit={createHTTPSkill}>
+            <input
+              value={skillForm.name}
+              onChange={(event) => setSkillForm((prev) => ({ ...prev, name: event.target.value }))}
+              placeholder="Skill 名称"
+            />
+            <input
+              value={skillForm.url}
+              onChange={(event) => setSkillForm((prev) => ({ ...prev, url: event.target.value }))}
+              placeholder="https://api.example.com/tool"
+            />
+            <textarea
+              value={skillForm.description}
+              onChange={(event) => setSkillForm((prev) => ({ ...prev, description: event.target.value }))}
+              placeholder="什么时候应该调用这个能力"
+              rows={2}
+            />
+            <div className="skill-form-row">
+              <select
+                value={skillForm.method}
+                onChange={(event) => setSkillForm((prev) => ({ ...prev, method: event.target.value }))}
+              >
+                <option value="POST">POST</option>
+                <option value="GET">GET</option>
+              </select>
+              <select
+                value={skillForm.auth_type}
+                onChange={(event) => setSkillForm((prev) => ({ ...prev, auth_type: event.target.value }))}
+              >
+                <option value="none">无鉴权</option>
+                <option value="bearer">Bearer</option>
+              </select>
+            </div>
+            {skillForm.auth_type === "bearer" && (
+              <input
+                value={skillForm.bearer_token}
+                onChange={(event) => setSkillForm((prev) => ({ ...prev, bearer_token: event.target.value }))}
+                placeholder="Bearer token，不会展示给前端列表"
+                type="password"
+              />
+            )}
+            <button type="submit">保存 HTTP Skill</button>
+          </form>
+        )}
+        <div className="skill-list">
+          {skillGroups.user.map((skill) => (
+            <article className="skill-card" key={skill.id}>
+              <div className="skill-head">
+                <strong>{skill.name || skill.id}</strong>
+                <span>{skill.enabled ? "已启用" : "已停用"}</span>
+              </div>
+              <p>{skill.description || "暂无说明"}</p>
+              <button onClick={() => setSkillEnabled(skill.id, !skill.enabled)}>
+                {skill.enabled ? "停用" : "启用"}
+              </button>
+            </article>
+          ))}
+          {skillGroups.user.length === 0 && <Empty text="还没有用户 Skill" />}
         </div>
       </aside>
 

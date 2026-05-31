@@ -20,4 +20,8 @@ type Repository interface {
 	ListEvents(runID string, afterSeq int64) []protocol.RunEvent
 	Subscribe(runID string) (<-chan protocol.RunEvent, func())
 	ListSkillsForUser(userID, projectID string) []protocol.Skill
+	ListRuntimeSkillsForUser(userID, projectID string) []protocol.RuntimeSkill
+	CreateHTTPSkill(userID, projectID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
+	UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
+	SetSkillEnabled(userID, skillID string, enabled bool) (protocol.Skill, error)
 }

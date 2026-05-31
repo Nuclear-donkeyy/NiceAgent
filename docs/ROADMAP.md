@@ -41,19 +41,26 @@
 - SSE `after` replay 使用数据库事件序号。
 - memory 模式和 Postgres 模式都有清晰启动方式。
 
-## Phase 3：Agent Runtime 能力（Phase 3A 基础完成）
+## Phase 3：Agent Runtime 能力（Phase 3B 当前落地）
 
 - Phase 3A：落地 OpenAI-compatible provider，并保留 mock provider 作为默认本地路径。
-- 后续接入 Eino adapter 边界。
-- 通过 `ToolBridge` 将平台 `Skill` 映射为 runtime tools。
+- Phase 3B：接入 Eino ADK `ChatModelAgent + Runner` 主路径。
+- 通过 `ToolBridge` 将平台 `RuntimeSkill` 映射为 runtime tools。
 - 支持最大步数、超时、取消、工具失败和事件审计。
 - 定义 checkpoint/resume 的最小协议，先不要求完整长任务恢复。
 
 验收标准：
 
-- Runtime 可通过配置选择 mock provider 或 OpenAI-compatible provider。
+- Runtime 可通过配置选择 mock provider 或 OpenAI-compatible provider，并由 Eino agent loop 统一驱动。
 - 工具调用、工具失败、模型错误都会产生标准化 `RunEvent`。
 - 取消 run 后，runtime 不再写入成功终态。
+
+## Phase 3C：Skill Registry 与 Secret 后端
+
+- Skill manifest 目前已拆成 metadata、version、grant 和 secret 存储。
+- HTTP Skill v1 支持无鉴权和 bearer token，本地开发 token 存在 `skill_secrets.encrypted_value`。
+- 后续接入阿里云 KMS、Vault 或 External Secrets，替换本地开发密文。
+- 后续支持从 OpenAPI/MCP 导入 skill manifest。
 
 ## Phase 4：Sandbox 与 CLI（Phase 4B 当前落地）
 
@@ -71,11 +78,12 @@
 - 高风险命令不会直接执行，会作为系统 CLI 策略拒绝进入普通 tool output，不再触发用户授权。
 - stdout/stderr 超长输出会被截断并标记。
 
-## Phase 5：前端产品化（Phase 5B 当前落地）
+## Phase 5：前端产品化（Phase 5C 当前落地）
 
 - React 前端继续贴近 ChatGPT 网页版风格。
 - Phase 5A：完善会话搜索、归档/恢复、最近 run replay 和基础 loading/error/empty 状态。
 - Phase 5B：隐藏原始运行事件和 CLI 调试面板，把 SSE 折叠成 assistant 流式回复和 agent 当前状态；skills 区改为当前可用能力。
+- Phase 5C：skills 区拆成系统能力和我的能力，支持添加/启停 HTTP Skill。
 - 后续补 artifact 展示和更完整的错误恢复。
 - 保持黑、白、微黄色，少圆角，面性+线性风格。
 - 增加前端侧基础测试或至少稳定的 Rspack build 检查。

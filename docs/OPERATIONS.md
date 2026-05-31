@@ -16,7 +16,7 @@ memory 模式的权威状态在进程内存中，进程重启会丢失数据。P
 - 用户、组织、项目。
 - 聊天会话和消息。
 - runs、run events、artifacts。
-- skills、用户/项目 skill grants、配额、审计记录。
+- skills、skill_versions、用户/项目 skill_grants、skill_secrets、配额、审计记录。
 
 当前 Postgres 模式支持单 Control Plane 进程内 SSE fanout 和基于数据库的 `RunEvent` replay。Redis Streams 后续用于多实例 run dispatch 和 event fanout，但不应替代 Postgres 的权威持久化。
 
@@ -30,7 +30,18 @@ Agent Runtime 默认使用 `MODEL_PROVIDER=mock`，适合本地演示和 CI。�
 - `MODEL_NAME`：请求体中的 `model`。
 - `MODEL_TIMEOUT_SECONDS`：模型 HTTP 请求超时，默认 120 秒。
 
-模型流式输出统一写成 `model.token` run event。非 2xx、流式 JSON 解析失败、网络超时都会让 runtime 通过 Control Plane 写入 `run.failed`。
+Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 执行 agentic loop。模型流式输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。非 2xx、流式 JSON 解析失败、网络超时都会让 runtime 通过 Control Plane 写入 `run.failed`。
+
+## Skill 与 Secret 排查
+
+Skill 存储分为四层：
+
+- `skills`：稳定身份、scope、kind、owner、status。
+- `skill_versions`：name、description、JSON schema、MCP 风格 annotations、runtime_config。
+- `skill_grants`：用户/项目可用性。
+- `skill_secrets`：secret 引用或本地开发密文。
+
+前端 `GET /api/skills` 不返回 secret。Runtime 通过 Control Plane 下发的内部 `RuntimeSkill` 获取执行所需 secret。当前本地开发允许把 bearer token 存入 `encrypted_value`；生产环境应替换为阿里云 KMS、Vault 或 External Secrets。
 
 ## Postgres 模式排查
 
@@ -130,6 +141,6 @@ make docker-build
 ## 当前限制
 
 - memory store 无法支撑多实例共享状态；Postgres 模式当前先服务单 Control Plane 副本。
-- OpenAI-compatible provider 已支持真实流式模型输出，但 runtime 还不具备模型工具规划和长任务恢复能力。
+- OpenAI-compatible provider 已支持真实流式模型输出；当前 Eino loop 仍通过项目内模型桥接器适配，后续应替换为原生支持 tool calling 的 Eino ChatModel provider。
 - local executor 不提供生产级命令隔离。
 - sandbox、认证、租户配额、审批和审计仍需继续完善。

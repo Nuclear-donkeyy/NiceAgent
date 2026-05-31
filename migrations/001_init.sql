@@ -66,13 +66,40 @@ CREATE TABLE run_events (
 
 CREATE TABLE skills (
   id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  scope TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  owner_user_id TEXT REFERENCES users(id),
+  project_id TEXT REFERENCES projects(id),
+  status TEXT NOT NULL DEFAULT 'enabled',
+  current_version_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE skill_versions (
+  id TEXT PRIMARY KEY,
+  skill_id TEXT NOT NULL REFERENCES skills(id),
   version TEXT NOT NULL,
+  name TEXT NOT NULL,
   description TEXT NOT NULL,
   risk TEXT NOT NULL,
-  requires_auth BOOLEAN NOT NULL DEFAULT false,
   input_schema JSONB,
-  output_schema JSONB
+  output_schema JSONB,
+  annotations JSONB,
+  runtime_config JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE skill_secrets (
+  id TEXT PRIMARY KEY,
+  skill_id TEXT NOT NULL REFERENCES skills(id),
+  secret_key TEXT NOT NULL,
+  secret_ref TEXT,
+  encrypted_value TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (skill_id, secret_key)
 );
 
 CREATE TABLE workspaces (
@@ -99,24 +126,34 @@ INSERT INTO projects (id, organization_id, name)
 VALUES ('demo-project', 'demo-org', 'Demo Project')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO skills (id, name, version, description, risk, requires_auth, input_schema)
+INSERT INTO skills (id, slug, scope, kind, status, current_version_id)
+VALUES
+  ('cli.exec', 'cli.exec', 'system', 'builtin', 'enabled', 'skv_cli_exec_001'),
+  ('workspace.read', 'workspace.read', 'system', 'builtin', 'enabled', 'skv_workspace_read_001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO skill_versions (id, skill_id, version, name, description, risk, input_schema, annotations, runtime_config)
 VALUES
   (
+    'skv_cli_exec_001',
     'cli.exec',
-    'System CLI',
     '0.1.0',
+    'System CLI',
     'Fetch external information through a read-only sandboxed CLI.',
     'medium',
-    false,
-    '{"type":"object","required":["command"],"properties":{"command":{"type":"array","items":{"type":"string"}}}}'
+    '{"type":"object","required":["command"],"properties":{"command":{"type":"array","items":{"type":"string"}}}}',
+    '{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":false,"openWorldHint":true}',
+    '{"type":"builtin","executor":"sandbox"}'
   ),
   (
+    'skv_workspace_read_001',
     'workspace.read',
-    'Workspace Reader',
     '0.1.0',
+    'Workspace Reader',
     'Inspect files and artifacts attached to a run workspace.',
     'low',
-    false,
-    NULL
+    NULL,
+    '{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}',
+    '{"type":"builtin"}'
   )
 ON CONFLICT (id) DO NOTHING;

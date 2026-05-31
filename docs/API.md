@@ -53,7 +53,46 @@
 
 `GET /api/skills`
 
-列出当前用户在当前项目可用的 skills。系统级 CLI 也通过这个列表下发给 Agent Runtime，但不需要用户逐次授权。
+列出当前用户在当前项目可用的 skills。响应同时包含兼容旧前端的扁平 `skills` 和分组后的 `groups.system`、`groups.user`。
+
+```json
+{
+  "skills": [],
+  "groups": {
+    "system": [],
+    "user": []
+  }
+}
+```
+
+系统级 CLI 也通过这个列表下发给 Agent Runtime，但不需要用户逐次授权。
+
+`POST /api/skills/http`
+
+创建当前用户的 HTTP Skill，并自动 grant 到当前项目。`bearer_token` 只进入后端 secret 存储，不会出现在后续前端 API 响应。
+
+```json
+{
+  "name": "Weather API",
+  "description": "Fetch weather information",
+  "method": "POST",
+  "url": "https://example.com/weather",
+  "auth_type": "bearer",
+  "bearer_token": "secret"
+}
+```
+
+`PATCH /api/skills/{skill_id}`
+
+更新当前用户拥有的 HTTP Skill。系统固定 skill 不允许通过该接口修改。
+
+`POST /api/skills/{skill_id}/enable`
+
+启用当前用户拥有的 HTTP Skill。
+
+`POST /api/skills/{skill_id}/disable`
+
+停用当前用户拥有的 HTTP Skill。
 
 `POST /api/skills/{skill_id}/approve`
 
@@ -75,6 +114,15 @@ Agent Runtime 执行 `RunExecutionRequest` 的入口，由 Control Plane 的 HTT
     "user_id": "demo-user",
     "workspace_id": "ws_xxx",
     "skill_ids": ["workspace.read", "cli.exec"],
+    "skills": [
+      {
+        "skill": {
+          "id": "cli.exec",
+          "scope": "system",
+          "kind": "builtin"
+        }
+      }
+    ],
     "model_policy": "mock-default"
   },
   "user_message": "/cli echo hello",
@@ -137,9 +185,11 @@ Sandbox Executor 在策略约束下执行命令的入口，由 Agent Runtime 的
 }
 ```
 
-## 模型输出
+## Skill 存储与模型输出
 
-Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。无论 provider 类型如何，模型流式内容都通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端折叠成 assistant 消息。
+Skill 元数据以 `skills` 和 `skill_versions` 为权威，`skill_grants` 表示用户/项目可用性，`skill_secrets` 只保存 secret 引用或本地开发密文。`input_schema`、`output_schema`、`annotations` 和 `runtime_config` 使用 JSON/JSONB；`annotations` 采用 MCP 风格字段，例如 `readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`。
+
+Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。当前主执行路径通过 Eino ADK `ChatModelAgent + Runner` 运行 agentic loop；模型输出仍通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端折叠成 assistant 消息。
 
 OpenAI-compatible provider 使用 `/v1/chat/completions` 的 streaming 协议；该能力不改变外部 Web API 和 `RunExecutionRequest`。
 
