@@ -30,6 +30,20 @@ make run-control
 
 如需模拟内部鉴权，三个服务使用同一个 `INTERNAL_API_TOKEN`；为空时内部 API 不校验 bearer token。
 
+Agent Runtime 默认使用 `MODEL_PROVIDER=mock`。如需接 OpenAI-compatible 模型服务：
+
+```bash
+MODEL_PROVIDER=openai-compatible \
+MODEL_BASE_URL=https://api.example.com \
+MODEL_API_KEY=replace-with-api-key \
+MODEL_NAME=example-model \
+MODEL_TIMEOUT_SECONDS=120 \
+SANDBOX_EXECUTOR_URL=http://127.0.0.1:8082 \
+make run-runtime
+```
+
+`MODEL_BASE_URL` 不需要包含 `/v1/chat/completions`，runtime 会自动调用 `{MODEL_BASE_URL}/v1/chat/completions` 并解析 SSE token。
+
 Postgres 持久化路径：
 
 ```bash

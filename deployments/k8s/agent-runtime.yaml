@@ -32,6 +32,32 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: SANDBOX_EXECUTOR_URL
+            - name: MODEL_PROVIDER
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_PROVIDER
+            - name: MODEL_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_BASE_URL
+            - name: MODEL_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_NAME
+            - name: MODEL_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_TIMEOUT_SECONDS
+            - name: MODEL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-model-provider
+                  key: api-key
+                  optional: true
             - name: REDIS_ADDR
               valueFrom:
                 configMapKeyRef:

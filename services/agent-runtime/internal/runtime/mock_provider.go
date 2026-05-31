@@ -26,10 +26,3 @@ func (p MockProvider) Stream(ctx context.Context, _ ModelRequest) (<-chan ModelC
 	}()
 	return ch, nil
 }
-
-type OpenAICompatibleProviderConfig struct {
-	ID      string
-	BaseURL string
-	APIKey  string
-	Model   string
-}

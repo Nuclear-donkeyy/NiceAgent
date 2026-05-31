@@ -20,6 +20,18 @@ memory 模式的权威状态在进程内存中，进程重启会丢失数据。P
 
 当前 Postgres 模式支持单 Control Plane 进程内 SSE fanout 和基于数据库的 `RunEvent` replay。Redis Streams 后续用于多实例 run dispatch 和 event fanout，但不应替代 Postgres 的权威持久化。
 
+## 模型 Provider
+
+Agent Runtime 默认使用 `MODEL_PROVIDER=mock`，适合本地演示和 CI。切到真实 OpenAI-compatible provider 时，需要配置：
+
+- `MODEL_PROVIDER=openai-compatible`
+- `MODEL_BASE_URL`：兼容服务根地址，不包含 `/v1/chat/completions`。
+- `MODEL_API_KEY`：模型服务密钥，只能通过环境变量或 Kubernetes Secret 注入，不写入仓库。
+- `MODEL_NAME`：请求体中的 `model`。
+- `MODEL_TIMEOUT_SECONDS`：模型 HTTP 请求超时，默认 120 秒。
+
+模型流式输出统一写成 `model.token` run event。非 2xx、流式 JSON 解析失败、网络超时都会让 runtime 通过 Control Plane 写入 `run.failed`。
+
 ## Postgres 模式排查
 
 启动 Compose：
@@ -52,6 +64,7 @@ docker compose -f deployments/docker-compose.yml down -v
 - `chat_id`：定位用户会话。
 - event `seq`：确认 SSE replay 和事件顺序。
 - run terminal state：确认 `succeeded`、`failed`、`canceled` 是否被迟到事件覆盖。
+- `MODEL_PROVIDER` 和模型 HTTP 状态：定位真实模型调用失败。
 
 后续需要接入结构化日志、metrics 和 trace，便于观测队列延迟、模型延迟、sandbox 启动耗时和失败率。
 
@@ -107,6 +120,6 @@ make docker-build
 ## 当前限制
 
 - memory store 无法支撑多实例共享状态；Postgres 模式当前先服务单 Control Plane 副本。
-- mock runtime 不具备真实模型调用、工具规划和长任务恢复能力。
+- OpenAI-compatible provider 已支持真实流式模型输出，但 runtime 还不具备模型工具规划和长任务恢复能力。
 - local executor 不提供生产级命令隔离。
 - sandbox、认证、租户配额、审批和审计仍需继续完善。

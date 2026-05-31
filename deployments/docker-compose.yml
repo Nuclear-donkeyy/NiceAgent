@@ -45,6 +45,8 @@ services:
       AGENT_RUNTIME_ADDR: ":8081"
       CONTROL_PLANE_URL: http://control-plane:8080
       SANDBOX_EXECUTOR_URL: http://sandbox-executor:8082
+      MODEL_PROVIDER: mock
+      MODEL_TIMEOUT_SECONDS: "120"
       REDIS_ADDR: redis:6379
     ports:
       - "8081:8081"
