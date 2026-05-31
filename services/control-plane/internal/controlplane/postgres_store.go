@@ -3,6 +3,7 @@ package controlplane
 import (
 	"database/sql"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"niceagent/common/platform"
@@ -10,11 +11,16 @@ import (
 )
 
 type PostgresStore struct {
-	db *sql.DB
+	db          *sql.DB
+	mu          sync.Mutex
+	subscribers map[string]map[chan protocol.RunEvent]struct{}
 }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {
-	return &PostgresStore{db: db}
+	return &PostgresStore{
+		db:          db,
+		subscribers: map[string]map[chan protocol.RunEvent]struct{}{},
+	}
 }
 
 func (s *PostgresStore) ListChats(userID string) []protocol.ChatSession {
@@ -40,7 +46,7 @@ func (s *PostgresStore) ListChats(userID string) []protocol.ChatSession {
 	return chats
 }
 
-func (s *PostgresStore) CreateChat(userID, title string) protocol.ChatSession {
+func (s *PostgresStore) CreateChat(userID, title string) (protocol.ChatSession, error) {
 	now := time.Now().UTC()
 	if title == "" {
 		title = "New chat"
@@ -53,11 +59,14 @@ func (s *PostgresStore) CreateChat(userID, title string) protocol.ChatSession {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	_, _ = s.db.Exec(`
+	_, err := s.db.Exec(`
 		INSERT INTO chat_sessions (id, user_id, project_id, title, archived, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, false, $5, $6)`,
 		chat.ID, chat.UserID, chat.ProjectID, chat.Title, chat.CreatedAt, chat.UpdatedAt)
-	return chat
+	if err != nil {
+		return protocol.ChatSession{}, err
+	}
+	return chat, nil
 }
 
 func (s *PostgresStore) GetChat(chatID string) (protocol.ChatSession, []protocol.Message, error) {
@@ -148,7 +157,7 @@ func (s *PostgresStore) AddUserMessage(chatID, userID, content string) (protocol
 	return msg, run, nil
 }
 
-func (s *PostgresStore) AddAssistantMessage(chatID, runID, content string) protocol.Message {
+func (s *PostgresStore) AddAssistantMessage(chatID, runID, content string) (protocol.Message, error) {
 	msg := protocol.Message{
 		ID:        platform.NewID("msg"),
 		ChatID:    chatID,
@@ -157,10 +166,22 @@ func (s *PostgresStore) AddAssistantMessage(chatID, runID, content string) proto
 		Content:   content,
 		CreatedAt: time.Now().UTC(),
 	}
-	_, _ = s.db.Exec(`INSERT INTO messages (id, chat_id, run_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-		msg.ID, msg.ChatID, msg.RunID, msg.Role, msg.Content, msg.CreatedAt)
-	_, _ = s.db.Exec(`UPDATE chat_sessions SET updated_at = $1 WHERE id = $2`, msg.CreatedAt, chatID)
-	return msg
+	tx, err := s.db.Begin()
+	if err != nil {
+		return protocol.Message{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO messages (id, chat_id, run_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		msg.ID, msg.ChatID, msg.RunID, msg.Role, msg.Content, msg.CreatedAt); err != nil {
+		return protocol.Message{}, err
+	}
+	if _, err := tx.Exec(`UPDATE chat_sessions SET updated_at = $1 WHERE id = $2`, msg.CreatedAt, chatID); err != nil {
+		return protocol.Message{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return protocol.Message{}, err
+	}
+	return msg, nil
 }
 
 func (s *PostgresStore) GetRun(runID string) (protocol.Run, error) {
@@ -223,7 +244,7 @@ func (s *PostgresStore) AddEvent(runID string, typ protocol.RunEventType, messag
 	}
 	defer tx.Rollback()
 	var chatID string
-	if err := tx.QueryRow(`SELECT chat_id FROM runs WHERE id = $1`, runID).Scan(&chatID); err != nil {
+	if err := tx.QueryRow(`SELECT chat_id FROM runs WHERE id = $1 FOR UPDATE`, runID).Scan(&chatID); err != nil {
 		if err == sql.ErrNoRows {
 			return protocol.RunEvent{}, ErrNotFound
 		}
@@ -254,6 +275,7 @@ func (s *PostgresStore) AddEvent(runID string, typ protocol.RunEventType, messag
 	if err := tx.Commit(); err != nil {
 		return protocol.RunEvent{}, err
 	}
+	s.publish(event)
 	return event, nil
 }
 
@@ -287,10 +309,25 @@ func (s *PostgresStore) ListEvents(runID string, afterSeq int64) []protocol.RunE
 	return events
 }
 
-func (s *PostgresStore) Subscribe(string) (<-chan protocol.RunEvent, func()) {
-	ch := make(chan protocol.RunEvent)
-	close(ch)
-	return ch, func() {}
+func (s *PostgresStore) Subscribe(runID string) (<-chan protocol.RunEvent, func()) {
+	ch := make(chan protocol.RunEvent, 32)
+	s.mu.Lock()
+	if s.subscribers[runID] == nil {
+		s.subscribers[runID] = map[chan protocol.RunEvent]struct{}{}
+	}
+	s.subscribers[runID][ch] = struct{}{}
+	s.mu.Unlock()
+	cancel := func() {
+		s.mu.Lock()
+		if subs, ok := s.subscribers[runID]; ok {
+			delete(subs, ch)
+			if len(subs) == 0 {
+				delete(s.subscribers, runID)
+			}
+		}
+		s.mu.Unlock()
+	}
+	return ch, cancel
 }
 
 func (s *PostgresStore) ListSkills() []protocol.Skill {
@@ -309,4 +346,19 @@ func (s *PostgresStore) ListSkills() []protocol.Skill {
 		}
 	}
 	return skills
+}
+
+func (s *PostgresStore) publish(event protocol.RunEvent) {
+	s.mu.Lock()
+	subscribers := make([]chan protocol.RunEvent, 0, len(s.subscribers[event.RunID]))
+	for ch := range s.subscribers[event.RunID] {
+		subscribers = append(subscribers, ch)
+	}
+	s.mu.Unlock()
+	for _, ch := range subscribers {
+		select {
+		case ch <- event:
+		default:
+		}
+	}
 }

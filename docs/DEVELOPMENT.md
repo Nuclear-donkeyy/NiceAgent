@@ -12,6 +12,8 @@
 
 仓库根目录使用 `go.work` 组织多个 module：
 
+memory 快速开发路径：
+
 ```bash
 make run-sandbox
 make run-runtime
@@ -27,6 +29,20 @@ make run-control
 如果没有配置 `AGENT_RUNTIME_URL`，Control Plane 会回退到本地 demo dispatcher。如果没有配置 `SANDBOX_EXECUTOR_URL`，Agent Runtime 会回退到 local sandbox executor。
 
 如需模拟内部鉴权，三个服务使用同一个 `INTERNAL_API_TOKEN`；为空时内部 API 不校验 bearer token。
+
+Postgres 持久化路径：
+
+```bash
+docker compose -f deployments/docker-compose.yml up
+```
+
+Compose 会启动 Postgres、Redis、Control Plane、Agent Runtime 和 Sandbox Executor。Control Plane 在该拓扑中使用 `STORE_DRIVER=postgres`，数据库连接来自 `DATABASE_URL`。重启 Control Plane 后，会话、消息、run 和 run events 应继续保留。
+
+如果只想本机直接连接已有 Postgres：
+
+```bash
+STORE_DRIVER=postgres DATABASE_URL=postgres://niceagent:niceagent@localhost:5432/niceagent?sslmode=disable make run-control
+```
 
 也可以进入单个服务目录运行：
 
@@ -65,6 +81,12 @@ make test
 make check-js
 make compose-config
 git diff --check
+```
+
+Postgres repository 测试默认跳过；如需运行，需要提供测试数据库：
+
+```bash
+TEST_DATABASE_URL=postgres://niceagent:niceagent@localhost:5432/niceagent?sslmode=disable go test ./services/control-plane/...
 ```
 
 ## 本地 Kubernetes

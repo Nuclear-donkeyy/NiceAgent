@@ -8,7 +8,7 @@ import (
 
 func TestStoreCreatesChatMessageRunAndEvents(t *testing.T) {
 	store := NewStore()
-	chat := store.CreateChat("demo-user", "")
+	chat := mustCreateChat(t, store, "demo-user", "")
 	if chat.ID == "" {
 		t.Fatal("expected chat id")
 	}
@@ -40,7 +40,7 @@ func TestStoreCreatesChatMessageRunAndEvents(t *testing.T) {
 
 func TestStoreUpdatesRunStatus(t *testing.T) {
 	store := NewStore()
-	chat := store.CreateChat("demo-user", "status")
+	chat := mustCreateChat(t, store, "demo-user", "status")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "go")
 	if err != nil {
 		t.Fatalf("add user message: %v", err)
@@ -65,7 +65,7 @@ func TestStoreUpdatesRunStatus(t *testing.T) {
 
 func TestStoreKeepsTerminalRunStatus(t *testing.T) {
 	store := NewStore()
-	chat := store.CreateChat("demo-user", "terminal")
+	chat := mustCreateChat(t, store, "demo-user", "terminal")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "cancel me")
 	if err != nil {
 		t.Fatalf("add user message: %v", err)
@@ -95,7 +95,7 @@ func TestStoreKeepsTerminalRunStatus(t *testing.T) {
 
 func TestStoreEventSeqAndReplayContract(t *testing.T) {
 	store := NewStore()
-	chat := store.CreateChat("demo-user", "events")
+	chat := mustCreateChat(t, store, "demo-user", "events")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "emit")
 	if err != nil {
 		t.Fatalf("add user message: %v", err)
@@ -127,7 +127,7 @@ func TestStoreEventSeqAndReplayContract(t *testing.T) {
 
 func TestStoreSubscribeReceivesNewEvents(t *testing.T) {
 	store := NewStore()
-	chat := store.CreateChat("demo-user", "subscribe")
+	chat := mustCreateChat(t, store, "demo-user", "subscribe")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "emit")
 	if err != nil {
 		t.Fatalf("add user message: %v", err)
@@ -144,4 +144,13 @@ func TestStoreSubscribeReceivesNewEvents(t *testing.T) {
 	if got.ID != want.ID || got.Seq != want.Seq {
 		t.Fatalf("subscriber got event id/seq = %s/%d, want %s/%d", got.ID, got.Seq, want.ID, want.Seq)
 	}
+}
+
+func mustCreateChat(t *testing.T, repo Repository, userID, title string) protocol.ChatSession {
+	t.Helper()
+	chat, err := repo.CreateChat(userID, title)
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	return chat
 }

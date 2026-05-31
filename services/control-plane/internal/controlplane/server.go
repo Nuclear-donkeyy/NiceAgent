@@ -60,7 +60,12 @@ func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
 			Title string `json:"title"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&input)
-		platform.WriteJSON(w, http.StatusCreated, s.repo.CreateChat(demoUserID, input.Title))
+		chat, err := s.repo.CreateChat(demoUserID, input.Title)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		platform.WriteJSON(w, http.StatusCreated, chat)
 	default:
 		platform.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -323,8 +328,12 @@ func (s controlSink) Complete(runID string, content string) error {
 	if isTerminalRunStatus(run.Status) {
 		return nil
 	}
-	s.repo.AddAssistantMessage(run.ChatID, runID, content)
-	_, _ = s.repo.UpdateRunStatus(runID, protocol.RunSucceeded, "")
+	if _, err := s.repo.AddAssistantMessage(run.ChatID, runID, content); err != nil {
+		return err
+	}
+	if _, err := s.repo.UpdateRunStatus(runID, protocol.RunSucceeded, ""); err != nil {
+		return err
+	}
 	_, err = s.repo.AddEvent(runID, protocol.EventRunSucceeded, "Run completed.", nil)
 	return err
 }
@@ -337,7 +346,9 @@ func (s controlSink) Fail(runID string, message string) error {
 	if isTerminalRunStatus(run.Status) {
 		return nil
 	}
-	_, _ = s.repo.UpdateRunStatus(runID, protocol.RunFailed, message)
+	if _, err := s.repo.UpdateRunStatus(runID, protocol.RunFailed, message); err != nil {
+		return err
+	}
 	_, err = s.repo.AddEvent(runID, protocol.EventRunFailed, message, nil)
 	return err
 }

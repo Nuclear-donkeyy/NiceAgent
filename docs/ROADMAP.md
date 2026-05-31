@@ -2,7 +2,7 @@
 
 ## 阶段目标
 
-当前仓库已经完成多 Go module 拆分、React + Rspack 前端迁移，以及 memory demo 链路。下一阶段目标是把它推进到“前置服务器、agent 实例服务、sandbox 服务真正解耦协作”的基础平台。
+当前仓库已经完成多 Go module 拆分、React + Rspack 前端迁移、三服务 HTTP 解耦链路、本地 K8s 验证路径和 CI/CD 基础。下一阶段目标是把状态持久化打稳，再继续补 agent runtime 和 sandbox 生产化能力。
 
 优先级从高到低：
 
@@ -12,7 +12,7 @@
 4. Sandbox 与远端 CLI 生产化起步。
 5. 前端产品化。
 
-## Phase 1：服务间真实解耦（当前落地）
+## Phase 1：服务间真实解耦（基础完成）
 
 - Control Plane 默认使用 HTTP dispatcher，通过 `AGENT_RUNTIME_URL` 调用独立 Agent Runtime。
 - Agent Runtime 执行后通过 Control Plane 内部 API 回写 `RunEvent`、最终消息和状态。
@@ -27,7 +27,7 @@
 - 启动 Control Plane、Agent Runtime 和 Sandbox Executor 三个进程后，普通消息和 `/cli echo hello` 能走跨服务链路。
 - Agent Runtime 重启或不可用时，Control Plane 能将 run 标记为失败或保留可重试状态。
 
-## Phase 2：状态持久化
+## Phase 2：状态持久化（当前落地）
 
 - 将 memory store 切换为可配置 repository。
 - 补齐 Postgres repository 的错误处理、事务一致性和测试。

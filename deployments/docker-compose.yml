@@ -23,6 +23,7 @@ services:
     environment:
       CONTROL_PLANE_ADDR: ":8080"
       DISPATCH_MODE: http
+      STORE_DRIVER: postgres
       AGENT_RUNTIME_URL: http://agent-runtime:8081
       CONTROL_PLANE_PUBLIC_URL: http://control-plane:8080
       DATABASE_URL: postgres://niceagent:niceagent@postgres:5432/niceagent?sslmode=disable
