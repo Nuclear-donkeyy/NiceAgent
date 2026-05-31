@@ -1,0 +1,111 @@
+.conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+  padding: 28px;
+}
+
+.welcome {
+  border-bottom: 1px solid var(--black);
+  border-top: 1px solid var(--black);
+  margin: auto;
+  max-width: 680px;
+  padding: 28px 0;
+  text-align: center;
+}
+
+.welcome h3 {
+  font-size: 24px;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+
+.welcome p {
+  color: var(--muted);
+}
+
+.message {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+  white-space: pre-wrap;
+  width: min(780px, 100%);
+}
+
+.user {
+  align-self: flex-end;
+  background: var(--warm);
+  border: 1px solid var(--line);
+  padding: 14px;
+}
+
+.assistant {
+  align-self: flex-start;
+}
+
+.message p {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.messageRole {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.agentStatus,
+.mutedText {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.agentStatus {
+  border-left: 2px solid var(--black);
+  margin: 8px 0 10px;
+  padding-left: 10px;
+}
+
+.composer {
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 16px 28px;
+}
+
+.composer textarea {
+  background: var(--white);
+  border: 1px solid var(--line);
+  color: var(--black);
+  min-height: 72px;
+  outline: none;
+  padding: 12px;
+  resize: vertical;
+}
+
+.composer textarea:focus {
+  border-color: var(--black);
+}
+
+.composer button {
+  background: var(--black);
+  border: 1px solid var(--black);
+  color: var(--white);
+  cursor: pointer;
+  font: inherit;
+  min-height: 36px;
+  padding: 8px 14px;
+}
+
+.composer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+@media (max-width: 880px) {
+  .composer {
+    grid-template-columns: 1fr;
+  }
+}

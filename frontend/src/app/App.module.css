@@ -1,0 +1,148 @@
+.shell {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: var(--warm);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+}
+
+.brand {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.brandMark {
+  background: var(--black);
+  color: var(--white);
+  display: grid;
+  font-size: 13px;
+  font-weight: 800;
+  height: 36px;
+  place-items: center;
+  width: 36px;
+}
+
+.brand p,
+.overline,
+.notice {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.overline {
+  text-transform: uppercase;
+}
+
+.sidebarActions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.sidebarActions button,
+.lineButton {
+  border: 1px solid var(--black);
+  cursor: pointer;
+  font: inherit;
+  min-height: 36px;
+  padding: 8px 14px;
+}
+
+.sidebarActions button:first-child {
+  background: var(--black);
+  color: var(--white);
+}
+
+.sidebarActions button:nth-child(2),
+.lineButton {
+  background: transparent;
+  color: var(--black);
+}
+
+.sidebarActions button:disabled,
+.lineButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.main {
+  background: var(--paper);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  min-height: 100vh;
+  min-width: 0;
+}
+
+.topbar {
+  align-items: center;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding: 18px 28px;
+}
+
+.topbarNote {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.runState {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.status {
+  background: var(--white);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  min-width: 76px;
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.running,
+.queued {
+  background: var(--warm-strong);
+}
+
+.succeeded {
+  border-color: var(--black);
+}
+
+.failed,
+.canceled {
+  background: var(--black);
+  color: var(--white);
+}
+
+.waiting_for_approval {
+  background: var(--warm);
+  border-color: var(--black);
+}
+
+.notice {
+  border-top: 1px solid var(--line);
+  padding: 8px 28px 12px;
+}
+
+@media (max-width: 880px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-bottom: 1px solid var(--line);
+    border-right: 0;
+  }
+}

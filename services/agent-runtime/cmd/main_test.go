@@ -5,12 +5,13 @@ import (
 	"log/slog"
 	"testing"
 
+	"niceagent/agent-runtime/internal/config"
 	"niceagent/agent-runtime/internal/runtime"
 )
 
 func TestModelProviderFromEnvDefaultsToMock(t *testing.T) {
 	t.Setenv("MODEL_PROVIDER", "")
-	provider, err := modelProviderFromEnv(discardLogger())
+	provider, err := modelProviderFromEnv(config.FromEnv(), discardLogger())
 	if err != nil {
 		t.Fatalf("model provider: %v", err)
 	}
@@ -26,7 +27,7 @@ func TestModelProviderFromEnvBuildsOpenAICompatibleProvider(t *testing.T) {
 	t.Setenv("MODEL_NAME", "model")
 	t.Setenv("MODEL_TIMEOUT_SECONDS", "9")
 
-	provider, err := modelProviderFromEnv(discardLogger())
+	provider, err := modelProviderFromEnv(config.FromEnv(), discardLogger())
 	if err != nil {
 		t.Fatalf("model provider: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestModelProviderFromEnvRejectsInvalidOpenAICompatibleConfig(t *testing.T) 
 	t.Setenv("MODEL_API_KEY", "secret")
 	t.Setenv("MODEL_NAME", "model")
 
-	if _, err := modelProviderFromEnv(discardLogger()); err == nil {
+	if _, err := modelProviderFromEnv(config.FromEnv(), discardLogger()); err == nil {
 		t.Fatal("expected missing base url error")
 	}
 }

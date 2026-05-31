@@ -6,11 +6,9 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
-	"time"
 
+	"niceagent/agent-runtime/internal/config"
 	"niceagent/agent-runtime/internal/runtime"
 	"niceagent/common/platform"
 	"niceagent/common/protocol"
@@ -18,10 +16,10 @@ import (
 )
 
 func main() {
-	addr := env("AGENT_RUNTIME_ADDR", ":8081")
+	cfg := config.FromEnv()
 	logger := platform.NewLogger("agent-runtime")
-	engine := runtime.NewEinoAgentEngine(newSandboxExecutor(logger))
-	modelProvider, err := modelProviderFromEnv(logger)
+	engine := runtime.NewEinoAgentEngine(newSandboxExecutor(cfg, logger))
+	modelProvider, err := modelProviderFromEnv(cfg, logger)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -32,7 +30,7 @@ func main() {
 		platform.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}))
 	mux.HandleFunc("/internal/runs/execute", platform.Method(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
-		if !authorizeInternal(w, r) {
+		if !authorizeInternal(w, r, cfg.InternalAPIToken) {
 			return
 		}
 		var input protocol.RunExecutionRequest
@@ -42,76 +40,55 @@ func main() {
 		}
 		controlPlaneURL := input.ControlPlaneURL
 		if controlPlaneURL == "" {
-			controlPlaneURL = os.Getenv("CONTROL_PLANE_URL")
+			controlPlaneURL = cfg.ControlPlaneURL
 		}
 		if controlPlaneURL == "" {
 			platform.WriteError(w, http.StatusBadRequest, "control_plane_url is required")
 			return
 		}
-		sink := runtime.NewControlPlaneSink(controlPlaneURL, os.Getenv("INTERNAL_API_TOKEN"))
+		sink := runtime.NewControlPlaneSink(controlPlaneURL, cfg.InternalAPIToken)
 		result := engine.Execute(r.Context(), input.Request, input.UserMessage, sink)
 		platform.WriteJSON(w, http.StatusOK, result)
 	}))
 
-	logger.Info("starting agent runtime", "addr", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	logger.Info("starting agent runtime", "addr", cfg.Addr)
+	if err := http.ListenAndServe(cfg.Addr, mux); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func env(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func newSandboxExecutor(logger *slog.Logger) runtime.SandboxExecutor {
-	if executorURL := os.Getenv("SANDBOX_EXECUTOR_URL"); executorURL != "" {
-		logger.Info("using http sandbox executor", "url", executorURL)
-		return sandbox.NewHTTPExecutor(executorURL, os.Getenv("INTERNAL_API_TOKEN"))
+func newSandboxExecutor(cfg config.Config, logger *slog.Logger) runtime.SandboxExecutor {
+	if cfg.SandboxExecutorURL != "" {
+		logger.Info("using http sandbox executor", "url", cfg.SandboxExecutorURL)
+		return sandbox.NewHTTPExecutor(cfg.SandboxExecutorURL, cfg.InternalAPIToken)
 	}
 	logger.Warn("SANDBOX_EXECUTOR_URL is empty; falling back to local sandbox executor")
 	return sandbox.NewExecutor()
 }
 
-func modelProviderFromEnv(logger *slog.Logger) (runtime.ModelProvider, error) {
-	provider := strings.TrimSpace(env("MODEL_PROVIDER", "mock"))
-	switch provider {
+func modelProviderFromEnv(cfg config.Config, logger *slog.Logger) (runtime.ModelProvider, error) {
+	switch cfg.ModelProvider {
 	case "", "mock":
 		logger.Info("using mock model provider")
 		return runtime.MockProvider{}, nil
 	case "openai-compatible":
 		modelProvider, err := runtime.NewOpenAICompatibleProvider(runtime.OpenAICompatibleProviderConfig{
-			BaseURL: os.Getenv("MODEL_BASE_URL"),
-			APIKey:  os.Getenv("MODEL_API_KEY"),
-			Model:   os.Getenv("MODEL_NAME"),
-			Timeout: modelTimeout(),
+			BaseURL: cfg.ModelBaseURL,
+			APIKey:  cfg.ModelAPIKey,
+			Model:   cfg.ModelName,
+			Timeout: cfg.ModelTimeout,
 		})
 		if err != nil {
 			return nil, err
 		}
-		logger.Info("using openai-compatible model provider", "base_url", strings.TrimRight(os.Getenv("MODEL_BASE_URL"), "/"), "model", os.Getenv("MODEL_NAME"))
+		logger.Info("using openai-compatible model provider", "base_url", strings.TrimRight(cfg.ModelBaseURL, "/"), "model", cfg.ModelName)
 		return modelProvider, nil
 	default:
-		return nil, fmt.Errorf("unsupported MODEL_PROVIDER %q", provider)
+		return nil, fmt.Errorf("unsupported MODEL_PROVIDER %q", cfg.ModelProvider)
 	}
 }
 
-func modelTimeout() time.Duration {
-	raw := strings.TrimSpace(os.Getenv("MODEL_TIMEOUT_SECONDS"))
-	if raw == "" {
-		return 2 * time.Minute
-	}
-	seconds, err := strconv.Atoi(raw)
-	if err != nil || seconds <= 0 {
-		log.Fatalf("MODEL_TIMEOUT_SECONDS must be a positive integer, got %q", raw)
-	}
-	return time.Duration(seconds) * time.Second
-}
-
-func authorizeInternal(w http.ResponseWriter, r *http.Request) bool {
-	token := os.Getenv("INTERNAL_API_TOKEN")
+func authorizeInternal(w http.ResponseWriter, r *http.Request, token string) bool {
 	if token == "" {
 		return true
 	}

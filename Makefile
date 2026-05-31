@@ -24,9 +24,8 @@ test:
 	go test ./packages/common/... ./services/control-plane/... ./services/agent-runtime/... ./services/sandbox-executor/...
 
 check-js:
-	node --check frontend/rspack.config.cjs
 	@if [ -d frontend/node_modules ]; then \
-		cd frontend && npm run build; \
+		cd frontend && npm run check && npm run build; \
 	else \
 		echo "未安装 frontend/node_modules，跳过 React/Rspack 构建检查；先运行 cd frontend && npm install。"; \
 	fi
