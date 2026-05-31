@@ -10,7 +10,7 @@ import (
 
 func TestInternalRunAPIsWriteEventsCompleteFailAndStatus(t *testing.T) {
 	store, handler := newTestHandler()
-	chat := store.CreateChat("demo-user", "internal")
+	chat := mustCreateChat(t, store, "demo-user", "internal")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "hello")
 	if err != nil {
 		t.Fatalf("add user message: %v", err)
@@ -86,7 +86,7 @@ func TestInternalRunAPIsWriteEventsCompleteFailAndStatus(t *testing.T) {
 func TestInternalRunAPIsRequireTokenWhenConfigured(t *testing.T) {
 	t.Setenv("INTERNAL_API_TOKEN", "secret")
 	store, handler := newTestHandler()
-	chat := store.CreateChat("demo-user", "auth")
+	chat := mustCreateChat(t, store, "demo-user", "auth")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "hello")
 	if err != nil {
 		t.Fatalf("add user message: %v", err)

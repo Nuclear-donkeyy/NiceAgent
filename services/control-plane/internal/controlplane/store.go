@@ -82,7 +82,7 @@ func (s *Store) ListChats(userID string) []protocol.ChatSession {
 	return chats
 }
 
-func (s *Store) CreateChat(userID, title string) protocol.ChatSession {
+func (s *Store) CreateChat(userID, title string) (protocol.ChatSession, error) {
 	now := time.Now().UTC()
 	if title == "" {
 		title = "New chat"
@@ -98,7 +98,7 @@ func (s *Store) CreateChat(userID, title string) protocol.ChatSession {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.chats[chat.ID] = chat
-	return chat
+	return chat, nil
 }
 
 func (s *Store) GetChat(chatID string) (protocol.ChatSession, []protocol.Message, error) {
@@ -149,7 +149,7 @@ func (s *Store) AddUserMessage(chatID, userID, content string) (protocol.Message
 	return msg, run, nil
 }
 
-func (s *Store) AddAssistantMessage(chatID, runID, content string) protocol.Message {
+func (s *Store) AddAssistantMessage(chatID, runID, content string) (protocol.Message, error) {
 	msg := protocol.Message{
 		ID:        platform.NewID("msg"),
 		ChatID:    chatID,
@@ -160,11 +160,14 @@ func (s *Store) AddAssistantMessage(chatID, runID, content string) protocol.Mess
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.chats[chatID]; !ok {
+		return protocol.Message{}, ErrNotFound
+	}
 	s.messages[chatID] = append(s.messages[chatID], msg)
 	chat := s.chats[chatID]
 	chat.UpdatedAt = msg.CreatedAt
 	s.chats[chatID] = chat
-	return msg
+	return msg, nil
 }
 
 func (s *Store) LatestUserMessage(chatID string) (protocol.Message, bool) {
@@ -277,7 +280,6 @@ func (s *Store) Subscribe(runID string) (<-chan protocol.RunEvent, func()) {
 		defer s.mu.Unlock()
 		if _, ok := s.subscribers[runID][ch]; ok {
 			delete(s.subscribers[runID], ch)
-			close(ch)
 		}
 	}
 	return ch, cancel

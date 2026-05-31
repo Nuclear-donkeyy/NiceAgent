@@ -5,20 +5,44 @@
 当前仓库支持两种运行思路：
 
 - memory demo：直接启动 `services/control-plane`，无需 Postgres/Redis，适合本地验证 UI、API 和事件流。
-- Compose 拓扑：通过 `deployments/docker-compose.yml` 启动服务和依赖，适合验证后续 Postgres/Redis 接入路径。
+- Compose 拓扑：通过 `deployments/docker-compose.yml` 启动服务和依赖，Control Plane 使用 `STORE_DRIVER=postgres` 验证持久化路径。
 - ACK 拓扑：通过 `deployments/k8s` 将三服务发布到阿里云 ACK，适合验证镜像发布和服务解耦链路。
 - 前端开发：启动 `frontend` 的 Rspack dev server，并通过代理访问 Control Plane API。
 
 ## 状态与数据
 
-当前权威状态仍在 memory store 中，进程重启会丢失数据。后续 Postgres repository 完成后，以下数据应以数据库为准：
+memory 模式的权威状态在进程内存中，进程重启会丢失数据。Postgres 模式下，以下数据以数据库为准：
 
 - 用户、组织、项目。
 - 聊天会话和消息。
 - runs、run events、artifacts。
 - skills、审批、配额、审计记录。
 
-Redis Streams 后续用于 run dispatch 和 event fanout，但不应替代 Postgres 的权威持久化。
+当前 Postgres 模式支持单 Control Plane 进程内 SSE fanout 和基于数据库的 `RunEvent` replay。Redis Streams 后续用于多实例 run dispatch 和 event fanout，但不应替代 Postgres 的权威持久化。
+
+## Postgres 模式排查
+
+启动 Compose：
+
+```bash
+docker compose -f deployments/docker-compose.yml up
+```
+
+只重启 Control Plane：
+
+```bash
+docker compose -f deployments/docker-compose.yml restart control-plane
+```
+
+重启后访问 `GET /api/chats` 和 `GET /api/runs/{run_id}/events?after=0`，确认会话、消息、run 和 events 仍可恢复。
+
+清理本地持久化数据：
+
+```bash
+docker compose -f deployments/docker-compose.yml down -v
+```
+
+这会删除本地 Postgres volume，适合重新初始化 schema。
 
 ## 日志与排查
 
@@ -82,7 +106,7 @@ make docker-build
 
 ## 当前限制
 
-- memory store 无法支撑多实例共享状态。
+- memory store 无法支撑多实例共享状态；Postgres 模式当前先服务单 Control Plane 副本。
 - mock runtime 不具备真实模型调用、工具规划和长任务恢复能力。
 - local executor 不提供生产级命令隔离。
 - sandbox、认证、租户配额、审批和审计仍需继续完善。

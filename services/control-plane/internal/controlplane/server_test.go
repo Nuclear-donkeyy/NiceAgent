@@ -87,7 +87,7 @@ func TestServerCreatesChatSendsMessageAndCancelsRun(t *testing.T) {
 
 func TestServerReplaysRunEventsAfterSeq(t *testing.T) {
 	store, handler := newTestHandler()
-	chat := store.CreateChat("demo-user", "sse")
+	chat := mustCreateChat(t, store, "demo-user", "sse")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "events")
 	if err != nil {
 		t.Fatalf("add user message: %v", err)
@@ -123,9 +123,91 @@ func TestServerReplaysRunEventsAfterSeq(t *testing.T) {
 	}
 }
 
+func TestControlPlaneHTTPRuntimeContract(t *testing.T) {
+	store := NewStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var dispatcher RunDispatcher
+	controlServer := httptest.NewServer(NewServer(store, dispatchFunc(func(ctx context.Context, run protocol.Run, userMessage string) error {
+		return dispatcher.Dispatch(ctx, run, userMessage)
+	}), log).Handler())
+	defer controlServer.Close()
+
+	received := make(chan protocol.RunExecutionRequest, 1)
+	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/runs/execute" {
+			http.NotFound(w, r)
+			return
+		}
+		var input protocol.RunExecutionRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		received <- input
+		if err := postJSON(input.ControlPlaneURL+"/internal/runs/"+input.Request.RunID+"/events", protocol.RunEventWriteRequest{
+			Type:    protocol.EventRunStarted,
+			Message: "fake runtime started",
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if err := postJSON(input.ControlPlaneURL+"/internal/runs/"+input.Request.RunID+"/events", protocol.RunEventWriteRequest{
+			Type:    protocol.EventModelToken,
+			Message: "hello",
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if err := postJSON(input.ControlPlaneURL+"/internal/runs/"+input.Request.RunID+"/complete", protocol.RunCompleteRequest{
+			Content: "hello from fake runtime",
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"succeeded"}`))
+	}))
+	defer runtimeServer.Close()
+	dispatcher = NewHTTPDispatcher(store, runtimeServer.URL, controlServer.URL, "", log)
+
+	chat := createChatViaAPI(t, controlServer.URL)
+	response := postMessageViaAPI(t, controlServer.URL, chat.ID, "hello")
+
+	select {
+	case request := <-received:
+		if request.Request.RunID != response.Run.ID {
+			t.Fatalf("runtime got run id %q, want %q", request.Request.RunID, response.Run.ID)
+		}
+		if request.ControlPlaneURL != controlServer.URL {
+			t.Fatalf("control plane url = %q, want %q", request.ControlPlaneURL, controlServer.URL)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fake runtime did not receive run execution request")
+	}
+
+	if !eventually(time.Second, func() bool {
+		run, err := store.GetRun(response.Run.ID)
+		return err == nil && run.Status == protocol.RunSucceeded
+	}) {
+		run, err := store.GetRun(response.Run.ID)
+		t.Fatalf("run after fake runtime = %#v err=%v, want succeeded", run, err)
+	}
+	_, messages, err := store.GetChat(chat.ID)
+	if err != nil {
+		t.Fatalf("get chat: %v", err)
+	}
+	if len(messages) != 2 || messages[1].Role != protocol.RoleAssistant || messages[1].Content != "hello from fake runtime" {
+		t.Fatalf("messages after completion = %#v", messages)
+	}
+	events := store.ListEvents(response.Run.ID, 0)
+	if len(events) < 4 {
+		t.Fatalf("events len = %d, want queued/started/token/succeeded", len(events))
+	}
+}
+
 func TestControlSinkDoesNotOverwriteCanceledRun(t *testing.T) {
 	store := NewStore()
-	chat := store.CreateChat("demo-user", "sink")
+	chat := mustCreateChat(t, store, "demo-user", "sink")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "cancel")
 	if err != nil {
 		t.Fatalf("add user message: %v", err)
@@ -167,6 +249,12 @@ func TestControlSinkDoesNotOverwriteCanceledRun(t *testing.T) {
 	}
 }
 
+type dispatchFunc func(context.Context, protocol.Run, string) error
+
+func (f dispatchFunc) Dispatch(ctx context.Context, run protocol.Run, userMessage string) error {
+	return f(ctx, run, userMessage)
+}
+
 func newTestHandler() (*Store, http.Handler) {
 	store := NewStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -188,6 +276,70 @@ func decodeJSON(t *testing.T, body io.Reader, target any) {
 	if err := json.NewDecoder(body).Decode(target); err != nil {
 		t.Fatalf("decode json: %v", err)
 	}
+}
+
+func createChatViaAPI(t *testing.T, baseURL string) protocol.ChatSession {
+	t.Helper()
+	response, err := http.Post(baseURL+"/api/chats", "application/json", jsonBody(t, map[string]string{"title": "http contract"}))
+	if err != nil {
+		t.Fatalf("create chat request: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("create chat status = %d, body = %s", response.StatusCode, body)
+	}
+	var chat protocol.ChatSession
+	decodeJSON(t, response.Body, &chat)
+	return chat
+}
+
+func postMessageViaAPI(t *testing.T, baseURL, chatID, content string) struct {
+	Message protocol.Message `json:"message"`
+	Run     protocol.Run     `json:"run"`
+} {
+	t.Helper()
+	response, err := http.Post(baseURL+"/api/chats/"+chatID+"/messages", "application/json", jsonBody(t, map[string]string{"content": content}))
+	if err != nil {
+		t.Fatalf("post message request: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("post message status = %d, body = %s", response.StatusCode, body)
+	}
+	var output struct {
+		Message protocol.Message `json:"message"`
+		Run     protocol.Run     `json:"run"`
+	}
+	decodeJSON(t, response.Body, &output)
+	return output
+}
+
+func postJSON(url string, value any) error {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	response, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		raw, _ := io.ReadAll(response.Body)
+		return httpError{status: response.Status, body: string(raw)}
+	}
+	return nil
+}
+
+type httpError struct {
+	status string
+	body   string
+}
+
+func (e httpError) Error() string {
+	return e.status + ": " + e.body
 }
 
 func decodeSSEEvents(t *testing.T, body string) []protocol.RunEvent {

@@ -15,7 +15,7 @@ import (
 
 func TestHTTPDispatcherCallsRuntime(t *testing.T) {
 	store := NewStore()
-	chat := store.CreateChat("demo-user", "dispatch")
+	chat := mustCreateChat(t, store, "demo-user", "dispatch")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "hello")
 	if err != nil {
 		t.Fatalf("add user message: %v", err)
@@ -57,7 +57,7 @@ func TestHTTPDispatcherCallsRuntime(t *testing.T) {
 
 func TestHTTPDispatcherMarksRunFailedWhenRuntimeFails(t *testing.T) {
 	store := NewStore()
-	chat := store.CreateChat("demo-user", "dispatch")
+	chat := mustCreateChat(t, store, "demo-user", "dispatch")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "hello")
 	if err != nil {
 		t.Fatalf("add user message: %v", err)
