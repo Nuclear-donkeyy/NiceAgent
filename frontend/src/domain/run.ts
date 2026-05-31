@@ -1,4 +1,11 @@
-export type RunStatus = "idle" | "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "canceled";
+export type RunStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "waiting_for_approval"
+  | "succeeded"
+  | "failed"
+  | "canceled";
 
 export const terminalRunStatuses = new Set<RunStatus>(["succeeded", "failed", "canceled"]);
 

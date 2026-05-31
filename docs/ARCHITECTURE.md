@@ -26,12 +26,13 @@ packages/common
 
 Control Plane 是用户状态和调度事实的权威来源。它暴露 Web/API，包括聊天、消息、run、skills 和 SSE 事件流。
 
-当前默认仍使用 memory store，便于本地演示；同时已经抽象出：
+当前默认仍使用 memory store，便于本地演示；同时已经按服务内分层拆出：
 
-- `Repository`：会话、消息、run、events、skills 持久化。
-- `RunDispatcher`：run 派发边界。
-- `RunQueue`：run 入队、消费、ack/retry 边界。
-- `EventBus`：事件持久化、replay、fanout 边界。
+- `internal/httpapi`：外部 API、内部 Runtime 回写 API、SSE 和鉴权。
+- `internal/app`：Repository、RunDispatcher 等端口接口，以及 run 完成/失败的用例逻辑。
+- `internal/repository`：memory/Postgres 持久化实现。
+- `internal/dispatch`：local/http dispatcher 和 run queue 边界。
+- `internal/events`：事件持久化、replay、fanout 边界。
 
 Skill 元数据采用 manifest/version/grant/secret 分层：
 
@@ -44,10 +45,11 @@ Skill 元数据采用 manifest/version/grant/secret 分层：
 
 Agent Runtime 是独立部署的 agent 实例服务，不应由 Control Plane 作为库直接 import。它的核心接口包括：
 
-- `AgentEngine`：agentic loop 执行入口。
-- `ModelProvider`：模型供应商适配。
-- `ToolBridge`：平台 skill 到 runtime tool 的桥。
-- `SandboxExecutor`：CLI/sandbox 调用边界。
+- `internal/httpapi`：内部执行 API 和 Control Plane sink 装配。
+- `internal/engine`：AgentEngine、Eino agentic loop 和循环限制。
+- `internal/modelprovider`：mock 与 OpenAI-compatible 模型供应商适配。
+- `internal/tools`：平台 skill 到 runtime tool 的桥，以及 SandboxExecutor 端口。
+- `internal/sink`：Control Plane event/status/complete/fail 回写客户端。
 
 当前主路径已经接入 Eino ADK `ChatModelAgent + Runner`。Runtime 会接收 Control Plane 下发的 `RuntimeSkill` manifest，通过 ToolBridge 构造 Eino tools；系统 CLI 和用户 HTTP Skill 都作为 tool 被 agentic loop 调用。当前模型桥接器先兼容现有 mock/OpenAI-compatible provider，后续可以替换为原生支持 tool calling 的 Eino ChatModel provider。
 
@@ -64,7 +66,7 @@ Sandbox Executor 独立部署，负责命令执行策略。当前 `packages/comm
 
 ## 前端
 
-前端位于 `frontend`，使用 React + Rspack + TypeScript + CSS Modules。设计风格参考 ChatGPT 网页版：左侧会话、系统能力和我的能力，右侧主对话区和输入框。底层 `RunEvent` 通过 SSE 接收，但会折叠成 assistant 流式文本和 agent 当前状态，不再默认展示原始事件列表或 CLI 调试输出。HTTP Skill 可以在“我的能力”中最小化添加和启停。视觉以黑、白、微黄色为主，减少圆角，强调面性和线性结构。
+前端位于 `frontend`，使用 React + Rspack + TypeScript + SCSS Modules。设计风格参考 ChatGPT 网页版：左侧会话、系统能力和我的能力，右侧主对话区和输入框。底层 `RunEvent` 通过 SSE 接收，但会折叠成 assistant 流式文本和 agent 当前状态，不再默认展示原始事件列表或 CLI 调试输出。HTTP Skill 可以在“我的能力”中最小化添加和启停。视觉以黑、白、微黄色为主，减少圆角，强调面性和线性结构。
 
 前端目录按职责分层：
 
@@ -73,6 +75,6 @@ Sandbox Executor 独立部署，负责命令执行策略。当前 `packages/comm
 - `src/domain`：前端领域类型和展示 label。
 - `src/features`：聊天、对话、Skill 等业务组件。
 - `src/components`：跨 feature 复用的小组件。
-- `src/styles/global.css`：全局 token/reset；组件样式使用 CSS Modules。
+- `src/styles/global.scss`：全局 token/reset；组件样式使用 SCSS Modules。
 
 开发模式下由 Rspack dev server 代理 API；生产模式下由 Control Plane 托管 `frontend/dist`。

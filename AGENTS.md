@@ -20,7 +20,7 @@ NiceAgent 是一个网页端远端 agent 服务框架。用户在 Web 聊天界�
 
 ```text
 frontend
-  React + Rspack + TypeScript + CSS Modules 前端应用。
+  React + Rspack + TypeScript + SCSS Modules 前端应用。
   负责聊天 UI、会话管理、run 状态折叠、系统/用户 Skill 展示。
 
 services/control-plane
@@ -70,11 +70,11 @@ frontend/src/features
 frontend/src/components
   跨 feature 复用的小组件。
 
-frontend/src/styles/global.css
+frontend/src/styles/global.scss
   全局 CSS variables、reset 和页面基础背景。
 ```
 
-新增前端代码默认使用 TypeScript。组件样式默认使用 CSS Modules，例如 `SkillPanel.tsx` 搭配 `SkillPanel.module.css`。不要把业务逻辑塞回单个 `App.tsx`，也不要扩张一个全局大 CSS 文件。
+新增前端代码默认使用 TypeScript。组件样式默认使用 SCSS Modules，例如 `SkillPanel.tsx` 搭配 `SkillPanel.module.scss`。不要把业务逻辑塞回单个 `App.tsx`，也不要扩张一个全局大 SCSS 文件。前端更细约定见 [frontend/AGENTS.md](frontend/AGENTS.md)。
 
 ## 后端结构
 
@@ -82,9 +82,11 @@ frontend/src/styles/global.css
 
 - `cmd/main.go`：服务装配入口，尽量只负责读取配置、组装依赖和启动 HTTP server。
 - `internal/config`：环境变量解析和启动配置。
-- Control Plane 的核心接口目前在 `internal/controlplane`，包含 repository、dispatcher、HTTP handler、event replay 等边界。
-- Agent Runtime 的核心逻辑目前在 `internal/runtime`，包含 Eino engine、model provider、ToolBridge 和 Control Plane sink。
-- Sandbox Executor 已有 `internal/httpapi`，负责内部 sandbox API。
+- Control Plane 使用 `internal/httpapi`、`internal/app`、`internal/repository`、`internal/dispatch`、`internal/events` 分层。
+- Agent Runtime 使用 `internal/httpapi`、`internal/engine`、`internal/modelprovider`、`internal/tools`、`internal/sink` 分层。
+- Sandbox Executor 使用 `internal/httpapi`、`internal/executor`、`internal/policy` 分层。
+
+每个服务目录都有自己的 `AGENTS.md`，进入子项目修改前先读对应文件。
 
 `packages/common/protocol` 按领域文件维护，例如 chat、run、event、skill、workspace、model、sandbox。保持 package/import path 不变，不要恢复成一个巨大的 `types.go`。
 

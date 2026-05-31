@@ -19,7 +19,10 @@ export function createHTTPSkill(input: HTTPSkillInput): Promise<Skill> {
 }
 
 export function setSkillEnabled(skillID: string, enabled: boolean): Promise<Skill> {
-  return api<Skill>(`/api/skills/${encodeURIComponent(skillID)}/${enabled ? "enable" : "disable"}`, {
-    method: "POST",
-  });
+  return api<Skill>(
+    `/api/skills/${encodeURIComponent(skillID)}/${enabled ? "enable" : "disable"}`,
+    {
+      method: "POST",
+    },
+  );
 }

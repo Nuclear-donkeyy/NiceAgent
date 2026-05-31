@@ -13,7 +13,9 @@ NiceAgent 后端已经拆成 Control Plane、Agent Runtime 和 Sandbox Executor 
 - 三个服务继续独立 `go.mod`，只通过 `packages/common` 共享协议和基础工具。
 - 服务入口 `cmd/main.go` 只做装配。
 - 环境变量解析放 `internal/config`。
-- HTTP handler、应用服务、repository、dispatcher、runtime tools 等按职责拆分。
+- Control Plane 按 `httpapi/app/repository/dispatch/events` 拆分。
+- Agent Runtime 按 `httpapi/engine/modelprovider/tools/sink` 拆分。
+- Sandbox Executor 按 `httpapi/executor/policy` 拆分。
 - `packages/common/protocol` 按领域文件拆分，保持 package/import path 不变。
 
 ## 影响

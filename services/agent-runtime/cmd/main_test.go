@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"niceagent/agent-runtime/internal/config"
-	"niceagent/agent-runtime/internal/runtime"
+	"niceagent/agent-runtime/internal/modelprovider"
 )
 
 func TestModelProviderFromEnvDefaultsToMock(t *testing.T) {
@@ -15,7 +15,7 @@ func TestModelProviderFromEnvDefaultsToMock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("model provider: %v", err)
 	}
-	if _, ok := provider.(runtime.MockProvider); !ok {
+	if _, ok := provider.(modelprovider.MockProvider); !ok {
 		t.Fatalf("provider = %T, want MockProvider", provider)
 	}
 }
@@ -31,7 +31,7 @@ func TestModelProviderFromEnvBuildsOpenAICompatibleProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("model provider: %v", err)
 	}
-	openAIProvider, ok := provider.(*runtime.OpenAICompatibleProvider)
+	openAIProvider, ok := provider.(*modelprovider.OpenAICompatibleProvider)
 	if !ok {
 		t.Fatalf("provider = %T, want OpenAICompatibleProvider", provider)
 	}

@@ -1,6 +1,6 @@
 import type { FormEvent } from "react";
 
-import styles from "./Conversation.module.css";
+import styles from "./Conversation.module.scss";
 
 interface ComposerProps {
   input: string;

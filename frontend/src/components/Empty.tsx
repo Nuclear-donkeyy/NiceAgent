@@ -1,4 +1,4 @@
-import styles from "./Empty.module.css";
+import styles from "./Empty.module.scss";
 
 interface EmptyProps {
   text: string;
