@@ -22,6 +22,20 @@ spec:
           env:
             - name: AGENT_RUNTIME_ADDR
               value: ":8081"
+            - name: AGENT_RUNTIME_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NICEAGENT_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: NICEAGENT_ENV
+            - name: RUNTIME_QUEUE_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUNTIME_QUEUE_MODE
             - name: CONTROL_PLANE_URL
               valueFrom:
                 configMapKeyRef:
@@ -47,27 +61,168 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: MODEL_NAME
+            - name: MODEL_FALLBACK_PROVIDER
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_FALLBACK_PROVIDER
+            - name: MODEL_FALLBACK_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_FALLBACK_BASE_URL
+            - name: MODEL_FALLBACK_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_FALLBACK_NAME
             - name: MODEL_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:
                   name: niceagent-config
                   key: MODEL_TIMEOUT_SECONDS
+            - name: MODEL_INPUT_PRICE_PER_1M_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_INPUT_PRICE_PER_1M_TOKENS
+            - name: MODEL_CACHED_INPUT_PRICE_PER_1M_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_CACHED_INPUT_PRICE_PER_1M_TOKENS
+            - name: MODEL_OUTPUT_PRICE_PER_1M_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_OUTPUT_PRICE_PER_1M_TOKENS
+            - name: MODEL_REASONING_PRICE_PER_1M_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_REASONING_PRICE_PER_1M_TOKENS
+            - name: MODEL_PRICE_CURRENCY
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_PRICE_CURRENCY
+            - name: MODEL_HEALTH_PROBE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_HEALTH_PROBE_ENABLED
+            - name: MODEL_HEALTH_PROBE_INTERVAL_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_HEALTH_PROBE_INTERVAL_SECONDS
+            - name: MODEL_HEALTH_PROBE_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_HEALTH_PROBE_TIMEOUT_SECONDS
+            - name: MODEL_HEALTH_PROBE_INITIAL_DELAY_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_HEALTH_PROBE_INITIAL_DELAY_SECONDS
             - name: MODEL_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: niceagent-model-provider
                   key: api-key
                   optional: true
+            - name: MODEL_FALLBACK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-model-provider
+                  key: fallback-api-key
+                  optional: true
             - name: REDIS_ADDR
               valueFrom:
                 configMapKeyRef:
                   name: niceagent-config
                   key: REDIS_ADDR
+            - name: RUN_QUEUE_STREAM
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_STREAM
+            - name: RUN_QUEUE_GROUP
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_GROUP
+            - name: RUN_QUEUE_CONSUMER
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RUN_QUEUE_RECLAIM_MIN_IDLE_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_RECLAIM_MIN_IDLE_SECONDS
+            - name: RUN_QUEUE_RECLAIM_COUNT
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_RECLAIM_COUNT
+            - name: RUN_QUEUE_MAX_DELIVERIES
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_MAX_DELIVERIES
+            - name: RUN_QUEUE_DLQ_STREAM
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_DLQ_STREAM
+            - name: RUN_ATTEMPT_LEASE_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_ATTEMPT_LEASE_SECONDS
+            - name: RUN_ATTEMPT_HEARTBEAT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_ATTEMPT_HEARTBEAT_SECONDS
             - name: INTERNAL_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: niceagent-internal-api
                   key: token
+                  optional: false
+            - name: INTERNAL_API_TOKEN_REQUIRED
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INTERNAL_API_TOKEN_REQUIRED
+            - name: OTEL_TRACES_EXPORTER
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_TRACES_EXPORTER
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_INSECURE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_EXPORTER_OTLP_INSECURE
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-otel
+                  key: headers
                   optional: true
           readinessProbe:
             httpGet:

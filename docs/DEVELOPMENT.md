@@ -38,7 +38,64 @@ make run-control
 
 如果没有配置 `AGENT_RUNTIME_URL`，Control Plane 会回退到本地 demo dispatcher。如果没有配置 `SANDBOX_EXECUTOR_URL`，Agent Runtime 会回退到 local sandbox executor。
 
-如需模拟内部鉴权，三个服务使用同一个 `INTERNAL_API_TOKEN`；为空时内部 API 不校验 bearer token。
+多 Control Plane 副本需要实时唤醒 SSE 时，可以使用 Redis nudge fanout：
+
+```bash
+EVENT_FANOUT_MODE=redis
+EVENT_FANOUT_PREFIX=niceagent:run-events
+REDIS_ADDR=127.0.0.1:6379
+```
+
+该模式只把 `run_id/seq` 作为提醒发到 Redis，事件正文仍以 repository/Postgres 为权威；前端断线后继续依赖 `?after=` replay 补齐。
+
+如需模拟内部鉴权，三个服务使用同一个 `INTERNAL_API_TOKEN`；本地裸跑默认允许为空，内部 API 不校验 bearer token。上线或近云环境应开启：
+
+```bash
+NICEAGENT_ENV=production
+INTERNAL_API_TOKEN_REQUIRED=true
+INTERNAL_API_TOKEN=<same-random-token-for-three-services>
+```
+
+当 `INTERNAL_API_TOKEN_REQUIRED=true`，或 `NICEAGENT_ENV` 不是 `local/dev/development/test/ci` 时，Control Plane、Agent Runtime 和 Sandbox Executor 都会在缺少 token 时启动失败。Compose 本地模式使用共享的 dev token 验证鉴权链路，但这个 token 不能用于生产。
+
+OpenTelemetry 默认关闭。需要在本地把三服务 traces 发到 OTLP HTTP collector 时，给每个服务加上：
+
+```bash
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+OTEL_EXPORTER_OTLP_INSECURE=true
+```
+
+如果 collector 要求鉴权，使用 `OTEL_EXPORTER_OTLP_HEADERS`，例如 `Authorization=Bearer <token>`；生产环境应通过 Secret 注入。不开启 exporter 时，服务仍会透传 `X-Trace-ID` 和标准 `traceparent`。
+
+外部 API 默认使用 `AUTH_MODE=demo`。如果要在本地模拟上游网关透传身份，可以设置 `AUTH_MODE=trusted-header`，并在请求里传：
+
+```bash
+X-NiceAgent-User-ID: user-a
+X-NiceAgent-Project-ID: project-a
+X-NiceAgent-Org-ID: org-a
+X-NiceAgent-Roles: owner
+```
+
+`AUTH_MODE=oidc` 当前只是 `trusted-header` 的兼容别名，真正的 OIDC callback/session/JWT 校验还没有内置。
+
+`X-NiceAgent-Roles` 支持最小 RBAC：`viewer` 只能读，`owner/admin/member/editor/writer` 可以写。如果 trusted header 请求没有传 roles，Control Plane 会从持久 `project_members` 中读取当前用户在当前项目的角色；没有成员关系时返回 `403`。本地 demo 模式仍固定使用 `demo-user/demo-project/owner`。
+
+最小 run 配额可通过环境变量开启，默认 `0` 表示不限制：
+
+```bash
+QUOTA_MAX_CONCURRENT_RUNS=0
+QUOTA_RUNS_PER_HOUR=0
+QUOTA_MODEL_TOKENS_PER_DAY=0
+QUOTA_TOOL_CALLS_PER_DAY=0
+QUOTA_SANDBOX_SECONDS_PER_DAY=0
+QUOTA_COUNTER_MODE=repository
+QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN=0
+QUOTA_MODEL_TOKEN_RESERVATION_MODE=fixed
+QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER=0
+```
+
+超过配额时，`POST /api/chats/{chat_id}/messages` 会返回 `429`，并写入 `quota.run.create` deny audit event。默认 `QUOTA_COUNTER_MODE=repository` 直接按 repository 统计；需要更接近多副本部署时可设 `QUOTA_COUNTER_MODE=redis`，让并发 run 和每小时 run 数先走 Redis 预占。`QUOTA_MODEL_TOKEN_RESERVATION_MODE=fixed` 时使用 `QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN` 固定预占；设为 `dynamic` 时会按当前用户消息长度估算 input tokens，并叠加 `QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER` 作为输出缓冲，run 结束时再按真实 `RunUsage.total_tokens` 结算差额。tool calls 和 sandbox seconds 会先按已有 `RunUsage` 做 run 创建保护，并在 Runtime 每次调用 tool 前通过内部 quota reserve 做最小实时预占；更细粒度账单维度和分布式强一致 token bucket 仍是后续工作。
 
 Agent Runtime 默认使用 `MODEL_PROVIDER=mock`。如需接 OpenAI-compatible 模型服务：
 
@@ -68,6 +125,26 @@ make run-runtime
 
 本地 API key 只放在未提交的 `.env` 或 shell 环境变量里。错误 key 应返回 `auth_error`，余额不足应返回 `billing_error`，日志和 run error 不应出现 `MODEL_API_KEY` 或 `Authorization` header。
 
+如需本地验证 fallback，可先让主 provider 指向 fake/failing OpenAI-compatible 服务，再配置：
+
+```bash
+MODEL_FALLBACK_PROVIDER=mock
+```
+
+如果后备 provider 也是真实 OpenAI-compatible 服务，则使用 `MODEL_FALLBACK_BASE_URL`、`MODEL_FALLBACK_API_KEY`、`MODEL_FALLBACK_NAME`。fallback 只对 `rate_limited`、`provider_unavailable`、`network_error` 生效，不会掩盖鉴权、计费或请求格式错误。
+
+如需在本地验证 usage cost，可以按 provider 官方价格自行配置，不要把实时价格写入仓库：
+
+```bash
+MODEL_INPUT_PRICE_PER_1M_TOKENS=0
+MODEL_CACHED_INPUT_PRICE_PER_1M_TOKENS=0
+MODEL_OUTPUT_PRICE_PER_1M_TOKENS=0
+MODEL_REASONING_PRICE_PER_1M_TOKENS=0
+MODEL_PRICE_CURRENCY=USD
+```
+
+Runtime 会把 token usage、tool usage 和可选费用写入 `RunUsage`，Control Plane 会随 `GET /api/runs/{run_id}` 返回。tool/sandbox 在调用前会先写入预占 usage，run 完成时再以实际 `RunUsage` 覆盖预占快照。
+
 Postgres 持久化路径：
 
 ```bash
@@ -84,7 +161,34 @@ Skill manifest 会写入 `skills`、`skill_versions`、`skill_grants` 和 `skill
 DISPATCH_MODE=redis REDIS_ADDR=localhost:6379 RUN_QUEUE_STREAM=niceagent:runs make run-control
 ```
 
-该模式目前只负责 Control Plane 入队和基础 consumer group adapter；Agent Runtime 的 Redis worker loop 尚未接入，完整端到端执行仍使用默认 `DISPATCH_MODE=http`。
+同时把 Agent Runtime 切到 Redis worker：
+
+```bash
+RUNTIME_QUEUE_MODE=redis \
+CONTROL_PLANE_URL=http://127.0.0.1:8080 \
+REDIS_ADDR=localhost:6379 \
+RUN_QUEUE_STREAM=niceagent:runs \
+RUN_QUEUE_GROUP=agent-runtimes \
+RUN_QUEUE_CONSUMER=agent-runtime-local \
+AGENT_RUNTIME_ID=agent-runtime-local \
+SANDBOX_EXECUTOR_URL=http://127.0.0.1:8082 \
+make run-runtime
+```
+
+Redis 模式下 queue payload 只保存 `run_id`、`attempt_id` 和入队时间；Agent Runtime 消费后会通过 Control Plane 内部 API 拉取完整 execution context，包括用户消息、workspace、当前用户可用 `RuntimeSkill` 和回调地址。执行前 Runtime 会 claim 当前 attempt，后续 event/complete/fail 都必须携带匹配的 `attempt_id`。该模式已经可以跑通最小端到端链路，并具备 pending reclaim、heartbeat 和 DLQ；跨 Control Plane event fanout 仍是后续工作。
+
+Redis worker 还支持最小恢复配置：
+
+```bash
+RUN_QUEUE_RECLAIM_MIN_IDLE_SECONDS=60
+RUN_QUEUE_RECLAIM_COUNT=1
+RUN_QUEUE_MAX_DELIVERIES=5
+RUN_QUEUE_DLQ_STREAM=niceagent:runs:dlq
+RUN_ATTEMPT_LEASE_SECONDS=600
+RUN_ATTEMPT_HEARTBEAT_SECONDS=60
+```
+
+当普通 `XREADGROUP` 没有新消息时，Runtime 会用 `XAUTOCLAIM` 回收 idle pending message。回收消息会生成新的 `attempt_id` 并重新 claim run；超过最大投递次数的消息会写入 DLQ stream 后 ack。执行中的 run 会按 heartbeat 周期续租 lease，续租失败时停止当前 attempt。
 
 如果只想本机直接连接已有 Postgres：
 
@@ -148,9 +252,24 @@ WEB_DIST_DIR=/absolute/path/to/dist make run-control
 ```bash
 make test
 make check-js
+make smoke-three-services
 make compose-config
 git diff --check
 ```
+
+`make smoke-three-services` 会启动独立的 Control Plane、Agent Runtime 和 Sandbox Executor 进程，发送 `/cli echo hello`，并等待 assistant 消息回写。它默认走 HTTP dispatcher；如需验证 Redis dispatcher，可先启动 Redis，再运行：
+
+```bash
+python3 scripts/smoke_three_services.py --dispatch-mode redis --redis-addr 127.0.0.1:6379
+```
+
+如果本机有 Docker，也可以直接运行临时 Redis，并启动两个 Agent Runtime consumer 验证 Redis Streams 多实例消费路径：
+
+```bash
+make smoke-three-services-redis
+```
+
+该命令会使用唯一 stream/group，执行两次 `/cli echo ...`，并在输出中打印每个 run 的 `claimed_by`。
 
 Postgres repository 测试默认跳过；如需运行，需要提供测试数据库：
 

@@ -24,7 +24,7 @@ Locator 策略建议优先使用 `getByRole`、`getByLabel`、`getByText`，必�
 
 ## 当前仓库现状
 
-前端已经迁移到 React + Rspack + TypeScript + SCSS Modules，目录分为 `app`、`api`、`domain`、`features`、`components` 和 `styles`。`package.json` 有 `dev`、`build`、`typecheck`、`lint`、`format`、`check`，但还没有 Playwright 依赖和 E2E 目录。
+前端已经迁移到 React + Rspack + TypeScript + SCSS Modules，目录分为 `app`、`api`、`domain`、`features`、`components` 和 `styles`。`package.json` 有 `dev`、`build`、`typecheck`、`lint`、`format`、`check` 和 `smoke:e2e`。仓库已引入 Playwright，并新增 `frontend/e2e/smoke.spec.ts` 与 `frontend/playwright.config.ts`；当前 E2E 是 mock backend smoke，不是三服务真实集成 smoke。
 
 Rspack dev server 已代理 `/api`、`/healthz` 到 Control Plane，本地 E2E 可以复用 dev server 和 8080 后端。
 
@@ -35,12 +35,13 @@ Rspack dev server 已代理 `/api`、`/healthz` 到 Control Plane，本地 E2E �
 - run 状态徽标和取消按钮。
 - 系统能力/我的能力分组。
 - HTTP Skill 添加、启用、停用。
+- artifact 展示与下载入口。
 
 状态编排集中在 `frontend/src/app/useNiceAgentWorkspace.ts`。SSE 通过 `EventSource(/api/runs/{id}/events)` 订阅，`foldRunEvent` 把事件折叠成 assistant token 和 agent status。
 
-协议类型已包含 `artifact.created`，但前端没有 artifact domain、API、状态存储、列表组件或下载入口。`foldRunEvent` 也没有处理 artifact。
+协议类型已包含 `artifact.created`，前端已有 artifact domain、API、状态存储、列表组件和下载入口。`foldRunEvent` 会把 `artifact.created` 折叠成 agent status 和 artifact metadata。
 
-HTTP Skill 表单目前只做最小输入提交，没有字段级错误、URL 客户端校验、Bearer token 条件校验、保存中禁用和服务端错误定位。
+HTTP Skill 表单已有字段级错误、URL 客户端校验、Bearer token 条件校验、保存中禁用和服务端错误展示。前端 URL 策略已与后端对齐：默认只允许 `https`，并拒绝带 credentials 的 URL。
 
 ## 扩展点
 
@@ -118,7 +119,7 @@ E2E 第一版可以通过 fake backend 或网络 mock 先验证前端行为，�
 
 - 重新暴露底层事件，破坏聊天优先体验。
 - SSE 重连重复追加 token。
-- artifact 下载缺权限校验。
+- artifact 下载权限已在 Control Plane 按 actor/run/artifact 校验，但仍需要在真实多用户/RBAC 下继续验证。
 - 表单错误只出现在全局 notice，用户不知道怎么修。
 - E2E 依赖真实模型导致不稳定。
 

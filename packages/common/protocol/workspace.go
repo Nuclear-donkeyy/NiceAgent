@@ -33,3 +33,10 @@ type Artifact struct {
 type ArtifactListResponse struct {
 	Artifacts []Artifact `json:"artifacts"`
 }
+
+type ArtifactTextResponse struct {
+	Artifact  Artifact `json:"artifact"`
+	Content   string   `json:"content"`
+	Truncated bool     `json:"truncated"`
+	BytesRead int      `json:"bytes_read"`
+}

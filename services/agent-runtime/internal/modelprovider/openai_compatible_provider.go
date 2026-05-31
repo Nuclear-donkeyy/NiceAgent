@@ -27,7 +27,7 @@ func NewOpenAICompatibleChatModel(ctx context.Context, config OpenAICompatiblePr
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
-	tracker := NewUsageTracker(config.ID, config.Model)
+	tracker := NewUsageTrackerWithPricing(config.ID, config.Model, config.Pricing)
 	redactor := NewRedactor(config.APIKey)
 	httpClient := config.HTTPClient
 	if httpClient == nil {

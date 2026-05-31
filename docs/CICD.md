@@ -49,7 +49,7 @@ ALIYUN_ACR_NAMESPACE=your-namespace
 ALIYUN_ACR_USERNAME=your-acr-username
 ALIYUN_ACR_PASSWORD=your-acr-password
 ALIYUN_ACK_KUBE_CONFIG=base64-encoded-kubeconfig
-INTERNAL_API_TOKEN=optional-internal-api-token
+INTERNAL_API_TOKEN=required-random-internal-api-token-for-ack
 ```
 
 `ALIYUN_ACK_KUBE_CONFIG` 生成方式示例：
@@ -72,7 +72,7 @@ base64 -i ~/.kube/config | tr -d '\n'
 - `image_tag`：留空时使用当前 commit SHA。
 - `deploy_to_ack`：默认是 `false`；只有确认要发布到 ACK 时才改为 `true`。
 
-工作流会先推送三服务镜像。只有手动启用 ACK 部署时才执行 `kubectl apply`。如果配置了 `INTERNAL_API_TOKEN`，工作流会同步创建 `niceagent-internal-api` Secret；如果没有配置，则内部 API token 保持为空，适合早期验证链路。
+工作流会先推送三服务镜像。只有启用 ACK 部署时才执行 `kubectl apply`。ACK/K8s manifest 默认设置 `INTERNAL_API_TOKEN_REQUIRED=true`，因此部署到 ACK 前必须配置 `INTERNAL_API_TOKEN`，工作流会同步创建 `niceagent-internal-api` Secret；不要把该 token 写入代码仓库。
 
 ## 本地 Kubernetes 验证
 

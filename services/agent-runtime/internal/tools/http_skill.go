@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -38,7 +39,18 @@ func (LocalSecretResolver) ResolveSecret(_ context.Context, material protocol.Ru
 	if strings.TrimSpace(material.EncryptedValue) != "" {
 		return material.EncryptedValue, nil
 	}
-	if strings.TrimSpace(material.SecretRef) != "" {
+	secretRef := strings.TrimSpace(material.SecretRef)
+	if strings.HasPrefix(secretRef, "env://") {
+		envName := strings.TrimSpace(strings.TrimPrefix(secretRef, "env://"))
+		if envName == "" {
+			return "", ErrSecretRefResolverUnwired
+		}
+		if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+			return value, nil
+		}
+		return "", fmt.Errorf("secret_ref %s is not available in environment", secretRef)
+	}
+	if secretRef != "" {
 		return "", ErrSecretRefResolverUnwired
 	}
 	return "", ErrSecretMissing
@@ -94,16 +106,25 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
 	defer cancel()
+	ctx, endSpan := platform.StartSpan(ctx, "niceagent/agent_runtime", "tool.http_skill.request", platform.Labels{
+		"run_id":   t.runID,
+		"skill_id": skill.ID,
+		"method":   cfg.Method,
+		"host":     safeURLHost(cfg.URL),
+	})
 	request, err := buildHTTPSkillRequest(ctx, cfg, argumentsInJSON, bearerToken)
 	if err != nil {
+		endSpan(err, nil)
 		return marshalObservation(httpSkillObservation{
 			OK:        false,
 			ErrorType: "invalid_runtime_config",
 			Message:   err.Error(),
 		}), false, nil
 	}
+	platform.InjectTraceHeaders(ctx, request.Header)
 	response, err := httpSkillClient(t.bridge.Client).Do(request)
 	if err != nil {
+		endSpan(err, platform.Labels{"error_type": classifyHTTPClientError(ctx, err)})
 		return marshalObservation(httpSkillObservation{
 			OK:        false,
 			ErrorType: classifyHTTPClientError(ctx, err),
@@ -114,7 +135,9 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 
 	body, tooLarge, readErr := readLimitedResponse(response.Body, maxHTTPSkillResponseBytes)
 	body = redactHTTPBody(body, secretValues)
+	spanLabels := platform.Labels{"http_status": fmt.Sprint(response.StatusCode)}
 	if readErr != nil {
+		endSpan(readErr, spanLabels)
 		return marshalObservation(httpSkillObservation{
 			OK:         false,
 			StatusCode: response.StatusCode,
@@ -123,6 +146,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 		}), false, nil
 	}
 	if tooLarge {
+		endSpan(fmt.Errorf("HTTP skill response exceeded %d bytes", maxHTTPSkillResponseBytes), spanLabels)
 		return marshalObservation(httpSkillObservation{
 			OK:         false,
 			StatusCode: response.StatusCode,
@@ -132,6 +156,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 	}
 	data := observationData(body)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		endSpan(fmt.Errorf("HTTP skill returned status %d", response.StatusCode), spanLabels)
 		return marshalObservation(httpSkillObservation{
 			OK:         false,
 			StatusCode: response.StatusCode,
@@ -142,6 +167,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 	}
 	if strings.TrimSpace(skill.OutputSchema) != "" {
 		if err := skillmanifest.ValidateJSONDocument(skill.OutputSchema, body); err != nil {
+			endSpan(err, spanLabels)
 			return marshalObservation(httpSkillObservation{
 				OK:         false,
 				StatusCode: response.StatusCode,
@@ -151,6 +177,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 			}), false, nil
 		}
 	}
+	endSpan(nil, spanLabels)
 	return marshalObservation(httpSkillObservation{
 		OK:         true,
 		StatusCode: response.StatusCode,
@@ -290,6 +317,18 @@ func rejectUnsafeHTTPURL(rawURL string) error {
 		return fmt.Errorf("http skill private address %q is not allowed", host)
 	}
 	return nil
+}
+
+func safeURLHost(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "invalid"
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return "unknown"
+	}
+	return host
 }
 
 func isMetadataHost(host string) bool {

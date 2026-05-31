@@ -24,11 +24,31 @@ spec:
               value: ":8080"
             - name: WEB_DIST_DIR
               value: "/app/frontend/dist"
+            - name: NICEAGENT_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: NICEAGENT_ENV
+            - name: AUTH_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: AUTH_MODE
             - name: DISPATCH_MODE
               valueFrom:
                 configMapKeyRef:
                   name: niceagent-config
                   key: DISPATCH_MODE
+            - name: EVENT_FANOUT_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: EVENT_FANOUT_MODE
+            - name: EVENT_FANOUT_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: EVENT_FANOUT_PREFIX
             - name: AGENT_RUNTIME_URL
               valueFrom:
                 configMapKeyRef:
@@ -44,11 +64,102 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: REDIS_ADDR
+            - name: RUN_QUEUE_STREAM
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_STREAM
+            - name: RUN_QUEUE_GROUP
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_GROUP
+            - name: QUOTA_MAX_CONCURRENT_RUNS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_MAX_CONCURRENT_RUNS
+            - name: QUOTA_RUNS_PER_HOUR
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_RUNS_PER_HOUR
+            - name: QUOTA_MODEL_TOKENS_PER_DAY
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_MODEL_TOKENS_PER_DAY
+            - name: QUOTA_TOOL_CALLS_PER_DAY
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_TOOL_CALLS_PER_DAY
+            - name: QUOTA_SANDBOX_SECONDS_PER_DAY
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_SANDBOX_SECONDS_PER_DAY
+            - name: QUOTA_COUNTER_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_COUNTER_MODE
+            - name: QUOTA_COUNTER_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_COUNTER_PREFIX
+            - name: QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN
+            - name: QUOTA_MODEL_TOKEN_RESERVATION_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_MODEL_TOKEN_RESERVATION_MODE
+            - name: QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER
             - name: INTERNAL_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: niceagent-internal-api
                   key: token
+                  optional: false
+            - name: INTERNAL_API_TOKEN_REQUIRED
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INTERNAL_API_TOKEN_REQUIRED
+            - name: OTEL_TRACES_EXPORTER
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_TRACES_EXPORTER
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_INSECURE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_EXPORTER_OTLP_INSECURE
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-otel
+                  key: headers
                   optional: true
           readinessProbe:
             httpGet:

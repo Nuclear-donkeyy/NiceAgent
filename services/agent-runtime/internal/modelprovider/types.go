@@ -20,6 +20,7 @@ type OpenAICompatibleProviderConfig struct {
 	HTTPClient     *http.Client
 	RetryPolicy    RetryPolicy
 	FallbackPolicy FallbackPolicy
+	Pricing        PricingConfig
 }
 
 func StreamSingle(ctx context.Context, message *schema.Message) (*schema.StreamReader[*schema.Message], error) {

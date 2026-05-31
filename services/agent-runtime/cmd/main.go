@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 
@@ -14,6 +15,7 @@ import (
 	"niceagent/agent-runtime/internal/engine"
 	"niceagent/agent-runtime/internal/httpapi"
 	"niceagent/agent-runtime/internal/modelprovider"
+	"niceagent/agent-runtime/internal/runqueue"
 	"niceagent/agent-runtime/internal/tools"
 	"niceagent/common/platform"
 	"niceagent/common/sandbox"
@@ -21,19 +23,103 @@ import (
 
 func main() {
 	cfg := config.FromEnv()
+	if err := cfg.Validate(); err != nil {
+		log.Fatal(err)
+	}
 	logger := platform.NewLogger("agent-runtime")
+	shutdownTelemetry, err := platform.InitOpenTelemetry(context.Background(), platform.OpenTelemetryConfigFromEnv("agent_runtime", cfg.Environment))
+	if err != nil {
+		log.Fatalf("init opentelemetry: %v", err)
+	}
+	defer shutdownTelemetryWithTimeout(shutdownTelemetry)
 	agentEngine := engine.NewEinoAgentEngine(newSandboxExecutor(cfg, logger))
+	metrics := platform.NewMetrics("agent_runtime")
 	modelProvider, err := modelProviderFromEnv(cfg, logger)
 	if err != nil {
 		log.Fatal(err)
 	}
 	agentEngine.Models = modelProvider
-	handler := httpapi.NewHandler(agentEngine, cfg.ControlPlaneURL, cfg.InternalAPIToken)
+	startModelHealthProbe(cfg, modelProvider, logger, metrics)
+	startQueueWorker(cfg, agentEngine, logger)
+	var modelHealth httpapi.ModelHealthReporter
+	if reporter, ok := modelProvider.(httpapi.ModelHealthReporter); ok {
+		modelHealth = reporter
+	}
+	handler := httpapi.NewHandlerWithOptions(agentEngine, cfg.ControlPlaneURL, cfg.InternalAPIToken, httpapi.HandlerOptions{
+		RuntimeID:   cfg.RuntimeID,
+		ModelHealth: modelHealth,
+		Metrics:     metrics,
+	})
 
 	logger.Info("starting agent runtime", "addr", cfg.Addr)
 	if err := http.ListenAndServe(cfg.Addr, handler); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func shutdownTelemetryWithTimeout(shutdown func(context.Context) error) {
+	if shutdown == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = shutdown(ctx)
+}
+
+func startModelHealthProbe(cfg config.Config, modelProvider model.ToolCallingChatModel, logger *slog.Logger, metrics *platform.Metrics) {
+	if !cfg.ModelHealthProbeEnabled {
+		return
+	}
+	logger.Info(
+		"starting model health probe",
+		"interval", cfg.ModelHealthProbeInterval.String(),
+		"timeout", cfg.ModelHealthProbeTimeout.String(),
+	)
+	modelprovider.StartHealthProbeLoop(context.Background(), modelProvider, modelprovider.HealthProbeConfig{
+		Interval:     cfg.ModelHealthProbeInterval,
+		Timeout:      cfg.ModelHealthProbeTimeout,
+		InitialDelay: cfg.ModelHealthProbeInitialDelay,
+	}, logger, metrics)
+}
+
+func startQueueWorker(cfg config.Config, agentEngine engine.AgentEngine, logger *slog.Logger) {
+	if cfg.QueueMode == "" || cfg.QueueMode == "disabled" || cfg.QueueMode == "http" {
+		return
+	}
+	if cfg.QueueMode != "redis" {
+		log.Fatalf("unsupported RUNTIME_QUEUE_MODE %q", cfg.QueueMode)
+	}
+	if cfg.RedisAddr == "" {
+		log.Fatal("REDIS_ADDR is required when RUNTIME_QUEUE_MODE=redis")
+	}
+	if cfg.ControlPlaneURL == "" {
+		log.Fatal("CONTROL_PLANE_URL is required when RUNTIME_QUEUE_MODE=redis")
+	}
+	worker := runqueue.NewRedisWorker(runqueue.Config{
+		RedisAddr:         cfg.RedisAddr,
+		Stream:            cfg.RunQueueStream,
+		Group:             cfg.RunQueueGroup,
+		Consumer:          cfg.RunQueueConsumer,
+		ControlPlaneURL:   cfg.ControlPlaneURL,
+		InternalToken:     cfg.InternalAPIToken,
+		RuntimeID:         cfg.RuntimeID,
+		ReclaimMinIdle:    cfg.RunQueueReclaimMinIdle,
+		ReclaimCount:      cfg.RunQueueReclaimCount,
+		MaxDeliveries:     cfg.RunQueueMaxDeliveries,
+		DeadLetterStream:  cfg.RunQueueDLQStream,
+		LeaseSeconds:      cfg.RunAttemptLeaseSeconds,
+		HeartbeatInterval: cfg.RunAttemptHeartbeat,
+	}, agentEngine, logger)
+	logger.Info(
+		"starting redis run queue worker",
+		"addr", cfg.RedisAddr,
+		"stream", cfg.RunQueueStream,
+		"group", cfg.RunQueueGroup,
+		"consumer", cfg.RunQueueConsumer,
+		"reclaim_min_idle", cfg.RunQueueReclaimMinIdle.String(),
+		"max_deliveries", cfg.RunQueueMaxDeliveries,
+	)
+	go worker.Run(context.Background())
 }
 
 func newSandboxExecutor(cfg config.Config, logger *slog.Logger) tools.SandboxExecutor {
@@ -51,12 +137,15 @@ func modelProviderFromEnv(cfg config.Config, logger *slog.Logger) (model.ToolCal
 		logger.Info("using mock model provider")
 		return modelprovider.MockChatModel{}, nil
 	case "openai-compatible":
-		modelProvider, err := modelprovider.NewOpenAICompatibleChatModel(context.Background(), modelprovider.OpenAICompatibleProviderConfig{
+		modelProvider, err := newOpenAICompatibleModel(cfg, modelprovider.OpenAICompatibleProviderConfig{
 			BaseURL: cfg.ModelBaseURL,
 			APIKey:  cfg.ModelAPIKey,
 			Model:   cfg.ModelName,
-			Timeout: cfg.ModelTimeout,
 		})
+		if err != nil {
+			return nil, err
+		}
+		modelProvider, err = withFallbackModel(cfg, modelProvider, "openai-compatible:"+cfg.ModelName, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -64,5 +153,48 @@ func modelProviderFromEnv(cfg config.Config, logger *slog.Logger) (model.ToolCal
 		return modelProvider, nil
 	default:
 		return nil, fmt.Errorf("unsupported MODEL_PROVIDER %q", cfg.ModelProvider)
+	}
+}
+
+func newOpenAICompatibleModel(cfg config.Config, providerConfig modelprovider.OpenAICompatibleProviderConfig) (model.ToolCallingChatModel, error) {
+	providerConfig.Timeout = cfg.ModelTimeout
+	providerConfig.Pricing = modelprovider.PricingConfig{
+		InputPer1M:           cfg.ModelInputPricePer1M,
+		CachedInputPer1M:     cfg.ModelCachedInputPricePer1M,
+		OutputPer1M:          cfg.ModelOutputPricePer1M,
+		ReasoningOutputPer1M: cfg.ModelReasoningPricePer1M,
+		Currency:             cfg.ModelPriceCurrency,
+	}
+	return modelprovider.NewOpenAICompatibleChatModel(context.Background(), providerConfig)
+}
+
+func withFallbackModel(cfg config.Config, primary model.ToolCallingChatModel, primaryName string, logger *slog.Logger) (model.ToolCallingChatModel, error) {
+	switch strings.TrimSpace(cfg.ModelFallbackProvider) {
+	case "":
+		return primary, nil
+	case "mock":
+		logger.Info("using mock model fallback", "primary", primaryName)
+		return modelprovider.NewFallbackChatModel(
+			modelprovider.FallbackTarget{Name: primaryName, Model: primary},
+			modelprovider.FallbackTarget{Name: "mock", Model: modelprovider.MockChatModel{}},
+		), nil
+	case "openai-compatible":
+		fallback, err := newOpenAICompatibleModel(cfg, modelprovider.OpenAICompatibleProviderConfig{
+			ID:      "openai-compatible-fallback",
+			BaseURL: cfg.ModelFallbackBaseURL,
+			APIKey:  cfg.ModelFallbackAPIKey,
+			Model:   cfg.ModelFallbackName,
+		})
+		if err != nil {
+			return nil, err
+		}
+		fallbackName := "openai-compatible:" + cfg.ModelFallbackName
+		logger.Info("using openai-compatible model fallback", "primary", primaryName, "fallback", fallbackName)
+		return modelprovider.NewFallbackChatModel(
+			modelprovider.FallbackTarget{Name: primaryName, Model: primary},
+			modelprovider.FallbackTarget{Name: fallbackName, Model: fallback},
+		), nil
+	default:
+		return nil, fmt.Errorf("unsupported MODEL_FALLBACK_PROVIDER %q", cfg.ModelFallbackProvider)
 	}
 }

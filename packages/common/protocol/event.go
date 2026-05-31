@@ -30,7 +30,8 @@ type RunEvent struct {
 }
 
 type RunEventWriteRequest struct {
-	Type    RunEventType `json:"type"`
-	Message string       `json:"message,omitempty"`
-	Payload any          `json:"payload,omitempty"`
+	Type      RunEventType `json:"type"`
+	Message   string       `json:"message,omitempty"`
+	Payload   any          `json:"payload,omitempty"`
+	AttemptID string       `json:"attempt_id,omitempty"`
 }

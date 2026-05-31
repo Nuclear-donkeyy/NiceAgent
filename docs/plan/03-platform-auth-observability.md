@@ -29,23 +29,23 @@ NiceAgent 需要从 `demo-user` 演示模式升级为真实多用户平台。产
 
 数据层已经有平台雏形：`users`、`organizations`、`projects` 表；`chat_sessions` 包含 `user_id` 和 `project_id`；`runs` 包含 `user_id`；`skills`、`skill_grants` 也有 user/project 维度。
 
-Control Plane 外部 API 仍硬编码 `demo-user` 和 `demo-project`。会话、消息、skills CRUD 都从 `app.DemoUserID`、`app.DemoProjectID` 取身份，没有登录态、session、JWT/OIDC 中间件。
+Control Plane 已新增 `ActorContext` 和 `AUTH_MODE=demo|trusted-header|oidc` 边界。`demo` 模式继续映射到 `demo-user/demo-project`；`trusted-header` 模式要求可信上游已完成 OIDC/session/JWT 校验，并传入 `X-NiceAgent-User-ID` 和 `X-NiceAgent-Project-ID`，可选 `X-NiceAgent-Org-ID`、`X-NiceAgent-Roles`、`X-NiceAgent-User-Email`、`X-NiceAgent-User-Name`、`X-NiceAgent-Identity-Provider`、`X-NiceAgent-Identity-Issuer` 和 `X-NiceAgent-Identity-Subject`。`oidc` 当前只是兼容别名。系统还没有真正的内置 OIDC 登录、session 或 JWT 校验。
 
-Repository 已经在部分写路径按 user 过滤，例如创建消息、归档会话、列出会话。但 `GetChat`、`GetRun`、`ListEvents` 等读路径还缺 actor/project 权限校验。
+Repository 仍保留偏底层的数据访问接口，权限主要在 HTTP handler 层按 actor 校验。会话、消息、run、events、artifact、skill 和 audit 的外部 API 已有基础 user/project 隔离。`X-NiceAgent-Roles` 已有最小 RBAC：`viewer` 只读，`owner/admin/member/editor/writer` 可写；组织/项目成员管理只允许 `owner/admin`。如果 header 没有 roles，普通项目 API 会优先从 `project_members` 持久角色绑定读取角色；组织成员 API 会从 `organization_members` 读取角色；当 `projects.organization_id` 与 actor 的 `OrgID` 匹配时，项目 API 也可以继承 `organization_members` 中的组织角色。当前已新增 `organization_members`、`project_members`、`invitations`、`user_identities` migration，并种子化 `demo-user/demo-org/demo-project owner`；外部 API 已支持列出、添加/更新、移除当前组织成员和当前项目成员，也支持创建组织/项目邀请并由已认证 actor 接受邀请。邀请接受会校验可信身份中的邮箱 claim 与邀请邮箱一致；如果上游传入 `issuer + subject`，Control Plane 会绑定并校验外部身份不能跨用户换绑。邮件发送和 NiceAgent 内置 OIDC 登录还没有落地。
 
-内部服务鉴权已有可选 `INTERNAL_API_TOKEN` bearer token。环境变量为空时不校验，生产应改为非本地环境必填。
+内部服务鉴权已有 `INTERNAL_API_TOKEN` bearer token。默认本地允许为空；当 `INTERNAL_API_TOKEN_REQUIRED=true`，或 `NICEAGENT_ENV` 不是 `local/dev/development/test/ci` 时，三服务都会在缺少 token 时启动失败。Kubernetes manifest 默认开启该检查，并要求 `niceagent-internal-api` Secret 存在。
 
-日志层已有 `slog` JSON request log，但没有统一 `request_id`、`trace_id`、metrics、OTel span，也没有独立 `audit_events` 表。
+日志层已有 `slog` JSON request log 和 `X-Request-ID` 生成/透传。仓库已新增 `audit_events` 表、memory/Postgres repository、`GET /api/audit/events` 查询 API，并在 chat/run/skill/artifact/auth deny/quota deny 等关键路径写入 audit event。三服务已新增轻量 `X-Trace-ID` context 和标准 `traceparent` 传播：入口请求可传 `X-Trace-ID` 或 `Traceparent`，Control Plane -> Agent Runtime -> Control Plane callback -> Sandbox Executor 会透传同一个 trace id，Control Plane request log 和 audit event 会记录它。三服务也已提供 `/metrics`，以 Prometheus text exposition 风格暴露 HTTP 请求总数/耗时和最小领域计数。当前已支持 `OTEL_TRACES_EXPORTER=otlp`：启动时会初始化 OpenTelemetry tracer provider，用 OTLP HTTP exporter 上报入站 HTTP server spans；默认 `none`，不影响本地和 CI。内部 spans 已覆盖 Control Plane HTTP dispatcher、Redis run queue enqueue/process/fetch execution context、Runtime run execute、模型调用、tool invoke、HTTP Skill 请求、Runtime 调 Sandbox Executor、Sandbox Executor 命令执行、Runtime 回写 Control Plane。DB repository 和 Redis 低层命令级 span 仍未接入。run quota 已有最小边界：`QUOTA_MAX_CONCURRENT_RUNS`、`QUOTA_RUNS_PER_HOUR`、`QUOTA_MODEL_TOKENS_PER_DAY`、`QUOTA_TOOL_CALLS_PER_DAY`、`QUOTA_SANDBOX_SECONDS_PER_DAY` 作为 env fallback；项目级持久 quota policy 已通过 `project_quota_policies`、`GET/PATCH /api/projects/{id}/quota` 落地。`QUOTA_COUNTER_MODE=redis` 已能对并发 run 和每小时 run 数做 Redis 预占，并在 run 进入终态后释放并发占用；模型 token 预扣支持 fixed 和 dynamic 两种模式，dynamic 按用户消息长度估算 input tokens，并可叠加输出缓冲，run 完成后按真实 `RunUsage.total_tokens` 结算差额。`RunUsage` 已追加 tool/sandbox/artifact 聚合字段，能按 run 记录工具调用数、错误数、sandbox 命令耗时/输出/资源和 artifact 数量/大小；tool calls 和 sandbox seconds 已进入项目级 quota，并且 Runtime 每次 tool 调用前会做最小实时预占；账单维度聚合和真实 tokenizer 仍待补齐。
 
 ## 扩展点
 
 - Control Plane 增加 `internal/auth`：解析 session/JWT，产出 `ActorContext`。
 - Repository 方法从 `userID string` 扩展到 `ActorContext + projectID`，所有读写都走授权检查。
-- 新增身份/权限表：`user_identities`、`organization_members`、`project_members`、`role_bindings`。
+- 新增身份/权限表：`organization_members`、`project_members`、`invitations`、`user_identities` 已有最小版本，当前组织/项目成员管理 API 和邀请接受 API 已有最小闭环，组织成员 API 和同组织项目 API 可从 `organization_members` 解析持久角色，邀请接受已支持可信邮箱 claim 匹配；可信网关传入 `issuer + subject` 时会绑定外部身份并拒绝冲突；邮件发送和更通用的 `role_bindings` 仍待补。
 - 新增 `audit_events` 表和 `AuditLogger`。
-- 新增 quota 数据模型：`quotas`、`quota_usage`，Redis 作为高频计数缓存。
-- `packages/common/platform` 增加 request id、trace context、log redactor。
-- 三服务接入 OpenTelemetry，跨 Control Plane、Runtime、Sandbox 传播 trace context。
+- 当前最小 quota 支持两种计数路径：默认从 Postgres/memory run 状态和 `run_usage` 统计；`QUOTA_COUNTER_MODE=redis` 时用 Redis 预占 `concurrent_runs`、`runs_per_hour`，并可通过 fixed 或 dynamic 模型 token reservation 对每日模型 token 做预扣/结算。项目级持久配置模型 `project_quota_policies` 已有最小闭环。`run_usage` 已能沉淀 tool/sandbox/artifact 聚合用量，并支持 `tool_calls_per_day`、`sandbox_seconds_per_day` 限额；Runtime 调用 tool 前会通过内部 quota reserve 预占工具调用和 sandbox 秒数。后续再新增 `quota_usage`，支持真实 tokenizer/按模型动态估算、分布式 token bucket 和账单维度统计。
+- `packages/common/platform` 已有 request id、trace context、metrics、log redactor、OpenTelemetry 初始化、OTLP HTTP exporter、HTTP server span middleware 和通用 `StartSpan` helper；后续需要继续把 DB repository 和 Redis 低层命令挂到同一条 trace 上。
+- 三服务已能跨 Control Plane、Runtime、Sandbox 传播标准 trace context；后续要补 logs/metrics 与 trace 的更强关联。
 
 ## 技术架构
 
@@ -64,7 +64,7 @@ Browser
   -> Usage settle
 ```
 
-RBAC 第一版角色：
+RBAC 当前最小角色和后续第一版角色：
 
 - `owner`：管理 organization/project、成员、billing、所有资源。
 - `admin`：管理 project、skill、run、workspace。
@@ -88,7 +88,8 @@ RBAC 第一版角色：
 保留 `AUTH_MODE=demo`，不要一次性删除 `demo-user`：
 
 - `AUTH_MODE=demo`：继续映射到 `demo-user/demo-project`，本地开发默认。
-- `AUTH_MODE=oidc`：启用 OIDC 登录，设置 `OIDC_ISSUER_URL`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`、`SESSION_SECRET`。
+- `AUTH_MODE=trusted-header`：启用可信网关透传身份，设置上游网关并要求 actor headers。
+- `AUTH_MODE=oidc`：未来启用 NiceAgent 内置 OIDC 登录，设置 `OIDC_ISSUER_URL`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`、`SESSION_SECRET`。
 - 首次登录创建或绑定内部 `users.id`，创建默认 organization/project/member 关系。
 - 外部 API 不再直接读 `app.DemoUserID`，而是从 `ActorContext` 取当前用户和 project。
 
@@ -113,13 +114,13 @@ RBAC 第一版角色：
 
 ## 分阶段落地
 
-1. Auth middleware：增加 `AUTH_MODE=demo|oidc` 和 `ActorContext`，外部 API 保持行为不变。
-2. 身份/成员表：新增 identity 和 membership migrations，保留 demo 数据。
+1. Auth middleware：增加 `AUTH_MODE=demo|trusted-header|oidc` 和 `ActorContext`，外部 API 保持行为不变。
+2. 身份/成员表：membership migration、当前组织/项目成员管理 API、邀请创建/接受 API、`user_identities` 绑定已落地并保留 demo 数据；组织成员 API 与同组织项目 API 已支持缺少 header roles 时从 `organization_members` 解析角色；邀请接受已校验可信邮箱 claim；NiceAgent 内置 OIDC 登录和邮件发送仍待补。
 3. API 去 demo 常量：所有 handler 从 `ActorContext` 获取 user/project。
 4. RBAC：加入 resource/action 检查和基础角色。
-5. Quota：dispatch 前预占，run 完成后结算 token、tool、sandbox 用量。
+5. Quota：项目级持久 policy、Redis 并发/小时窗口预占、固定/动态模型 token 预扣/结算、run 级 tool/sandbox/artifact 用量记录和 tool/sandbox 最小实时预占已落地；后续需要支持真实 tokenizer/按模型动态估算、分布式强一致 token bucket 和账单维度聚合。
 6. Audit：新增 append-only 审计事件。
-7. Observability：加入 request_id、trace_id、OTel traces/metrics/log correlation。
+7. Observability：轻量 `trace_id`、`/metrics`、OTLP HTTP exporter、入站 HTTP span、调度/回写、run/tool/model、HTTP Skill、Sandbox 和 Redis queue span 已落地；下一步加入 DB/Redis 低层命令 span、日志关联和告警系统。
 
 ## 风险与验收
 
@@ -135,8 +136,8 @@ RBAC 第一版角色：
 
 - `AUTH_MODE=demo` 下现有本地流程不受影响。
 - `AUTH_MODE=oidc` 下不同用户不能互相看到 chat、run、skill、workspace、artifact。
-- `INTERNAL_API_TOKEN` 在非本地环境必填。
-- 每次 run 都能用 `run_id` 查到 request log、audit event、trace。
+- `INTERNAL_API_TOKEN` 在非本地环境或显式 required 模式下必填。
+- 每次 run 都能用 `run_id` 查到 request log、audit event；三服务响应和服务间调用都能看到同一个 `X-Trace-ID` 和 `traceparent`；配置 `OTEL_TRACES_EXPORTER=otlp` 后至少能导出三服务入站 HTTP、调度/回写、run/tool/model、HTTP Skill、Sandbox 和 Redis queue spans。完整 DB/Redis 低层命令 trace 仍是后续验收项。
 - quota deny 可被前端展示为可读错误。
 - 日志、audit、trace 中不出现 API key 或 skill secret。
 

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -8,7 +9,9 @@ import (
 
 type Config struct {
 	Addr                   string
+	Environment            string
 	InternalAPIToken       string
+	InternalTokenRequired  bool
 	ExecutorMode           string
 	WorkspaceRoot          string
 	MaxOutputBytes         int
@@ -28,9 +31,12 @@ type Config struct {
 }
 
 func FromEnv() Config {
+	environment := strings.TrimSpace(env("NICEAGENT_ENV", "local"))
 	return Config{
 		Addr:                   env("SANDBOX_EXECUTOR_ADDR", ":8082"),
-		InternalAPIToken:       os.Getenv("INTERNAL_API_TOKEN"),
+		Environment:            environment,
+		InternalAPIToken:       strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN")),
+		InternalTokenRequired:  envBool("INTERNAL_API_TOKEN_REQUIRED", isNonLocalEnvironment(environment)),
 		ExecutorMode:           strings.ToLower(env("EXECUTOR_MODE", "local")),
 		WorkspaceRoot:          env("SANDBOX_WORKSPACE_ROOT", "workspaces"),
 		MaxOutputBytes:         envInt("SANDBOX_MAX_OUTPUT_BYTES", 64*1024),
@@ -48,6 +54,13 @@ func FromEnv() Config {
 		ContainerTmpfs:         env("SANDBOX_CONTAINER_TMPFS", "/tmp:rw,noexec,nosuid,size=64m"),
 		ContainerLocalFallback: envBool("SANDBOX_CONTAINER_LOCAL_FALLBACK", true),
 	}
+}
+
+func (c Config) Validate() error {
+	if c.InternalTokenRequired && strings.TrimSpace(c.InternalAPIToken) == "" {
+		return fmt.Errorf("INTERNAL_API_TOKEN is required when INTERNAL_API_TOKEN_REQUIRED=true or NICEAGENT_ENV is non-local")
+	}
+	return nil
 }
 
 func env(key, fallback string) string {
@@ -93,5 +106,14 @@ func envBool(key string, fallback bool) bool {
 		return false
 	default:
 		return fallback
+	}
+}
+
+func isNonLocalEnvironment(environment string) bool {
+	switch strings.ToLower(strings.TrimSpace(environment)) {
+	case "", "local", "dev", "development", "test", "ci":
+		return false
+	default:
+		return true
 	}
 }
