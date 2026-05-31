@@ -217,7 +217,7 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, runID string)
 }
 
 func (s *Server) skills(w http.ResponseWriter, _ *http.Request) {
-	platform.WriteJSON(w, http.StatusOK, map[string]any{"skills": s.repo.ListSkills()})
+	platform.WriteJSON(w, http.StatusOK, map[string]any{"skills": s.repo.ListSkillsForUser(demoUserID, "demo-project")})
 }
 
 func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {

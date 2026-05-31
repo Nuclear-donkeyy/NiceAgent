@@ -28,8 +28,8 @@ type Executor struct {
 
 func NewExecutor() *Executor {
 	return &Executor{
-		AllowedCommands: []string{"echo", "pwd", "ls", "date"},
-		Dangerous:       []string{"rm", "sudo", "chmod", "chown", "curl", "wget", "ssh"},
+		AllowedCommands: []string{"curl", "wget", "dig", "nslookup", "date", "echo", "pwd", "ls"},
+		Dangerous:       []string{"rm", "sudo", "chmod", "chown", "ssh", "scp", "mv", "cp", "mkdir", "touch", "tee", "sh", "bash"},
 		WorkspaceRoot:   "workspaces",
 		MaxOutputBytes:  64 * 1024,
 	}
@@ -47,9 +47,8 @@ func (e *Executor) Execute(ctx context.Context, request protocol.SandboxCommand)
 	if err := e.validate(request); err != nil {
 		result.ExitCode = -1
 		result.Error = err.Error()
-		result.ApprovalRequired = errors.Is(err, ErrApprovalRequired)
-		if result.ApprovalRequired {
-			result.Reason = "command requires explicit approval"
+		if errors.Is(err, ErrDangerousCommand) {
+			result.Reason = "command is blocked by the system CLI read-only policy"
 			result.Policy = PolicyDangerousCommand
 		}
 		result.Duration = time.Since(start).String()
@@ -106,18 +105,15 @@ func (e *Executor) validate(request protocol.SandboxCommand) error {
 		return errors.New("absolute or relative command paths are not allowed in the local executor")
 	}
 	if slices.Contains(e.Dangerous, name) {
-		return fmt.Errorf("%w: command requires explicit approval", ErrApprovalRequired)
+		return fmt.Errorf("%w: command is blocked by the system CLI read-only policy", ErrDangerousCommand)
 	}
 	if !slices.Contains(e.AllowedCommands, name) {
 		return errors.New("command is not allowed by the local executor policy")
 	}
-	if request.Network {
-		return errors.New("network access is disabled by default")
-	}
 	return nil
 }
 
-var ErrApprovalRequired = errors.New("approval required")
+var ErrDangerousCommand = errors.New("dangerous command")
 
 func (e *Executor) workspaceDir(request protocol.SandboxCommand) (string, error) {
 	root := request.WorkspaceRoot

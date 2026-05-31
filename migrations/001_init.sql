@@ -103,11 +103,11 @@ INSERT INTO skills (id, name, version, description, risk, requires_auth, input_s
 VALUES
   (
     'cli.exec',
-    'Remote CLI',
+    'System CLI',
     '0.1.0',
-    'Execute approved commands inside a sandbox workspace.',
-    'high',
-    true,
+    'Fetch external information through a read-only sandboxed CLI.',
+    'medium',
+    false,
     '{"type":"object","required":["command"],"properties":{"command":{"type":"array","items":{"type":"string"}}}}'
   ),
   (

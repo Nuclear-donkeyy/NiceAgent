@@ -157,22 +157,65 @@ func TestPostgresStoreSearchesArchivesAndRestoresChatsWhenConfigured(t *testing.
 	}
 }
 
+func TestPostgresStoreListsUserSkillGrantsWhenConfigured(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("set TEST_DATABASE_URL to run postgres repository tests")
+	}
+	db, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	defer db.Close()
+	if err := db.PingContext(context.Background()); err != nil {
+		t.Fatalf("ping postgres: %v", err)
+	}
+	applyTestMigration(t, db)
+
+	store := NewPostgresStore(db)
+	skills := store.ListSkillsForUser("demo-user", "demo-project")
+	if len(skills) == 0 {
+		t.Fatal("expected demo user skills")
+	}
+	var foundCLI bool
+	for _, skill := range skills {
+		if skill.ID == "cli.exec" {
+			foundCLI = true
+			if skill.RequiresAuth {
+				t.Fatalf("cli.exec requires auth = true, want false")
+			}
+		}
+	}
+	if !foundCLI {
+		t.Fatalf("skills = %#v, want cli.exec", skills)
+	}
+}
+
 func applyTestMigration(t *testing.T, db *sql.DB) {
 	t.Helper()
-	raw, err := os.ReadFile("../../../../migrations/001_init.sql")
+	entries, err := os.ReadDir("../../../../migrations")
 	if err != nil {
-		t.Fatalf("read migration: %v", err)
+		t.Fatalf("read migrations dir: %v", err)
 	}
-	for _, stmt := range strings.Split(string(raw), ";") {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
-		if _, err := db.Exec(stmt); err != nil {
-			if strings.Contains(err.Error(), "already exists") {
+		raw, err := os.ReadFile("../../../../migrations/" + entry.Name())
+		if err != nil {
+			t.Fatalf("read migration %s: %v", entry.Name(), err)
+		}
+		for _, stmt := range strings.Split(string(raw), ";") {
+			stmt = strings.TrimSpace(stmt)
+			if stmt == "" {
 				continue
 			}
-			t.Fatalf("apply migration statement %q: %v", stmt, err)
+			if _, err := db.Exec(stmt); err != nil {
+				if strings.Contains(err.Error(), "already exists") {
+					continue
+				}
+				t.Fatalf("apply migration %s statement %q: %v", entry.Name(), stmt, err)
+			}
 		}
 	}
 }

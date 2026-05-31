@@ -24,6 +24,7 @@ type Store struct {
 	runs        map[string]protocol.Run
 	events      map[string][]protocol.RunEvent
 	skills      map[string]protocol.Skill
+	skillGrants map[string][]string
 	subscribers map[string]map[chan protocol.RunEvent]struct{}
 	seq         map[string]int64
 }
@@ -37,6 +38,7 @@ func NewStore() *Store {
 		runs:        map[string]protocol.Run{},
 		events:      map[string][]protocol.RunEvent{},
 		skills:      map[string]protocol.Skill{},
+		skillGrants: map[string][]string{},
 		subscribers: map[string]map[chan protocol.RunEvent]struct{}{},
 		seq:         map[string]int64{},
 	}
@@ -49,11 +51,11 @@ func NewStore() *Store {
 	}
 	store.skills["cli.exec"] = protocol.Skill{
 		ID:           "cli.exec",
-		Name:         "Remote CLI",
+		Name:         "System CLI",
 		Version:      "0.1.0",
-		Description:  "Execute approved commands inside a sandbox workspace.",
-		Risk:         protocol.SkillRiskHigh,
-		RequiresAuth: true,
+		Description:  "Fetch external information through a read-only sandboxed CLI.",
+		Risk:         protocol.SkillRiskMedium,
+		RequiresAuth: false,
 		InputSchema:  `{"type":"object","required":["command"],"properties":{"command":{"type":"array","items":{"type":"string"}}}}`,
 	}
 	store.skills["workspace.read"] = protocol.Skill{
@@ -64,6 +66,7 @@ func NewStore() *Store {
 		Risk:         protocol.SkillRiskLow,
 		RequiresAuth: false,
 	}
+	store.skillGrants[skillGrantKey("demo-user", "demo-project")] = []string{"cli.exec", "workspace.read"}
 	return store
 }
 
@@ -308,17 +311,27 @@ func (s *Store) Subscribe(runID string) (<-chan protocol.RunEvent, func()) {
 	return ch, cancel
 }
 
-func (s *Store) ListSkills() []protocol.Skill {
+func (s *Store) ListSkillsForUser(userID, projectID string) []protocol.Skill {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	skills := make([]protocol.Skill, 0, len(s.skills))
-	for _, skill := range s.skills {
-		skills = append(skills, skill)
+	if userID == "" || projectID == "" {
+		return nil
+	}
+	ids := s.skillGrants[skillGrantKey(userID, projectID)]
+	skills := make([]protocol.Skill, 0, len(ids))
+	for _, id := range ids {
+		if skill, ok := s.skills[id]; ok {
+			skills = append(skills, skill)
+		}
 	}
 	sort.Slice(skills, func(i, j int) bool {
 		return skills[i].ID < skills[j].ID
 	})
 	return skills
+}
+
+func skillGrantKey(userID, projectID string) string {
+	return userID + "\x00" + projectID
 }
 
 func titleFromContent(content string) string {

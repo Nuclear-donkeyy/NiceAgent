@@ -354,8 +354,14 @@ func (s *PostgresStore) Subscribe(runID string) (<-chan protocol.RunEvent, func(
 	return ch, cancel
 }
 
-func (s *PostgresStore) ListSkills() []protocol.Skill {
-	rows, err := s.db.Query(`SELECT id, name, version, description, risk, requires_auth, COALESCE(input_schema::text, ''), COALESCE(output_schema::text, '') FROM skills ORDER BY id`)
+func (s *PostgresStore) ListSkillsForUser(userID, projectID string) []protocol.Skill {
+	rows, err := s.db.Query(`
+		SELECT s.id, s.name, s.version, s.description, s.risk, s.requires_auth,
+		       COALESCE(s.input_schema::text, ''), COALESCE(s.output_schema::text, '')
+		FROM skills s
+		JOIN skill_grants g ON g.skill_id = s.id
+		WHERE g.user_id = $1 AND (g.project_id = $2 OR g.project_id IS NULL)
+		ORDER BY s.id`, userID, projectID)
 	if err != nil {
 		return nil
 	}

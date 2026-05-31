@@ -152,8 +152,7 @@ small {
 }
 
 .chat-list,
-.skill-list,
-.event-list {
+.skill-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -227,7 +226,7 @@ small {
 
 .main {
   display: grid;
-  grid-template-rows: auto minmax(260px, 1fr) 230px auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   min-width: 0;
   min-height: 100vh;
   background: var(--paper);
@@ -332,71 +331,16 @@ small {
   line-height: 1.6;
 }
 
-.activity {
-  border-top: 1px solid var(--line);
-  background: var(--white);
-  padding: 14px 28px;
-}
-
-.activity-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.activity-head p {
-  margin-top: 4px;
+.agent-status,
+.muted-text {
   color: var(--muted);
   font-size: 13px;
 }
 
-.activity-head > span {
-  border: 1px solid var(--black);
-  min-width: 32px;
-  padding: 4px 8px;
-  text-align: center;
-}
-
-.activity-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 18px;
-  height: 155px;
-  margin-top: 12px;
-}
-
-.event-row {
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  gap: 12px;
-  border-top: 1px solid var(--line);
-  padding: 8px 0;
-  font-size: 13px;
-}
-
-.event-row div {
-  display: grid;
-  gap: 2px;
-}
-
-.event-row p {
-  overflow: hidden;
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cli-output {
-  margin: 0;
-  border-left: 1px solid var(--line);
-  background: var(--paper);
-  color: var(--ink);
-  overflow: auto;
-  padding: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.5;
+.agent-status {
+  border-left: 2px solid var(--black);
+  margin: 8px 0 10px;
+  padding-left: 10px;
 }
 
 .composer {
@@ -442,17 +386,6 @@ textarea:focus {
   .sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--line);
-  }
-
-  .activity-grid {
-    grid-template-columns: 1fr;
-    height: auto;
-  }
-
-  .cli-output {
-    min-height: 120px;
-    border-left: 0;
-    border-top: 1px solid var(--line);
   }
 
   .composer {

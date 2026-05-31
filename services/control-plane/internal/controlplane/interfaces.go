@@ -19,5 +19,5 @@ type Repository interface {
 	AddEvent(runID string, typ protocol.RunEventType, message string, payload any) (protocol.RunEvent, error)
 	ListEvents(runID string, afterSeq int64) []protocol.RunEvent
 	Subscribe(runID string) (<-chan protocol.RunEvent, func())
-	ListSkills() []protocol.Skill
+	ListSkillsForUser(userID, projectID string) []protocol.Skill
 }

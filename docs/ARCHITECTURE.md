@@ -9,7 +9,7 @@ frontend
   React + Rspack 前端应用，通过 HTTP/SSE 调 Control Plane。
 
 services/control-plane
-  前置服务器。管理用户会话、消息、run、run events、skills、审批和调度事实。
+  前置服务器。管理用户会话、消息、run、run events、用户可用 skills 和调度事实。
 
 services/agent-runtime
   agent 实例服务。接收 RunRequest，执行 agentic loop，调用模型与工具。
@@ -47,15 +47,15 @@ Agent Runtime 是独立部署的 agent 实例服务，不应由 Control Plane �
 
 Sandbox Executor 独立部署，负责命令执行策略。当前 `packages/common/sandbox` 提供 local executor 和 Docker CLI container executor 入口。
 
-生产化还需要继续补齐：
+当前 CLI 是系统级 agent 工具，用于在沙箱中获取外部信息，不需要用户逐次授权。生产化还需要继续补齐：
 
 - CPU、内存、磁盘、超时限制。
-- 网络开关和出站访问策略。
+- 只读网络型出站访问策略。
 - workspace 挂载、artifact 归档和 diff 摘要。
-- 命令审计、输出截断、敏感操作审批。
+- 命令审计、输出截断和敏感操作策略拒绝。
 
 ## 前端
 
-前端位于 `frontend`，使用 React + Rspack。设计风格参考 ChatGPT 网页版：左侧会话和 skills，右侧主对话区、运行事件、CLI 输出和输入框。视觉以黑、白、微黄色为主，减少圆角，强调面性和线性结构。
+前端位于 `frontend`，使用 React + Rspack。设计风格参考 ChatGPT 网页版：左侧会话和当前可用能力，右侧主对话区和输入框。底层 `RunEvent` 通过 SSE 接收，但会折叠成 assistant 流式文本和 agent 当前状态，不再默认展示原始事件列表或 CLI 调试输出。视觉以黑、白、微黄色为主，减少圆角，强调面性和线性结构。
 
 开发模式下由 Rspack dev server 代理 API；生产模式下由 Control Plane 托管 `frontend/dist`。

@@ -34,7 +34,7 @@ func TestEngineEmitsCompletionForPlainMessage(t *testing.T) {
 	if !sink.saw(protocol.EventRunStarted) || !sink.saw(protocol.EventModelToken) {
 		t.Fatalf("events = %v, want run started and model token events", sink.events)
 	}
-	if !strings.Contains(sink.completed, "无状态 agent runtime") {
+	if !strings.Contains(sink.completed, "远端 agent") {
 		t.Fatalf("completed content = %q, want ordinary runtime reply", sink.completed)
 	}
 }
@@ -66,7 +66,7 @@ func TestEngineRunsAllowedCLICommand(t *testing.T) {
 	}
 }
 
-func TestEngineWaitsForApprovalOnDangerousCLICommand(t *testing.T) {
+func TestEngineReturnsPolicyErrorForDangerousCLICommand(t *testing.T) {
 	sink := &recordingSink{}
 	engine := NewEngine(sandbox.NewExecutor())
 
@@ -79,21 +79,17 @@ func TestEngineWaitsForApprovalOnDangerousCLICommand(t *testing.T) {
 		ModelPolicy: "mock",
 	}, "/cli rm -rf /", sink)
 
-	if result.Status != protocol.RunWaitingForApproval {
-		t.Fatalf("status = %q, want waiting_for_approval", result.Status)
+	if result.Status != protocol.RunSucceeded {
+		t.Fatalf("status = %q, want succeeded with policy response", result.Status)
 	}
-	payload, ok := sink.lastPayload(protocol.EventApprovalNeeded).(map[string]any)
-	if !ok {
-		t.Fatalf("approval payload = %#v, want map", sink.lastPayload(protocol.EventApprovalNeeded))
+	if sink.saw(protocol.EventApprovalNeeded) {
+		t.Fatalf("events = %v, want no approval-needed event for system CLI", sink.events)
 	}
-	if payload["skill_id"] != "cli.exec" || payload["reason"] != "command requires explicit approval" {
-		t.Fatalf("approval payload = %#v", payload)
+	if !sink.saw(protocol.EventToolOutput) {
+		t.Fatalf("events = %v, want ordinary tool output for policy result", sink.events)
 	}
-	if sink.saw(protocol.EventToolOutput) {
-		t.Fatalf("events = %v, want no ordinary tool output for approval", sink.events)
-	}
-	if sink.completed != "" {
-		t.Fatalf("completed content = %q, want no completion while waiting for approval", sink.completed)
+	if !strings.Contains(sink.completed, "系统 CLI 策略拒绝") {
+		t.Fatalf("completed content = %q, want policy refusal", sink.completed)
 	}
 }
 
@@ -118,6 +114,30 @@ func TestEngineFailsWhenSandboxMissingForCLI(t *testing.T) {
 	}
 	if sink.completed != "" {
 		t.Fatalf("completed content = %q, want no completion after failure", sink.completed)
+	}
+}
+
+func TestEngineRejectsCLIWhenSkillNotAvailable(t *testing.T) {
+	sink := &recordingSink{}
+	engine := NewEngine(sandbox.NewExecutor())
+
+	result := engine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-no-cli",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		SkillIDs:    []string{"workspace.read"},
+		ModelPolicy: "mock",
+	}, "/cli echo hello", sink)
+
+	if result.Status != protocol.RunFailed {
+		t.Fatalf("status = %q, want failed", result.Status)
+	}
+	if !strings.Contains(result.Error, "未启用系统 CLI 工具") {
+		t.Fatalf("error = %q, want missing skill message", result.Error)
+	}
+	if sink.completed != "" {
+		t.Fatalf("completed content = %q, want no completion", sink.completed)
 	}
 }
 

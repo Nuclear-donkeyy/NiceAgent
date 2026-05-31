@@ -6,7 +6,7 @@ const statusText = {
   idle: "空闲",
   queued: "排队中",
   running: "运行中",
-  waiting_for_approval: "等待授权",
+  waiting_for_approval: "等待确认",
   succeeded: "已完成",
   failed: "失败",
   canceled: "已取消",
@@ -26,7 +26,7 @@ const eventText = {
   "tool.started": "工具开始",
   "tool.output": "工具输出",
   "tool.finished": "工具结束",
-  "approval.needed": "等待授权",
+  "approval.needed": "等待确认",
   "artifact.created": "产物生成",
   "run.succeeded": "Run 成功",
   "run.failed": "Run 失败",
@@ -62,8 +62,8 @@ export default function App() {
   const [skills, setSkills] = useState([]);
   const [runId, setRunId] = useState(null);
   const [runStatus, setRunStatus] = useState("idle");
-  const [events, setEvents] = useState([]);
-  const [cliLines, setCliLines] = useState([]);
+  const [assistantDraft, setAssistantDraft] = useState("");
+  const [agentStatus, setAgentStatus] = useState("");
   const [input, setInput] = useState("");
   const [notice, setNotice] = useState("准备就绪");
   const [chatQuery, setChatQuery] = useState("");
@@ -72,13 +72,24 @@ export default function App() {
   const [chatError, setChatError] = useState("");
   const [messageLoading, setMessageLoading] = useState(false);
   const [sending, setSending] = useState(false);
-  const [eventsReplaying, setEventsReplaying] = useState(false);
   const sourceRef = useRef(null);
   const refreshTimerRef = useRef(null);
 
   const canCancel = runId && !TERMINAL.has(runStatus) && runStatus !== "idle";
   const canSend = !sending && input.trim().length > 0;
-  const eventSummary = events.length > 0 ? events[events.length - 1].message || eventText[events[events.length - 1].type] : "暂无事件";
+  const visibleMessages = useMemo(() => {
+    if (!assistantDraft && !agentStatus) return messages;
+    return [
+      ...messages,
+      {
+        id: "assistant-draft",
+        role: "assistant",
+        content: assistantDraft,
+        status: agentStatus,
+        transient: true,
+      },
+    ];
+  }, [messages, assistantDraft, agentStatus]);
 
   useEffect(() => {
     boot();
@@ -165,7 +176,12 @@ export default function App() {
     setRunId(run.id);
     setRunStatus(run.status || "idle");
     setNotice(run.error ? `最近 Run 失败：${run.error}` : `正在查看 Run：${run.id}`);
-    openEvents(run.id, chatIdForRefresh, !TERMINAL.has(run.status || "idle"));
+    if (!TERMINAL.has(run.status || "idle")) {
+      openEvents(run.id, chatIdForRefresh, true);
+    } else {
+      setAssistantDraft("");
+      setAgentStatus("");
+    }
   }
 
   async function sendMessage(event) {
@@ -187,6 +203,7 @@ export default function App() {
       setInput("");
       resetRunPanels();
       setRunStatus("queued");
+      setAgentStatus("Agent 已接收任务，正在排队启动");
       const response = await api(`/api/chats/${chatId}/messages`, {
         method: "POST",
         body: JSON.stringify({ content }),
@@ -211,11 +228,6 @@ export default function App() {
     setNotice("已发送取消请求");
   }
 
-  async function approveSkill(id) {
-    await api(`/api/skills/${encodeURIComponent(id)}/approve`, { method: "POST" });
-    setNotice(`已记录 ${id} 授权，恢复执行会在后续阶段实现`);
-  }
-
   async function setActiveChatArchived(archived) {
     if (!activeChatId) return;
     try {
@@ -231,19 +243,17 @@ export default function App() {
 
   function openEvents(id, chatIdForRefresh = activeChatId, refreshOnTerminal = false) {
     closeEvents();
-    setEventsReplaying(true);
+    setAgentStatus("正在连接 Agent Runtime");
     const source = new EventSource(`/api/runs/${id}/events`);
     sourceRef.current = source;
-    source.onopen = () => setEventsReplaying(false);
+    source.onopen = () => setAgentStatus("Agent Runtime 已连接");
     source.onerror = () => {
-      setEventsReplaying(false);
-      if (!TERMINAL.has(runStatus)) setNotice("事件流暂时中断，浏览器会自动重连");
+      if (!TERMINAL.has(runStatus)) setNotice("连接暂时中断，浏览器会自动重连");
     };
     Object.keys(eventText).forEach((type) => {
       source.addEventListener(type, (raw) => {
         const event = JSON.parse(raw.data);
-        setEvents((prev) => [...prev, event]);
-        collectCLI(event);
+        foldRunEvent(event);
         if (type === "approval.needed") {
           setRunStatus("waiting_for_approval");
         }
@@ -251,8 +261,8 @@ export default function App() {
           const next = type.replace("run.", "");
           setRunStatus(next);
           if (TERMINAL.has(next)) {
-            setEventsReplaying(false);
             source.close();
+            setAgentStatus(next === "succeeded" ? "Agent 已完成回复" : statusText[next] || next);
             if (refreshOnTerminal) {
               scheduleChatRefresh(chatIdForRefresh);
             }
@@ -273,8 +283,8 @@ export default function App() {
     closeEvents();
     setRunId(null);
     setRunStatus("idle");
-    setEvents([]);
-    setCliLines([]);
+    setAssistantDraft("");
+    setAgentStatus("");
     setNotice("等待新的 Run");
   }
 
@@ -285,30 +295,31 @@ export default function App() {
     }, 250);
   }
 
-  function collectCLI(event) {
+  function foldRunEvent(event) {
     const payload = event.payload || {};
-    if (event.type === "tool.started" && Array.isArray(payload.command)) {
-      setCliLines((prev) => [...prev, `$ ${payload.command.join(" ")}`]);
-    }
-    if (event.type === "tool.output") {
-      const next = [];
-      if (payload.stdout) next.push(payload.stdout.trimEnd());
-      if (payload.stderr) next.push(`[stderr]\n${payload.stderr.trimEnd()}`);
-      if (payload.error) next.push(`[error] ${payload.error}`);
-      if (payload.exit_code !== undefined) next.push(`[exit_code] ${payload.exit_code}`);
-      if (payload.duration) next.push(`[duration] ${payload.duration}`);
-      setCliLines((prev) => [...prev, ...next.filter(Boolean)]);
-    }
-    if (event.type === "approval.needed") {
+    if (event.type === "run.queued") {
+      setAgentStatus("Agent 正在排队");
+    } else if (event.type === "run.started") {
+      setAgentStatus("Agent Runtime 已开始处理");
+    } else if (event.type === "model.token") {
+      setAgentStatus("Agent 正在生成回复");
+      setAssistantDraft((prev) => prev + (event.message || ""));
+    } else if (event.type === "tool.started") {
       const command = Array.isArray(payload.command) ? payload.command.join(" ") : "unknown command";
-      const reason = payload.reason || payload.error || "approval required";
-      setCliLines((prev) => [...prev, `$ ${command}`, `[approval] ${reason}`]);
+      setAgentStatus(command === "unknown command" ? "Agent 正在选择可用能力" : `正在通过系统 CLI 获取信息：${command}`);
+    } else if (event.type === "tool.output") {
+      setAgentStatus(payload.error ? "系统 CLI 返回了策略或执行错误" : "系统 CLI 信息已获取");
+    } else if (event.type === "tool.finished") {
+      setAgentStatus("工具调用完成，Agent 正在整理回复");
+    } else if (event.type === "run.failed") {
+      setAgentStatus("Run 失败");
+      setAssistantDraft((prev) => prev || `执行失败：${event.message || "未知错误"}`);
+    } else if (event.type === "run.canceled") {
+      setAgentStatus("Run 已取消");
+    } else if (event.type === "approval.needed") {
+      setAgentStatus("有能力需要用户确认");
     }
   }
-
-  const cliOutput = useMemo(() => {
-    return cliLines.length > 0 ? cliLines.join("\n\n") : "暂无 CLI 输出。发送 /cli echo hello 可以测试。";
-  }, [cliLines]);
 
   return (
     <main className="shell">
@@ -372,16 +383,15 @@ export default function App() {
           )}
         </div>
 
-        <SectionTitle text="Skills" />
+        <SectionTitle text="当前可用能力" />
         <div className="skill-list">
           {skills.map((skill) => (
             <article className="skill-card" key={skill.id}>
               <div className="skill-head">
                 <strong>{skill.name || skill.id}</strong>
-                <span>{riskText[skill.risk] || skill.risk || "未知"}</span>
+                <span>{skill.id === "cli.exec" ? "系统" : riskText[skill.risk] || skill.risk || "未知"}</span>
               </div>
               <p>{skill.description || "暂无说明"}</p>
-              {skill.requires_auth && <button onClick={() => approveSkill(skill.id)}>授权</button>}
             </article>
           ))}
         </div>
@@ -413,31 +423,11 @@ export default function App() {
           ) : messages.length === 0 ? (
             <div className="welcome">
               <h3>今天要让远端 agent 做什么？</h3>
-              <p>可以先试试 `/cli echo hello`，观察右侧事件和 CLI 输出。</p>
+              <p>可以先试试 `/cli curl https://example.com`，让 agent 通过系统 CLI 获取外部信息。</p>
             </div>
           ) : (
-            messages.map((message) => <Message key={message.id} message={message} />)
+            visibleMessages.map((message) => <Message key={message.id} message={message} />)
           )}
-        </section>
-
-        <section className="activity">
-          <div className="activity-head">
-            <div>
-              <SectionTitle text="运行事件" />
-              <p>{eventsReplaying ? "正在恢复事件流" : eventSummary}</p>
-            </div>
-            <span>{events.length}</span>
-          </div>
-          <div className="activity-grid">
-            <div className="event-list">
-              {events.length === 0 ? (
-                <Empty text="暂无事件" />
-              ) : (
-                events.map((event) => <RunEvent key={event.id} event={event} />)
-              )}
-            </div>
-            <pre className="cli-output">{cliOutput}</pre>
-          </div>
         </section>
 
         <form className="composer" onSubmit={sendMessage}>
@@ -460,29 +450,10 @@ function Message({ message }) {
   return (
     <article className={`message ${message.role}`}>
       <div className="message-role">{roleText[message.role] || message.role}</div>
-      <p>{message.content}</p>
+      {message.status && <div className="agent-status">{message.status}</div>}
+      {message.content ? <p>{message.content}</p> : <p className="muted-text">Agent 正在思考...</p>}
     </article>
   );
-}
-
-function RunEvent({ event }) {
-  return (
-    <article className="event-row">
-      <div>
-        <strong>{eventText[event.type] || event.type}</strong>
-        <small>#{event.seq}</small>
-      </div>
-      <p>{event.message || payloadSummary(event.payload)}</p>
-    </article>
-  );
-}
-
-function payloadSummary(payload) {
-  if (!payload) return "无详情";
-  if (payload.command) return `$ ${payload.command.join(" ")}`;
-  if (payload.stdout) return payload.stdout.trim();
-  if (payload.error) return payload.error;
-  return JSON.stringify(payload);
 }
 
 function SectionTitle({ text }) {

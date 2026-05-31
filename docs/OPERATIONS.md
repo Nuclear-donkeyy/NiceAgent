@@ -16,7 +16,7 @@ memory 模式的权威状态在进程内存中，进程重启会丢失数据。P
 - 用户、组织、项目。
 - 聊天会话和消息。
 - runs、run events、artifacts。
-- skills、审批、配额、审计记录。
+- skills、用户/项目 skill grants、配额、审计记录。
 
 当前 Postgres 模式支持单 Control Plane 进程内 SSE fanout 和基于数据库的 `RunEvent` replay。Redis Streams 后续用于多实例 run dispatch 和 event fanout，但不应替代 Postgres 的权威持久化。
 
@@ -75,19 +75,19 @@ docker compose -f deployments/docker-compose.yml down -v
 - 容器或更强隔离边界。
 - CPU、内存、磁盘、进程数和超时限制。
 - workspace 只读/读写挂载策略。
-- 网络默认关闭或按策略开启。
+- 网络按只读外部信息获取策略开启。
 - 输出大小限制和敏感信息过滤。
-- 高风险命令审批和完整审计。
+- 高风险命令策略拒绝和完整审计。
 
 ## CLI 策略排查
 
-当前 CLI policy 分三类：
+当前 CLI 是系统级 agent 工具，不需要用户逐次授权。CLI policy 分三类：
 
-- allowlist 命令：例如 `echo`、`pwd`、`ls`、`date`，会正常执行并产生 `tool.output`。
-- dangerous 命令：例如 `rm`、`sudo`、`chmod`、`curl`，不会执行，会产生 `approval.needed`，run 进入 `waiting_for_approval`。
-- 非 allowlist 命令：直接策略拒绝，作为普通 tool error 暴露，不进入审批。
+- allowlist 命令：例如 `curl`、`wget`、`dig`、`nslookup`、`echo`、`pwd`、`ls`、`date`，会正常执行并产生 `tool.output`。
+- dangerous 命令：例如 `rm`、`sudo`、`chmod`、`chown`、shell 启动和文件写入类命令，不会执行，会作为普通 tool error 返回给 Agent Runtime。
+- 非 allowlist 命令：直接策略拒绝，作为普通 tool error 暴露。
 
-`approval.needed` 目前只表示“已进入等待授权状态”，审批后恢复执行仍在后续阶段实现。
+`approval.needed` 事件保留给未来真正需要用户确认的非 CLI skill。系统 CLI 不再使用该事件，也不会让 run 进入 `waiting_for_approval`。
 
 ## 常用运维检查
 

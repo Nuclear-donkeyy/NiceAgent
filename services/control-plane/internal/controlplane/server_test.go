@@ -189,6 +189,28 @@ func TestServerSearchesArchivesAndRestoresChats(t *testing.T) {
 	}
 }
 
+func TestServerListsCurrentUserSkills(t *testing.T) {
+	_, handler := newTestHandler()
+	request := httptest.NewRequest(http.MethodGet, "/api/skills", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("skills status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var output struct {
+		Skills []protocol.Skill `json:"skills"`
+	}
+	decodeJSON(t, response.Body, &output)
+	if len(output.Skills) == 0 {
+		t.Fatal("expected skills")
+	}
+	for _, skill := range output.Skills {
+		if skill.ID == "cli.exec" && skill.RequiresAuth {
+			t.Fatalf("cli.exec requires auth = true, want false")
+		}
+	}
+}
+
 func TestControlPlaneHTTPRuntimeContract(t *testing.T) {
 	store := NewStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

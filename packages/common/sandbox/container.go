@@ -37,9 +37,8 @@ func (e *ContainerExecutor) Execute(ctx context.Context, request protocol.Sandbo
 	if err := e.Local.validate(request); err != nil {
 		result.ExitCode = -1
 		result.Error = err.Error()
-		result.ApprovalRequired = errors.Is(err, ErrApprovalRequired)
-		if result.ApprovalRequired {
-			result.Reason = "command requires explicit approval"
+		if errors.Is(err, ErrDangerousCommand) {
+			result.Reason = "command is blocked by the system CLI read-only policy"
 			result.Policy = PolicyDangerousCommand
 		}
 		result.Duration = time.Since(start).String()

@@ -29,7 +29,7 @@ func TestExecutorRunsAllowedCommand(t *testing.T) {
 	}
 }
 
-func TestExecutorRequiresApprovalForDangerousCommand(t *testing.T) {
+func TestExecutorRejectsDangerousCommandWithoutApproval(t *testing.T) {
 	executor := NewExecutor()
 	result := executor.Execute(context.Background(), protocol.SandboxCommand{
 		RunID:         "run-2",
@@ -41,17 +41,14 @@ func TestExecutorRequiresApprovalForDangerousCommand(t *testing.T) {
 	if result.ExitCode != -1 {
 		t.Fatalf("exit code = %d, want -1", result.ExitCode)
 	}
-	if !result.ApprovalRequired {
-		t.Fatalf("approval required = false, error = %q", result.Error)
-	}
-	if !strings.Contains(result.Error, "approval required") {
-		t.Fatalf("error = %q, want approval policy error", result.Error)
+	if result.ApprovalRequired {
+		t.Fatalf("approval required = true, error = %q", result.Error)
 	}
 	if result.Policy != PolicyDangerousCommand {
 		t.Fatalf("policy = %q, want %q", result.Policy, PolicyDangerousCommand)
 	}
-	if result.Reason != "command requires explicit approval" {
-		t.Fatalf("reason = %q, want explicit approval reason", result.Reason)
+	if !strings.Contains(result.Reason, "read-only policy") {
+		t.Fatalf("reason = %q, want read-only policy reason", result.Reason)
 	}
 	if strings.Join(result.Command, " ") != "rm -rf /" {
 		t.Fatalf("command = %v, want rm -rf /", result.Command)
@@ -95,7 +92,7 @@ func TestExecutorRejectsCommandPath(t *testing.T) {
 	}
 }
 
-func TestExecutorRejectsNetworkAccess(t *testing.T) {
+func TestExecutorAllowsNetworkFlagForReadOnlyCommands(t *testing.T) {
 	executor := NewExecutor()
 	result := executor.Execute(context.Background(), protocol.SandboxCommand{
 		RunID:         "run-5",
@@ -105,11 +102,8 @@ func TestExecutorRejectsNetworkAccess(t *testing.T) {
 		Network:       true,
 	})
 
-	if result.ExitCode != -1 {
-		t.Fatalf("exit code = %d, want -1", result.ExitCode)
-	}
-	if !strings.Contains(result.Error, "network access is disabled") {
-		t.Fatalf("error = %q, want network policy error", result.Error)
+	if result.ExitCode != 0 {
+		t.Fatalf("exit code = %d, error = %q, want 0", result.ExitCode, result.Error)
 	}
 }
 

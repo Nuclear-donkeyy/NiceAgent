@@ -77,6 +77,29 @@ func TestStoreListsSearchesArchivesAndRestoresChats(t *testing.T) {
 	}
 }
 
+func TestStoreListsSkillsForUserWithoutCLIApproval(t *testing.T) {
+	store := NewStore()
+	skills := store.ListSkillsForUser("demo-user", "demo-project")
+	if len(skills) == 0 {
+		t.Fatal("expected demo user skills")
+	}
+	var foundCLI bool
+	for _, skill := range skills {
+		if skill.ID == "cli.exec" {
+			foundCLI = true
+			if skill.RequiresAuth {
+				t.Fatalf("cli.exec requires auth = true, want false")
+			}
+			if skill.Risk != protocol.SkillRiskMedium {
+				t.Fatalf("cli.exec risk = %q, want medium", skill.Risk)
+			}
+		}
+	}
+	if !foundCLI {
+		t.Fatalf("skills = %#v, want cli.exec", skills)
+	}
+}
+
 func TestStoreUpdatesRunStatus(t *testing.T) {
 	store := NewStore()
 	chat := mustCreateChat(t, store, "demo-user", "status")
