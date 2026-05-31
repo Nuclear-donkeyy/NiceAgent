@@ -2,7 +2,6 @@ package dispatch
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,26 +26,15 @@ const (
 var errQueueEmpty = errors.New("run queue is empty")
 
 type QueuedRun struct {
-	RunID       string    `json:"run_id"`
-	ChatID      string    `json:"chat_id"`
-	UserID      string    `json:"user_id"`
-	WorkspaceID string    `json:"workspace_id"`
-	UserMessage string    `json:"user_message"`
-	AttemptID   string    `json:"attempt_id,omitempty"`
-	SkillIDs    []string  `json:"skill_ids"`
-	ModelPolicy string    `json:"model_policy"`
-	EnqueuedAt  time.Time `json:"enqueued_at,omitempty"`
+	RunID      string    `json:"run_id"`
+	AttemptID  string    `json:"attempt_id,omitempty"`
+	EnqueuedAt time.Time `json:"enqueued_at,omitempty"`
 }
 
 func (q QueuedRun) Request() protocol.RunRequest {
 	return protocol.RunRequest{
-		RunID:       q.RunID,
-		ChatID:      q.ChatID,
-		UserID:      q.UserID,
-		WorkspaceID: q.WorkspaceID,
-		AttemptID:   q.AttemptID,
-		SkillIDs:    append([]string(nil), q.SkillIDs...),
-		ModelPolicy: q.ModelPolicy,
+		RunID:     q.RunID,
+		AttemptID: q.AttemptID,
 	}
 }
 
@@ -140,6 +128,13 @@ func newRedisStreamsRunQueueWithClient(client redisRunQueueClient, stream, group
 }
 
 func (q *RedisStreamsRunQueue) Enqueue(ctx context.Context, run QueuedRun) error {
+	ctx, endSpan := platform.StartSpan(ctx, "niceagent/control_plane", "dispatch.run_queue.enqueue", platform.Labels{
+		"run_id":     run.RunID,
+		"attempt_id": run.AttemptID,
+		"stream":     q.Stream,
+	})
+	var err error
+	defer func() { endSpan(err, nil) }()
 	q.ensureClient()
 	run = normalizeQueuedRun(run)
 	values, err := encodeQueuedRun(run)
@@ -233,41 +228,21 @@ func normalizeQueuedRun(run QueuedRun) QueuedRun {
 }
 
 func encodeQueuedRun(run QueuedRun) (map[string]any, error) {
-	skillIDs, err := json.Marshal(run.SkillIDs)
-	if err != nil {
-		return nil, err
-	}
 	return map[string]any{
 		"schema_version": "1",
 		"run_id":         run.RunID,
-		"chat_id":        run.ChatID,
-		"user_id":        run.UserID,
-		"workspace_id":   run.WorkspaceID,
-		"user_message":   run.UserMessage,
 		"attempt_id":     run.AttemptID,
-		"skill_ids":      string(skillIDs),
-		"model_policy":   run.ModelPolicy,
 		"enqueued_at":    run.EnqueuedAt.Format(time.RFC3339Nano),
 	}, nil
 }
 
 func decodeQueuedRun(values map[string]any) (QueuedRun, error) {
 	run := QueuedRun{
-		RunID:       redisValueString(values["run_id"]),
-		ChatID:      redisValueString(values["chat_id"]),
-		UserID:      redisValueString(values["user_id"]),
-		WorkspaceID: redisValueString(values["workspace_id"]),
-		UserMessage: redisValueString(values["user_message"]),
-		AttemptID:   redisValueString(values["attempt_id"]),
-		ModelPolicy: redisValueString(values["model_policy"]),
+		RunID:     redisValueString(values["run_id"]),
+		AttemptID: redisValueString(values["attempt_id"]),
 	}
 	if run.RunID == "" {
 		return QueuedRun{}, errors.New("queued run is missing run_id")
-	}
-	if rawSkillIDs := redisValueString(values["skill_ids"]); rawSkillIDs != "" {
-		if err := json.Unmarshal([]byte(rawSkillIDs), &run.SkillIDs); err != nil {
-			return QueuedRun{}, fmt.Errorf("decode queued run skill_ids: %w", err)
-		}
 	}
 	if rawEnqueuedAt := redisValueString(values["enqueued_at"]); rawEnqueuedAt != "" {
 		enqueuedAt, err := time.Parse(time.RFC3339Nano, rawEnqueuedAt)

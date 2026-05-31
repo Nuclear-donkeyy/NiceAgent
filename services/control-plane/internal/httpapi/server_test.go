@@ -17,6 +17,7 @@ import (
 	"niceagent/common/protocol"
 	"niceagent/control-plane/internal/app"
 	"niceagent/control-plane/internal/dispatch"
+	quotapkg "niceagent/control-plane/internal/quota"
 	"niceagent/control-plane/internal/repository"
 )
 
@@ -34,6 +35,9 @@ func TestServerCreatesChatSendsMessageAndCancelsRun(t *testing.T) {
 	}
 	if got := createChatResponse.Header().Get("X-Request-ID"); got != "test-request-create-chat" {
 		t.Fatalf("x-request-id = %q, want propagated request id", got)
+	}
+	if got := createChatResponse.Header().Get("X-Trace-ID"); got == "" {
+		t.Fatal("expected trace id response header")
 	}
 	var chat protocol.ChatSession
 	decodeJSON(t, createChatResponse.Body, &chat)
@@ -96,6 +100,19 @@ func TestServerCreatesChatSendsMessageAndCancelsRun(t *testing.T) {
 	auditEvents := store.ListAuditEvents(app.DemoActor(), app.AuditEventListOptions{RequestID: "test-request-create-chat"})
 	if len(auditEvents) != 1 || auditEvents[0].Action != "chat.create" || auditEvents[0].RequestID != "test-request-create-chat" {
 		t.Fatalf("audit events = %#v, want chat.create with request id", auditEvents)
+	}
+	if auditEvents[0].TraceID == "" {
+		t.Fatalf("audit event missing trace id: %#v", auditEvents[0])
+	}
+
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(metricsResponse, metricsRequest)
+	if metricsResponse.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d", metricsResponse.Code)
+	}
+	if !strings.Contains(metricsResponse.Body.String(), "niceagent_http_requests_total") {
+		t.Fatalf("metrics body = %s", metricsResponse.Body.String())
 	}
 }
 
@@ -176,8 +193,8 @@ func TestServerReplaysRunEventsAfterLastEventID(t *testing.T) {
 	}
 }
 
-func TestServerOIDCModeRequiresActorAndIsolatesUsers(t *testing.T) {
-	_, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "oidc"})
+func TestServerTrustedHeaderModeRequiresActorAndIsolatesUsers(t *testing.T) {
+	_, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
 
 	unauthorized := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
 	unauthorizedResponse := httptest.NewRecorder()
@@ -190,7 +207,7 @@ func TestServerOIDCModeRequiresActorAndIsolatesUsers(t *testing.T) {
 	}
 
 	createChat := httptest.NewRequest(http.MethodPost, "/api/chats", jsonBody(t, map[string]string{"title": "private"}))
-	setOIDCActor(createChat, "user-a", "project-a")
+	setTrustedActor(createChat, "user-a", "project-a")
 	createChatResponse := httptest.NewRecorder()
 	handler.ServeHTTP(createChatResponse, createChat)
 	if createChatResponse.Code != http.StatusCreated {
@@ -203,7 +220,7 @@ func TestServerOIDCModeRequiresActorAndIsolatesUsers(t *testing.T) {
 	}
 
 	getAsOtherUser := httptest.NewRequest(http.MethodGet, "/api/chats/"+chat.ID, nil)
-	setOIDCActor(getAsOtherUser, "user-b", "project-a")
+	setTrustedActor(getAsOtherUser, "user-b", "project-a")
 	getAsOtherUserResponse := httptest.NewRecorder()
 	handler.ServeHTTP(getAsOtherUserResponse, getAsOtherUser)
 	if getAsOtherUserResponse.Code != http.StatusNotFound {
@@ -211,7 +228,7 @@ func TestServerOIDCModeRequiresActorAndIsolatesUsers(t *testing.T) {
 	}
 
 	listAsOtherProject := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
-	setOIDCActor(listAsOtherProject, "user-a", "project-b")
+	setTrustedActor(listAsOtherProject, "user-a", "project-b")
 	listAsOtherProjectResponse := httptest.NewRecorder()
 	handler.ServeHTTP(listAsOtherProjectResponse, listAsOtherProject)
 	var listOutput struct {
@@ -223,7 +240,7 @@ func TestServerOIDCModeRequiresActorAndIsolatesUsers(t *testing.T) {
 	}
 
 	createMessage := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "hello"}))
-	setOIDCActor(createMessage, "user-a", "project-a")
+	setTrustedActor(createMessage, "user-a", "project-a")
 	createMessageResponse := httptest.NewRecorder()
 	handler.ServeHTTP(createMessageResponse, createMessage)
 	if createMessageResponse.Code != http.StatusAccepted {
@@ -235,11 +252,778 @@ func TestServerOIDCModeRequiresActorAndIsolatesUsers(t *testing.T) {
 	decodeJSON(t, createMessageResponse.Body, &messageResponse)
 
 	cancelAsOtherUser := httptest.NewRequest(http.MethodPost, "/api/runs/"+messageResponse.Run.ID+"/cancel", nil)
-	setOIDCActor(cancelAsOtherUser, "user-b", "project-a")
+	setTrustedActor(cancelAsOtherUser, "user-b", "project-a")
 	cancelAsOtherUserResponse := httptest.NewRecorder()
 	handler.ServeHTTP(cancelAsOtherUserResponse, cancelAsOtherUser)
 	if cancelAsOtherUserResponse.Code != http.StatusNotFound {
 		t.Fatalf("cross-user cancel status = %d, body = %s", cancelAsOtherUserResponse.Code, cancelAsOtherUserResponse.Body.String())
+	}
+}
+
+func TestServerOIDCModeAliasesTrustedHeaderForCompatibility(t *testing.T) {
+	_, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "oidc"})
+	request := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	setTrustedActor(request, "user-a", "project-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("trusted header alias status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestServerTrustedHeaderViewerRoleIsReadOnly(t *testing.T) {
+	_, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	createChat := httptest.NewRequest(http.MethodPost, "/api/chats", jsonBody(t, map[string]string{"title": "rbac"}))
+	setTrustedActor(createChat, "user-a", "project-a")
+	createChatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createChatResponse, createChat)
+	if createChatResponse.Code != http.StatusCreated {
+		t.Fatalf("owner create chat status = %d, body = %s", createChatResponse.Code, createChatResponse.Body.String())
+	}
+	var chat protocol.ChatSession
+	decodeJSON(t, createChatResponse.Body, &chat)
+
+	readChat := httptest.NewRequest(http.MethodGet, "/api/chats/"+chat.ID, nil)
+	setTrustedActorWithRoles(readChat, "user-a", "project-a", "viewer")
+	readChatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(readChatResponse, readChat)
+	if readChatResponse.Code != http.StatusOK {
+		t.Fatalf("viewer read chat status = %d, body = %s", readChatResponse.Code, readChatResponse.Body.String())
+	}
+
+	createMessage := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "viewer cannot write"}))
+	setTrustedActorWithRoles(createMessage, "user-a", "project-a", "viewer")
+	createMessageResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createMessageResponse, createMessage)
+	if createMessageResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer create message status = %d, body = %s", createMessageResponse.Code, createMessageResponse.Body.String())
+	}
+	if !strings.Contains(createMessageResponse.Body.String(), "没有执行该操作的权限") {
+		t.Fatalf("viewer deny body = %s", createMessageResponse.Body.String())
+	}
+}
+
+func TestServerTrustedHeaderUsesPersistentProjectMembership(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectRole("member-user", "member-project", "viewer")
+
+	listChats := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	setTrustedActorWithoutRoles(listChats, "member-user", "member-project")
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, listChats)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("member list status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+
+	createChat := httptest.NewRequest(http.MethodPost, "/api/chats", jsonBody(t, map[string]string{"title": "membership"}))
+	setTrustedActorWithoutRoles(createChat, "member-user", "member-project")
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, createChat)
+	if createResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer create status = %d, body = %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	store.SetProjectRole("member-user", "member-project", "member")
+	createChat = httptest.NewRequest(http.MethodPost, "/api/chats", jsonBody(t, map[string]string{"title": "membership"}))
+	setTrustedActorWithoutRoles(createChat, "member-user", "member-project")
+	createResponse = httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, createChat)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("member create status = %d, body = %s", createResponse.Code, createResponse.Body.String())
+	}
+}
+
+func TestServerTrustedHeaderRequiresMembershipWhenRolesMissing(t *testing.T) {
+	_, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	request := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	setTrustedActorWithoutRoles(request, "unknown-user", "unknown-project")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("missing membership status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "成员关系") {
+		t.Fatalf("missing membership body = %s", response.Body.String())
+	}
+}
+
+func TestServerTrustedHeaderBindsExternalIdentity(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectRole("identity-user", "project-a", "viewer")
+
+	request := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	setTrustedActorWithoutRoles(request, "identity-user", "project-a")
+	setTrustedActorEmail(request, "identity-user@example.test")
+	setTrustedIdentity(request, "oidc", "https://issuer.example.test", "subject-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("bind identity status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	store.SetProjectRole("other-user", "project-a", "viewer")
+	conflict := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	setTrustedActorWithoutRoles(conflict, "other-user", "project-a")
+	setTrustedActorEmail(conflict, "other-user@example.test")
+	setTrustedIdentity(conflict, "oidc", "https://issuer.example.test", "subject-a")
+	conflictResponse := httptest.NewRecorder()
+	handler.ServeHTTP(conflictResponse, conflict)
+	if conflictResponse.Code != http.StatusConflict {
+		t.Fatalf("external identity conflict status = %d, body = %s", conflictResponse.Code, conflictResponse.Body.String())
+	}
+
+	userConflict := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	setTrustedActorWithoutRoles(userConflict, "identity-user", "project-a")
+	setTrustedActorEmail(userConflict, "identity-user@example.test")
+	setTrustedIdentity(userConflict, "oidc", "https://issuer.example.test", "subject-other")
+	userConflictResponse := httptest.NewRecorder()
+	handler.ServeHTTP(userConflictResponse, userConflict)
+	if userConflictResponse.Code != http.StatusConflict {
+		t.Fatalf("user identity conflict status = %d, body = %s", userConflictResponse.Code, userConflictResponse.Body.String())
+	}
+
+	incomplete := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	setTrustedActorWithoutRoles(incomplete, "identity-user", "project-a")
+	setTrustedActorEmail(incomplete, "identity-user@example.test")
+	incomplete.Header.Set("X-NiceAgent-Identity-Subject", "subject-a")
+	incompleteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(incompleteResponse, incomplete)
+	if incompleteResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("incomplete identity status = %d, body = %s", incompleteResponse.Code, incompleteResponse.Body.String())
+	}
+}
+
+func TestServerTrustedHeaderUsesPersistentOrganizationMembership(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetOrganizationRole("org-admin", "org-project-a", "admin")
+	store.SetProjectRole("org-admin", "project-a", "viewer")
+
+	create := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/members", jsonBody(t, protocol.OrganizationMemberInput{
+		UserID: "org-member",
+		Role:   "viewer",
+	}))
+	setTrustedActorWithoutRoles(create, "org-admin", "project-a")
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("organization member create with org membership status = %d, body = %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	list := httptest.NewRequest(http.MethodGet, "/api/organizations/org-project-a/members", nil)
+	setTrustedActorWithoutRoles(list, "org-admin", "project-a")
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("organization member list with org membership status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+}
+
+func TestServerTrustedHeaderAllowsOrgRoleForProjectAPI(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectOrganization("project-a", "org-project-a")
+	store.SetOrganizationRole("org-owner", "org-project-a", "owner")
+
+	createChat := httptest.NewRequest(http.MethodPost, "/api/chats", jsonBody(t, map[string]string{"title": "org inherited"}))
+	setTrustedActorWithoutRoles(createChat, "org-owner", "project-a")
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, createChat)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("org owner create project chat status = %d, body = %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	createMember := httptest.NewRequest(http.MethodPost, "/api/projects/project-a/members", jsonBody(t, protocol.ProjectMemberInput{
+		UserID: "project-member",
+		Role:   "viewer",
+	}))
+	setTrustedActorWithoutRoles(createMember, "org-owner", "project-a")
+	memberResponse := httptest.NewRecorder()
+	handler.ServeHTTP(memberResponse, createMember)
+	if memberResponse.Code != http.StatusCreated {
+		t.Fatalf("org owner create project member status = %d, body = %s", memberResponse.Code, memberResponse.Body.String())
+	}
+}
+
+func TestServerTrustedHeaderDoesNotInheritOrgRoleForUnrelatedProject(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectOrganization("project-a", "org-a")
+	store.SetOrganizationRole("org-owner", "org-other", "owner")
+
+	createChat := httptest.NewRequest(http.MethodPost, "/api/chats", jsonBody(t, map[string]string{"title": "wrong org"}))
+	setTrustedActorWithoutRoles(createChat, "org-owner", "project-a")
+	createChat.Header.Set("X-NiceAgent-Org-ID", "org-other")
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, createChat)
+	if createResponse.Code != http.StatusForbidden {
+		t.Fatalf("unrelated org role create status = %d, body = %s", createResponse.Code, createResponse.Body.String())
+	}
+}
+
+func TestServerTrustedHeaderRequiresOrganizationMembershipWhenRolesMissing(t *testing.T) {
+	_, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	request := httptest.NewRequest(http.MethodGet, "/api/organizations/org-project-a/members", nil)
+	setTrustedActorWithoutRoles(request, "unknown-user", "project-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("missing organization membership status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "组织") {
+		t.Fatalf("missing organization membership body = %s", response.Body.String())
+	}
+}
+
+func TestServerManagesProjectMembers(t *testing.T) {
+	store, handler := newTestHandler()
+
+	list := httptest.NewRequest(http.MethodGet, "/api/projects/"+app.DemoProjectID+"/members", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("list members status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+	var listOutput protocol.ProjectMembersResponse
+	decodeJSON(t, listResponse.Body, &listOutput)
+	if len(listOutput.Members) != 1 || listOutput.Members[0].UserID != "demo-user" || listOutput.Members[0].Role != "owner" {
+		t.Fatalf("initial members = %#v", listOutput.Members)
+	}
+
+	create := httptest.NewRequest(http.MethodPost, "/api/projects/"+app.DemoProjectID+"/members", jsonBody(t, protocol.ProjectMemberInput{
+		UserID: "user-member",
+		Email:  "member@example.test",
+		Name:   "Member User",
+		Role:   "viewer",
+	}))
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create member status = %d, body = %s", createResponse.Code, createResponse.Body.String())
+	}
+	var createOutput protocol.ProjectMemberResponse
+	decodeJSON(t, createResponse.Body, &createOutput)
+	if createOutput.Member.UserID != "user-member" || createOutput.Member.Role != "viewer" {
+		t.Fatalf("created member = %#v", createOutput.Member)
+	}
+	if roles := store.ListProjectRoles("user-member", app.DemoProjectID); len(roles) != 1 || roles[0] != "viewer" {
+		t.Fatalf("created member roles = %#v", roles)
+	}
+
+	update := httptest.NewRequest(http.MethodPatch, "/api/projects/"+app.DemoProjectID+"/members/user-member", jsonBody(t, protocol.ProjectMemberInput{Role: "member"}))
+	updateResponse := httptest.NewRecorder()
+	handler.ServeHTTP(updateResponse, update)
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update member status = %d, body = %s", updateResponse.Code, updateResponse.Body.String())
+	}
+	var updateOutput protocol.ProjectMemberResponse
+	decodeJSON(t, updateResponse.Body, &updateOutput)
+	if updateOutput.Member.Role != "member" {
+		t.Fatalf("updated member = %#v", updateOutput.Member)
+	}
+
+	remove := httptest.NewRequest(http.MethodDelete, "/api/projects/"+app.DemoProjectID+"/members/user-member", nil)
+	removeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(removeResponse, remove)
+	if removeResponse.Code != http.StatusOK {
+		t.Fatalf("remove member status = %d, body = %s", removeResponse.Code, removeResponse.Body.String())
+	}
+	if roles := store.ListProjectRoles("user-member", app.DemoProjectID); len(roles) != 0 {
+		t.Fatalf("removed member roles = %#v", roles)
+	}
+}
+
+func TestServerManagesOrganizationMembers(t *testing.T) {
+	_, handler := newTestHandler()
+
+	list := httptest.NewRequest(http.MethodGet, "/api/organizations/"+app.DemoOrgID+"/members", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("list organization members status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+	var listOutput protocol.OrganizationMembersResponse
+	decodeJSON(t, listResponse.Body, &listOutput)
+	if len(listOutput.Members) != 1 || listOutput.Members[0].UserID != "demo-user" || listOutput.Members[0].Role != "owner" {
+		t.Fatalf("initial organization members = %#v", listOutput.Members)
+	}
+
+	create := httptest.NewRequest(http.MethodPost, "/api/organizations/"+app.DemoOrgID+"/members", jsonBody(t, protocol.OrganizationMemberInput{
+		UserID: "org-member",
+		Email:  "org-member@example.test",
+		Name:   "Org Member",
+		Role:   "admin",
+	}))
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create organization member status = %d, body = %s", createResponse.Code, createResponse.Body.String())
+	}
+	var createOutput protocol.OrganizationMemberResponse
+	decodeJSON(t, createResponse.Body, &createOutput)
+	if createOutput.Member.UserID != "org-member" || createOutput.Member.Role != "admin" {
+		t.Fatalf("created organization member = %#v", createOutput.Member)
+	}
+
+	update := httptest.NewRequest(http.MethodPatch, "/api/organizations/"+app.DemoOrgID+"/members/org-member", jsonBody(t, protocol.OrganizationMemberInput{Role: "viewer"}))
+	updateResponse := httptest.NewRecorder()
+	handler.ServeHTTP(updateResponse, update)
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update organization member status = %d, body = %s", updateResponse.Code, updateResponse.Body.String())
+	}
+	var updateOutput protocol.OrganizationMemberResponse
+	decodeJSON(t, updateResponse.Body, &updateOutput)
+	if updateOutput.Member.Role != "viewer" {
+		t.Fatalf("updated organization member = %#v", updateOutput.Member)
+	}
+
+	remove := httptest.NewRequest(http.MethodDelete, "/api/organizations/"+app.DemoOrgID+"/members/org-member", nil)
+	removeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(removeResponse, remove)
+	if removeResponse.Code != http.StatusOK {
+		t.Fatalf("remove organization member status = %d, body = %s", removeResponse.Code, removeResponse.Body.String())
+	}
+}
+
+func TestServerOrganizationMemberManagementRequiresAdminRole(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectRole("viewer-user", "project-a", "viewer")
+
+	create := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/members", jsonBody(t, protocol.OrganizationMemberInput{
+		UserID: "new-user",
+		Role:   "member",
+	}))
+	setTrustedActorWithoutRoles(create, "viewer-user", "project-a")
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer create organization member status = %d, body = %s", createResponse.Code, createResponse.Body.String())
+	}
+	if !strings.Contains(createResponse.Body.String(), "管理组织") {
+		t.Fatalf("viewer organization deny body = %s", createResponse.Body.String())
+	}
+}
+
+func TestServerOrganizationMemberManagementRejectsSelfMutation(t *testing.T) {
+	_, handler := newTestHandler()
+	update := httptest.NewRequest(http.MethodPatch, "/api/organizations/"+app.DemoOrgID+"/members/demo-user", jsonBody(t, protocol.OrganizationMemberInput{Role: "viewer"}))
+	updateResponse := httptest.NewRecorder()
+	handler.ServeHTTP(updateResponse, update)
+	if updateResponse.Code != http.StatusBadRequest {
+		t.Fatalf("self organization update status = %d, body = %s", updateResponse.Code, updateResponse.Body.String())
+	}
+	if !strings.Contains(updateResponse.Body.String(), "自己") {
+		t.Fatalf("self organization update body = %s", updateResponse.Body.String())
+	}
+}
+
+func TestServerManagesInvitations(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectOrganization("project-a", "org-project-a")
+	store.SetOrganizationRole("org-owner", "org-project-a", "owner")
+
+	createOrgInvite := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/invitations", jsonBody(t, protocol.InvitationInput{
+		Email: "org-invited@example.test",
+		Role:  "admin",
+	}))
+	setTrustedActorWithoutRoles(createOrgInvite, "org-owner", "project-a")
+	createOrgResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createOrgResponse, createOrgInvite)
+	if createOrgResponse.Code != http.StatusCreated {
+		t.Fatalf("create org invitation status = %d, body = %s", createOrgResponse.Code, createOrgResponse.Body.String())
+	}
+	var orgInviteOutput protocol.InvitationResponse
+	decodeJSON(t, createOrgResponse.Body, &orgInviteOutput)
+	if orgInviteOutput.Invitation.Token == "" || orgInviteOutput.Invitation.Status != protocol.InvitationPending {
+		t.Fatalf("created org invitation = %#v", orgInviteOutput.Invitation)
+	}
+
+	listInvites := httptest.NewRequest(http.MethodGet, "/api/organizations/org-project-a/invitations", nil)
+	setTrustedActorWithoutRoles(listInvites, "org-owner", "project-a")
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, listInvites)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("list invitations status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+	var listOutput protocol.InvitationsResponse
+	decodeJSON(t, listResponse.Body, &listOutput)
+	if len(listOutput.Invitations) != 1 || listOutput.Invitations[0].Token != "" {
+		t.Fatalf("listed invitations = %#v, want redacted token", listOutput.Invitations)
+	}
+
+	acceptOrg := httptest.NewRequest(http.MethodPost, "/api/invitations/"+orgInviteOutput.Invitation.Token+"/accept", jsonBody(t, protocol.InvitationAcceptInput{Name: "Org Invited"}))
+	setTrustedActorWithoutRoles(acceptOrg, "org-invited-user", "project-a")
+	setTrustedActorEmail(acceptOrg, "org-invited@example.test")
+	acceptOrgResponse := httptest.NewRecorder()
+	handler.ServeHTTP(acceptOrgResponse, acceptOrg)
+	if acceptOrgResponse.Code != http.StatusOK {
+		t.Fatalf("accept org invitation status = %d, body = %s", acceptOrgResponse.Code, acceptOrgResponse.Body.String())
+	}
+	if roles := store.ListOrganizationRoles("org-invited-user", "org-project-a"); len(roles) != 1 || roles[0] != "admin" {
+		t.Fatalf("org roles after invitation = %#v, want admin", roles)
+	}
+
+	createProjectInvite := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/invitations", jsonBody(t, protocol.InvitationInput{
+		Email:     "project-invited@example.test",
+		Role:      "viewer",
+		ProjectID: "project-a",
+	}))
+	setTrustedActorWithoutRoles(createProjectInvite, "org-owner", "project-a")
+	createProjectResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createProjectResponse, createProjectInvite)
+	if createProjectResponse.Code != http.StatusCreated {
+		t.Fatalf("create project invitation status = %d, body = %s", createProjectResponse.Code, createProjectResponse.Body.String())
+	}
+	var projectInviteOutput protocol.InvitationResponse
+	decodeJSON(t, createProjectResponse.Body, &projectInviteOutput)
+	acceptProject := httptest.NewRequest(http.MethodPost, "/api/invitations/"+projectInviteOutput.Invitation.Token+"/accept", jsonBody(t, protocol.InvitationAcceptInput{Name: "Project Invited"}))
+	setTrustedActorWithoutRoles(acceptProject, "project-invited-user", "project-a")
+	setTrustedActorEmail(acceptProject, "project-invited@example.test")
+	acceptProjectResponse := httptest.NewRecorder()
+	handler.ServeHTTP(acceptProjectResponse, acceptProject)
+	if acceptProjectResponse.Code != http.StatusOK {
+		t.Fatalf("accept project invitation status = %d, body = %s", acceptProjectResponse.Code, acceptProjectResponse.Body.String())
+	}
+	if roles := store.ListProjectRoles("project-invited-user", "project-a"); len(roles) != 1 || roles[0] != "viewer" {
+		t.Fatalf("project roles after invitation = %#v, want viewer", roles)
+	}
+
+	createMismatchInvite := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/invitations", jsonBody(t, protocol.InvitationInput{
+		Email: "mismatch@example.test",
+		Role:  "viewer",
+	}))
+	setTrustedActorWithoutRoles(createMismatchInvite, "org-owner", "project-a")
+	mismatchInviteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(mismatchInviteResponse, createMismatchInvite)
+	if mismatchInviteResponse.Code != http.StatusCreated {
+		t.Fatalf("create mismatch invitation status = %d, body = %s", mismatchInviteResponse.Code, mismatchInviteResponse.Body.String())
+	}
+	var mismatchInviteOutput protocol.InvitationResponse
+	decodeJSON(t, mismatchInviteResponse.Body, &mismatchInviteOutput)
+	acceptMismatch := httptest.NewRequest(http.MethodPost, "/api/invitations/"+mismatchInviteOutput.Invitation.Token+"/accept", jsonBody(t, protocol.InvitationAcceptInput{Name: "Wrong"}))
+	setTrustedActorWithoutRoles(acceptMismatch, "wrong-email-user", "project-a")
+	setTrustedActorEmail(acceptMismatch, "wrong@example.test")
+	mismatchResponse := httptest.NewRecorder()
+	handler.ServeHTTP(mismatchResponse, acceptMismatch)
+	if mismatchResponse.Code != http.StatusBadRequest {
+		t.Fatalf("accept mismatch invitation status = %d, body = %s", mismatchResponse.Code, mismatchResponse.Body.String())
+	}
+
+	acceptWithoutEmail := httptest.NewRequest(http.MethodPost, "/api/invitations/"+mismatchInviteOutput.Invitation.Token+"/accept", jsonBody(t, protocol.InvitationAcceptInput{Name: "Missing"}))
+	setTrustedActorWithoutRoles(acceptWithoutEmail, "missing-email-user", "project-a")
+	missingEmailResponse := httptest.NewRecorder()
+	handler.ServeHTTP(missingEmailResponse, acceptWithoutEmail)
+	if missingEmailResponse.Code != http.StatusBadRequest {
+		t.Fatalf("accept missing email status = %d, body = %s", missingEmailResponse.Code, missingEmailResponse.Body.String())
+	}
+}
+
+func TestServerProjectMemberManagementRequiresAdminRole(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectRole("viewer-user", "project-a", "viewer")
+
+	create := httptest.NewRequest(http.MethodPost, "/api/projects/project-a/members", jsonBody(t, protocol.ProjectMemberInput{
+		UserID: "new-user",
+		Role:   "member",
+	}))
+	setTrustedActorWithoutRoles(create, "viewer-user", "project-a")
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer create member status = %d, body = %s", createResponse.Code, createResponse.Body.String())
+	}
+	if !strings.Contains(createResponse.Body.String(), "管理项目") {
+		t.Fatalf("viewer deny body = %s", createResponse.Body.String())
+	}
+}
+
+func TestServerProjectMemberManagementRejectsSelfMutation(t *testing.T) {
+	_, handler := newTestHandler()
+	update := httptest.NewRequest(http.MethodPatch, "/api/projects/"+app.DemoProjectID+"/members/demo-user", jsonBody(t, protocol.ProjectMemberInput{Role: "viewer"}))
+	updateResponse := httptest.NewRecorder()
+	handler.ServeHTTP(updateResponse, update)
+	if updateResponse.Code != http.StatusBadRequest {
+		t.Fatalf("self update status = %d, body = %s", updateResponse.Code, updateResponse.Body.String())
+	}
+	if !strings.Contains(updateResponse.Body.String(), "自己") {
+		t.Fatalf("self update body = %s", updateResponse.Body.String())
+	}
+}
+
+func TestServerManagesProjectQuotaPolicyAndEnforcesIt(t *testing.T) {
+	store := repository.NewStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	dispatcher := dispatchFunc(func(context.Context, protocol.Run, string) error { return nil })
+	handler := NewServerWithOptions(store, dispatcher, log, ServerOptions{}).Handler()
+
+	getQuota := httptest.NewRequest(http.MethodGet, "/api/projects/"+app.DemoProjectID+"/quota", nil)
+	getQuotaResponse := httptest.NewRecorder()
+	handler.ServeHTTP(getQuotaResponse, getQuota)
+	if getQuotaResponse.Code != http.StatusOK {
+		t.Fatalf("get quota status = %d, body = %s", getQuotaResponse.Code, getQuotaResponse.Body.String())
+	}
+	var getOutput protocol.ProjectQuotaPolicyResponse
+	decodeJSON(t, getQuotaResponse.Body, &getOutput)
+	if getOutput.Policy.ProjectID != app.DemoProjectID || getOutput.Policy.MaxConcurrentRuns != 0 {
+		t.Fatalf("default quota policy = %#v", getOutput.Policy)
+	}
+
+	updateQuota := httptest.NewRequest(http.MethodPatch, "/api/projects/"+app.DemoProjectID+"/quota", jsonBody(t, protocol.ProjectQuotaPolicyInput{
+		MaxConcurrentRuns: 1,
+	}))
+	updateQuotaResponse := httptest.NewRecorder()
+	handler.ServeHTTP(updateQuotaResponse, updateQuota)
+	if updateQuotaResponse.Code != http.StatusOK {
+		t.Fatalf("update quota status = %d, body = %s", updateQuotaResponse.Code, updateQuotaResponse.Body.String())
+	}
+	var updateOutput protocol.ProjectQuotaPolicyResponse
+	decodeJSON(t, updateQuotaResponse.Body, &updateOutput)
+	if updateOutput.Policy.MaxConcurrentRuns != 1 {
+		t.Fatalf("updated quota policy = %#v", updateOutput.Policy)
+	}
+
+	chat := createChatWithHandler(t, handler, "persistent quota")
+	first := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "first"}))
+	firstResponse := httptest.NewRecorder()
+	handler.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusAccepted {
+		t.Fatalf("first message status = %d, body = %s", firstResponse.Code, firstResponse.Body.String())
+	}
+	second := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "second"}))
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("second message status = %d, body = %s", secondResponse.Code, secondResponse.Body.String())
+	}
+}
+
+func TestServerProjectQuotaManagementRequiresAdminRole(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectRole("viewer-user", "project-a", "viewer")
+
+	updateQuota := httptest.NewRequest(http.MethodPatch, "/api/projects/project-a/quota", jsonBody(t, protocol.ProjectQuotaPolicyInput{MaxConcurrentRuns: 1}))
+	setTrustedActorWithoutRoles(updateQuota, "viewer-user", "project-a")
+	updateQuotaResponse := httptest.NewRecorder()
+	handler.ServeHTTP(updateQuotaResponse, updateQuota)
+	if updateQuotaResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer update quota status = %d, body = %s", updateQuotaResponse.Code, updateQuotaResponse.Body.String())
+	}
+	if !strings.Contains(updateQuotaResponse.Body.String(), "管理项目") {
+		t.Fatalf("viewer quota deny body = %s", updateQuotaResponse.Body.String())
+	}
+}
+
+func TestServerEnforcesRunQuota(t *testing.T) {
+	store := repository.NewStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	dispatcher := dispatchFunc(func(context.Context, protocol.Run, string) error { return nil })
+	handler := NewServerWithOptions(store, dispatcher, log, ServerOptions{
+		RunQuota: RunQuota{MaxConcurrentRuns: 1},
+	}).Handler()
+	chat := createChatWithHandler(t, handler, "quota")
+
+	first := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "first"}))
+	firstResponse := httptest.NewRecorder()
+	handler.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusAccepted {
+		t.Fatalf("first message status = %d, body = %s", firstResponse.Code, firstResponse.Body.String())
+	}
+
+	second := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "second"}))
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("second message status = %d, body = %s", secondResponse.Code, secondResponse.Body.String())
+	}
+	if !strings.Contains(secondResponse.Body.String(), "并发任务上限") {
+		t.Fatalf("quota response body = %s", secondResponse.Body.String())
+	}
+	auditEvents := store.ListAuditEvents(app.DemoActor(), app.AuditEventListOptions{Action: "quota.run.create"})
+	if len(auditEvents) != 1 || auditEvents[0].Decision != protocol.AuditDecisionDeny {
+		t.Fatalf("quota audit events = %#v", auditEvents)
+	}
+}
+
+func TestServerEnforcesHourlyRunQuota(t *testing.T) {
+	store := repository.NewStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	dispatcher := dispatchFunc(func(context.Context, protocol.Run, string) error { return nil })
+	handler := NewServerWithOptions(store, dispatcher, log, ServerOptions{
+		RunQuota: RunQuota{MaxRunsPerHour: 1},
+	}).Handler()
+	chat := createChatWithHandler(t, handler, "hourly quota")
+
+	first := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "first"}))
+	firstResponse := httptest.NewRecorder()
+	handler.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusAccepted {
+		t.Fatalf("first message status = %d, body = %s", firstResponse.Code, firstResponse.Body.String())
+	}
+
+	second := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "second"}))
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("second message status = %d, body = %s", secondResponse.Code, secondResponse.Body.String())
+	}
+	if !strings.Contains(secondResponse.Body.String(), "每小时任务数上限") {
+		t.Fatalf("quota response body = %s", secondResponse.Body.String())
+	}
+}
+
+func TestServerUsesQuotaLimiterBeforeCreatingRun(t *testing.T) {
+	store := repository.NewStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	limiter := &fakeQuotaLimiter{
+		denial: quotapkg.Denial{
+			Message:  "已达到当前项目并发任务上限，请稍后再试。",
+			Metadata: map[string]any{"quota": "concurrent_runs", "source": "redis"},
+		},
+	}
+	dispatcher := dispatchFunc(func(context.Context, protocol.Run, string) error {
+		t.Fatal("dispatcher should not be called when quota limiter denies")
+		return nil
+	})
+	handler := NewServerWithOptions(store, dispatcher, log, ServerOptions{
+		RunQuota:     RunQuota{MaxConcurrentRuns: 1},
+		QuotaLimiter: limiter,
+	}).Handler()
+	chat := createChatWithHandler(t, handler, "redis quota")
+
+	create := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "blocked"}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, create)
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("quota response status = %d, body = %s", response.Code, response.Body.String())
+	}
+	_, messages, err := store.GetChat(chat.ID)
+	if err != nil {
+		t.Fatalf("get chat: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("messages after denied request = %#v, want none", messages)
+	}
+	if limiter.reserveCalls != 1 {
+		t.Fatalf("reserve calls = %d, want 1", limiter.reserveCalls)
+	}
+}
+
+func TestServerPassesDynamicTokenReservationHintToLimiter(t *testing.T) {
+	store := repository.NewStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	limiter := &fakeHintedQuotaLimiter{}
+	dispatcher := dispatchFunc(func(context.Context, protocol.Run, string) error { return nil })
+	handler := NewServerWithOptions(store, dispatcher, log, ServerOptions{
+		RunQuota:     RunQuota{MaxTokensPerDay: 1000},
+		QuotaLimiter: limiter,
+		TokenReservation: TokenReservationOptions{
+			Mode:         "dynamic",
+			OutputBuffer: 10,
+		},
+	}).Handler()
+	chat := createChatWithHandler(t, handler, "dynamic token quota")
+
+	create := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "1234567890123456"}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, create)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("create response status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if limiter.hint.ModelTokens != 15 {
+		t.Fatalf("dynamic reservation hint = %#v, want 15", limiter.hint)
+	}
+}
+
+func TestServerEnforcesDailyModelTokenQuota(t *testing.T) {
+	store := repository.NewStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	dispatcher := dispatchFunc(func(context.Context, protocol.Run, string) error { return nil })
+	handler := NewServerWithOptions(store, dispatcher, log, ServerOptions{
+		RunQuota: RunQuota{MaxTokensPerDay: 10},
+	}).Handler()
+	chat := createChatWithHandler(t, handler, "token quota")
+
+	first := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "first"}))
+	firstResponse := httptest.NewRecorder()
+	handler.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusAccepted {
+		t.Fatalf("first message status = %d, body = %s", firstResponse.Code, firstResponse.Body.String())
+	}
+	var firstOutput struct {
+		Run protocol.Run `json:"run"`
+	}
+	decodeJSON(t, firstResponse.Body, &firstOutput)
+	if _, err := store.SaveRunUsage(firstOutput.Run.ID, protocol.RunUsage{InputTokens: 6, OutputTokens: 5}); err != nil {
+		t.Fatalf("save run usage: %v", err)
+	}
+
+	second := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "second"}))
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("second message status = %d, body = %s", secondResponse.Code, secondResponse.Body.String())
+	}
+	if !strings.Contains(secondResponse.Body.String(), "每日模型 token 上限") {
+		t.Fatalf("quota response body = %s", secondResponse.Body.String())
+	}
+}
+
+func TestServerEnforcesDailyToolAndSandboxQuota(t *testing.T) {
+	store := repository.NewStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	dispatcher := dispatchFunc(func(context.Context, protocol.Run, string) error { return nil })
+	handler := NewServerWithOptions(store, dispatcher, log, ServerOptions{
+		RunQuota: RunQuota{
+			MaxToolCallsPerDay:      2,
+			MaxSandboxSecondsPerDay: 3,
+		},
+	}).Handler()
+	chat := createChatWithHandler(t, handler, "usage quota")
+
+	first := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "first"}))
+	firstResponse := httptest.NewRecorder()
+	handler.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusAccepted {
+		t.Fatalf("first message status = %d, body = %s", firstResponse.Code, firstResponse.Body.String())
+	}
+	var firstOutput struct {
+		Run protocol.Run `json:"run"`
+	}
+	decodeJSON(t, firstResponse.Body, &firstOutput)
+	if _, err := store.SaveRunUsage(firstOutput.Run.ID, protocol.RunUsage{ToolCalls: 2, SandboxDurationMillis: 2999}); err != nil {
+		t.Fatalf("save run usage: %v", err)
+	}
+
+	second := httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "second"}))
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("second message status = %d, body = %s", secondResponse.Code, secondResponse.Body.String())
+	}
+	if !strings.Contains(secondResponse.Body.String(), "每日工具调用上限") {
+		t.Fatalf("tool quota response body = %s", secondResponse.Body.String())
+	}
+
+	store = repository.NewStore()
+	handler = NewServerWithOptions(store, dispatcher, log, ServerOptions{
+		RunQuota: RunQuota{MaxSandboxSecondsPerDay: 3},
+	}).Handler()
+	chat = createChatWithHandler(t, handler, "sandbox quota")
+	first = httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "first"}))
+	firstResponse = httptest.NewRecorder()
+	handler.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusAccepted {
+		t.Fatalf("first sandbox message status = %d, body = %s", firstResponse.Code, firstResponse.Body.String())
+	}
+	decodeJSON(t, firstResponse.Body, &firstOutput)
+	if _, err := store.SaveRunUsage(firstOutput.Run.ID, protocol.RunUsage{ToolCalls: 1, SandboxDurationMillis: 3000}); err != nil {
+		t.Fatalf("save sandbox usage: %v", err)
+	}
+	second = httptest.NewRequest(http.MethodPost, "/api/chats/"+chat.ID+"/messages", jsonBody(t, map[string]string{"content": "second"}))
+	secondResponse = httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("second sandbox message status = %d, body = %s", secondResponse.Code, secondResponse.Body.String())
+	}
+	if !strings.Contains(secondResponse.Body.String(), "Sandbox 执行时长上限") {
+		t.Fatalf("sandbox quota response body = %s", secondResponse.Body.String())
 	}
 }
 
@@ -455,22 +1239,32 @@ func TestControlPlaneHTTPRuntimeContract(t *testing.T) {
 			return
 		}
 		received <- input
-		if err := postJSON(input.ControlPlaneURL+"/internal/runs/"+input.Request.RunID+"/events", protocol.RunEventWriteRequest{
-			Type:    protocol.EventRunStarted,
-			Message: "fake runtime started",
+		if err := postJSON(input.ControlPlaneURL+"/internal/runs/"+input.Request.RunID+"/claim", protocol.RunClaimRequest{
+			AttemptID: input.Request.AttemptID,
+			ClaimedBy: "fake-runtime",
 		}); err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		if err := postJSON(input.ControlPlaneURL+"/internal/runs/"+input.Request.RunID+"/events", protocol.RunEventWriteRequest{
-			Type:    protocol.EventModelToken,
-			Message: "hello",
+			Type:      protocol.EventRunStarted,
+			Message:   "fake runtime started",
+			AttemptID: input.Request.AttemptID,
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if err := postJSON(input.ControlPlaneURL+"/internal/runs/"+input.Request.RunID+"/events", protocol.RunEventWriteRequest{
+			Type:      protocol.EventModelToken,
+			Message:   "hello",
+			AttemptID: input.Request.AttemptID,
 		}); err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		if err := postJSON(input.ControlPlaneURL+"/internal/runs/"+input.Request.RunID+"/complete", protocol.RunCompleteRequest{
-			Content: "hello from fake runtime",
+			Content:   "hello from fake runtime",
+			AttemptID: input.Request.AttemptID,
 		}); err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
@@ -678,11 +1472,160 @@ func TestArtifactDownloadRejectsTraversalAndSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestInternalArtifactAPIsListAndReadTextWithAttemptFencing(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	t.Setenv("SANDBOX_WORKSPACE_ROOT", workspaceRoot)
+	store, handler := newTestHandler()
+	chat := mustCreateChat(t, store, "demo-user", "workspace read")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "make artifact")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	if _, err := store.ClaimRunAttempt(run.ID, "attempt-workspace", "runtime-a", time.Now().UTC().Add(time.Minute)); err != nil {
+		t.Fatalf("claim run: %v", err)
+	}
+	outputDir := filepath.Join(workspaceRoot, run.WorkspaceID, "output")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "report.txt"), []byte("hello workspace"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	artifact, err := store.AddArtifact(protocol.Artifact{
+		RunID:       run.ID,
+		Path:        "output/report.txt",
+		Name:        "report.txt",
+		MimeType:    "text/plain",
+		SizeBytes:   15,
+		WorkspaceID: run.WorkspaceID,
+	})
+	if err != nil {
+		t.Fatalf("add artifact: %v", err)
+	}
+
+	list := httptest.NewRequest(http.MethodGet, "/internal/runs/"+run.ID+"/artifacts?attempt_id=attempt-workspace", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("internal list status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+	var listed protocol.ArtifactListResponse
+	decodeJSON(t, listResponse.Body, &listed)
+	if len(listed.Artifacts) != 1 || listed.Artifacts[0].ID != artifact.ID {
+		t.Fatalf("listed artifacts = %#v", listed.Artifacts)
+	}
+
+	read := httptest.NewRequest(http.MethodGet, "/internal/artifacts/"+artifact.ID+"/content?run_id="+run.ID+"&attempt_id=attempt-workspace&max_bytes=5", nil)
+	readResponse := httptest.NewRecorder()
+	handler.ServeHTTP(readResponse, read)
+	if readResponse.Code != http.StatusOK {
+		t.Fatalf("internal read status = %d, body = %s", readResponse.Code, readResponse.Body.String())
+	}
+	var text protocol.ArtifactTextResponse
+	decodeJSON(t, readResponse.Body, &text)
+	if text.Content != "hello" || !text.Truncated || text.BytesRead != 5 {
+		t.Fatalf("text response = %#v", text)
+	}
+
+	stale := httptest.NewRequest(http.MethodGet, "/internal/runs/"+run.ID+"/artifacts?attempt_id=stale", nil)
+	staleResponse := httptest.NewRecorder()
+	handler.ServeHTTP(staleResponse, stale)
+	if staleResponse.Code != http.StatusConflict {
+		t.Fatalf("stale list status = %d, body = %s", staleResponse.Code, staleResponse.Body.String())
+	}
+}
+
+func TestInternalArtifactReadRejectsUnsafeOrBinaryArtifacts(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	t.Setenv("SANDBOX_WORKSPACE_ROOT", workspaceRoot)
+	store, handler := newTestHandler()
+	chat := mustCreateChat(t, store, "demo-user", "workspace read safety")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "unsafe artifact")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	if _, err := store.ClaimRunAttempt(run.ID, "attempt-workspace", "runtime-a", time.Now().UTC().Add(time.Minute)); err != nil {
+		t.Fatalf("claim run: %v", err)
+	}
+	outputDir := filepath.Join(workspaceRoot, run.WorkspaceID, "output")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "image.bin"), []byte{0, 1, 2}, 0o644); err != nil {
+		t.Fatalf("write binary artifact: %v", err)
+	}
+	binary, err := store.AddArtifact(protocol.Artifact{
+		RunID:     run.ID,
+		Path:      "output/image.bin",
+		Name:      "image.bin",
+		MimeType:  "application/octet-stream",
+		SizeBytes: 3,
+	})
+	if err != nil {
+		t.Fatalf("add binary artifact: %v", err)
+	}
+	traversal, err := store.AddArtifact(protocol.Artifact{
+		RunID:     run.ID,
+		Path:      "../outside.txt",
+		Name:      "outside.txt",
+		MimeType:  "text/plain",
+		SizeBytes: 6,
+	})
+	if err != nil {
+		t.Fatalf("add traversal artifact: %v", err)
+	}
+
+	for _, artifactID := range []string{binary.ID, traversal.ID} {
+		request := httptest.NewRequest(http.MethodGet, "/internal/artifacts/"+artifactID+"/content?run_id="+run.ID+"&attempt_id=attempt-workspace", nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("read %s status = %d, body = %s", artifactID, response.Code, response.Body.String())
+		}
+	}
+}
+
 type dispatchFunc func(context.Context, protocol.Run, string) error
 
 func (f dispatchFunc) Dispatch(ctx context.Context, run protocol.Run, userMessage string) error {
 	return f(ctx, run, userMessage)
 }
+
+type fakeQuotaLimiter struct {
+	denial       quotapkg.Denial
+	err          error
+	reserveCalls int
+	releaseCalls int
+}
+
+func (l *fakeQuotaLimiter) ReserveRun(context.Context, app.ActorContext, protocol.ProjectQuotaPolicy) (quotapkg.Reservation, quotapkg.Denial, error) {
+	l.reserveCalls++
+	if l.err != nil || l.denial.Message != "" {
+		return nil, l.denial, l.err
+	}
+	return fakeQuotaReservation{}, quotapkg.Denial{}, nil
+}
+
+func (l *fakeQuotaLimiter) ReleaseRun(context.Context, protocol.Run, string, protocol.RunUsage) error {
+	l.releaseCalls++
+	return nil
+}
+
+type fakeHintedQuotaLimiter struct {
+	fakeQuotaLimiter
+	hint quotapkg.ReservationHint
+}
+
+func (l *fakeHintedQuotaLimiter) ReserveRunWithHint(_ context.Context, _ app.ActorContext, _ protocol.ProjectQuotaPolicy, hint quotapkg.ReservationHint) (quotapkg.Reservation, quotapkg.Denial, error) {
+	l.reserveCalls++
+	l.hint = hint
+	return fakeQuotaReservation{}, quotapkg.Denial{}, nil
+}
+
+type fakeQuotaReservation struct{}
+
+func (fakeQuotaReservation) Commit(context.Context, string) error { return nil }
+func (fakeQuotaReservation) Rollback(context.Context) error       { return nil }
 
 func newTestHandler() (*repository.Store, http.Handler) {
 	return newTestHandlerWithOptions(ServerOptions{})
@@ -695,11 +1638,31 @@ func newTestHandlerWithOptions(opts ServerOptions) (*repository.Store, http.Hand
 	return store, NewServerWithOptions(store, dispatcher, log, opts).Handler()
 }
 
-func setOIDCActor(request *http.Request, userID, projectID string) {
+func setTrustedActor(request *http.Request, userID, projectID string) {
+	setTrustedActorWithRoles(request, userID, projectID, "owner")
+}
+
+func setTrustedActorWithoutRoles(request *http.Request, userID, projectID string) {
 	request.Header.Set("X-NiceAgent-User-ID", userID)
 	request.Header.Set("X-NiceAgent-Project-ID", projectID)
 	request.Header.Set("X-NiceAgent-Org-ID", "org-"+projectID)
-	request.Header.Set("X-NiceAgent-Roles", "owner")
+}
+
+func setTrustedActorWithRoles(request *http.Request, userID, projectID string, roles ...string) {
+	request.Header.Set("X-NiceAgent-User-ID", userID)
+	request.Header.Set("X-NiceAgent-Project-ID", projectID)
+	request.Header.Set("X-NiceAgent-Org-ID", "org-"+projectID)
+	request.Header.Set("X-NiceAgent-Roles", strings.Join(roles, ","))
+}
+
+func setTrustedActorEmail(request *http.Request, email string) {
+	request.Header.Set("X-NiceAgent-User-Email", email)
+}
+
+func setTrustedIdentity(request *http.Request, provider, issuer, subject string) {
+	request.Header.Set("X-NiceAgent-Identity-Provider", provider)
+	request.Header.Set("X-NiceAgent-Identity-Issuer", issuer)
+	request.Header.Set("X-NiceAgent-Identity-Subject", subject)
 }
 
 func jsonBody(t *testing.T, value any) io.Reader {

@@ -6,12 +6,19 @@
 
 ### 认证与请求标识
 
-Control Plane 支持 `AUTH_MODE=demo|oidc`：
+Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 - `demo`：默认模式，所有外部 API 映射到 `demo-user/demo-project`，用于本地开发和演示。
-- `oidc`：当前是最小边界实现，要求上游已完成 OIDC/session 校验，并在外部 API 请求中传入 `X-NiceAgent-User-ID` 和 `X-NiceAgent-Project-ID`。可选传入 `X-NiceAgent-Org-ID`、`X-NiceAgent-Roles`。缺少 actor header 时返回 401。完整 OIDC 登录、JWT 校验和用户/项目成员关系仍是后续工作。
+- `trusted-header`：要求上游网关已完成 OIDC/session/JWT 校验，并在外部 API 请求中传入 `X-NiceAgent-User-ID` 和 `X-NiceAgent-Project-ID`。可选传入 `X-NiceAgent-Org-ID`、`X-NiceAgent-Roles`、`X-NiceAgent-User-Email`、`X-NiceAgent-User-Name`、`X-NiceAgent-Identity-Provider`、`X-NiceAgent-Identity-Issuer`、`X-NiceAgent-Identity-Subject`。缺少 actor header 时返回 401；缺少 roles 时，普通项目 API 会从持久 `project_members` 读取角色，组织成员 API 会从持久 `organization_members` 读取角色，仍找不到成员关系则返回 403。如果请求携带 identity issuer/subject，Control Plane 会把该外部身份绑定到内部 `user_id`；同一个外部身份不能绑定到多个用户，同一个用户同一 provider 也不能换绑到另一个外部身份。接受邀请时必须有可信邮箱 header，且邮箱必须匹配邀请邮箱。
+- `oidc`：当前作为 `trusted-header` 的兼容别名保留。NiceAgent 自己发起 OIDC 登录和 JWT 校验仍是后续工作。
 
-所有请求都会返回 `X-Request-ID`。如果请求头已提供合法 `X-Request-ID`，服务会透传；否则服务会生成一个新的 request id。request log 和 audit event 会记录同一个 request id，便于串联排障。
+`X-NiceAgent-Roles` 的最小 RBAC 语义：`owner`、`admin`、`member`、`editor`、`writer` 可以执行普通写操作；`viewer` 只能读。组织/项目成员管理只允许 `owner/admin` 操作。网关没有传 roles 时，Control Plane 优先使用 `project_members` 的持久项目角色；组织成员 API 会读取 `organization_members`；如果项目属于当前 actor 的组织，项目 API 也可以继承 `organization_members` 中的组织角色。更完整的 action 级 policy 和邀请流程仍是后续工作。
+
+所有 Control Plane 请求都会返回 `X-Request-ID`。如果请求头已提供合法 `X-Request-ID`，服务会透传；否则服务会生成一个新的 request id。request log 和 audit event 会记录同一个 request id，便于串联排障。
+
+三服务都会返回 `X-Trace-ID`。如果请求带 `X-Trace-ID` 或标准 `Traceparent`，服务会复用其中的 trace id；否则生成新的 trace id。Control Plane 调 Agent Runtime、Agent Runtime 回写 Control Plane、Agent Runtime 调 Sandbox Executor 时会继续透传 `X-Trace-ID` 和标准 `traceparent`。默认 `OTEL_TRACES_EXPORTER=none`；配置 `OTEL_TRACES_EXPORTER=otlp` 后，三服务会初始化 OpenTelemetry tracer provider，并通过 OTLP HTTP exporter 上报 spans。当前 OTel 覆盖 HTTP 服务入口、Control Plane 调度/回写、Redis run queue、Runtime run/tool/model、HTTP Skill、Sandbox HTTP/exec 和标准 trace context 传播；DB repository 与 Redis 低层命令级 span 仍是后续工作。
+
+三服务都提供 `GET /metrics`，返回 Prometheus text exposition 风格的基础指标，包括 HTTP 请求总数/耗时，以及部分领域计数，例如 run 创建、quota deny、runtime run 结果和 sandbox exec 退出码。`/metrics` 当前不改变外部业务 API；生产部署时应通过网关或内网策略限制访问。
 
 `POST /api/chats`
 
@@ -48,6 +55,12 @@ Control Plane 支持 `AUTH_MODE=demo|oidc`：
 { "content": "Explain the current workspace" }
 ```
 
+如果项目级 quota policy 或 env fallback 配置了 `max_concurrent_runs`、`max_runs_per_hour`、`max_model_tokens_per_day`、`max_tool_calls_per_day` 或 `max_sandbox_seconds_per_day`，超过当前 actor 在当前项目下的 run 配额时返回 `429 Too Many Requests`。创建 run 时，`max_model_tokens_per_day` 可按 fixed/dynamic 模式做模型 token 预占；`max_tool_calls_per_day` 和 `max_sandbox_seconds_per_day` 会先基于 UTC 自然日内已有 `RunUsage` 做创建前保护，后续 Runtime 每次 tool 调用前还会通过内部 quota reserve 做最小实时预占。响应体仍使用统一错误结构：
+
+```json
+{ "error": "已达到当前项目并发任务上限，请稍后再试。" }
+```
+
 `GET /api/runs/{run_id}`
 
 获取 run 状态。
@@ -55,6 +68,8 @@ Control Plane 支持 `AUTH_MODE=demo|oidc`：
 `GET /api/runs/{run_id}/events`
 
 订阅 run 的 Server-Sent Events。服务端会把事件 `seq` 写为 SSE `id`，并按 `?after={seq}` 或请求头 `Last-Event-ID` 重放断线期间错过的事件；`?after` 优先级高于 `Last-Event-ID`。前端应记录每个 run 已处理的最大 `seq`，重连时带 `after`，并在应用事件前丢弃 `seq <= lastSeq` 的重复事件。
+
+多 Control Plane 副本下，`EVENT_FANOUT_MODE=redis` 只用于实时唤醒当前副本上的 SSE 连接；事件正文仍从 repository/Postgres replay 读取。因此客户端仍必须实现 `after` 和去重，不能把实时连接视为唯一可靠来源。
 
 `GET /api/runs/{run_id}/artifacts`
 
@@ -135,6 +150,177 @@ Control Plane 支持 `AUTH_MODE=demo|oidc`：
 
 已废弃的占位接口。当前前端不调用它；未来如果某些非 CLI skill 需要用户确认，可在此基础上扩展 run-specific approval API。
 
+`GET /api/organizations/{organization_id}/members`
+
+列出当前组织成员。`organization_id` 必须等于当前 actor 所在组织；否则返回 404。响应体：
+
+```json
+{
+  "members": [
+    {
+      "id": "orgmem_xxx",
+      "user_id": "demo-user",
+      "organization_id": "demo-org",
+      "role": "owner",
+      "email": "demo@niceagent.local",
+      "name": "Demo User"
+    }
+  ]
+}
+```
+
+`POST /api/organizations/{organization_id}/members`
+
+添加或更新当前组织成员，只允许 `owner/admin`。第一版要求传入 `user_id` 和 `role`，`email`、`name` 可选；如果用户不存在，Control Plane 会创建一个最小用户记录。支持角色：`owner`、`admin`、`member`、`editor`、`writer`、`viewer`。为避免误锁，当前不允许通过该接口修改自己的组织成员角色。
+
+```json
+{
+  "user_id": "user-123",
+  "email": "user@example.com",
+  "name": "User",
+  "role": "admin"
+}
+```
+
+`PATCH /api/organizations/{organization_id}/members/{user_id}`
+
+修改当前组织内某个成员的角色或展示信息，只允许 `owner/admin`。路径中的 `user_id` 为准，当前不允许修改自己的组织成员角色。
+
+`DELETE /api/organizations/{organization_id}/members/{user_id}`
+
+移除当前组织成员，只允许 `owner/admin`。当前不允许移除自己的组织成员关系。
+
+`GET /api/organizations/{organization_id}/invitations`
+
+列出当前组织的邀请记录，只允许 `owner/admin`。列表不会返回完整 token；创建邀请时才会在响应中返回 token，便于本地开发或后续邮件服务发送邀请链接。
+
+```json
+{
+  "invitations": [
+    {
+      "id": "inv_xxx",
+      "organization_id": "demo-org",
+      "project_id": "demo-project",
+      "email": "user@example.com",
+      "role": "viewer",
+      "status": "pending",
+      "invited_by_user_id": "demo-user",
+      "expires_at": "2026-06-07T00:00:00Z"
+    }
+  ]
+}
+```
+
+`POST /api/organizations/{organization_id}/invitations`
+
+创建组织或项目邀请，只允许 `owner/admin`。`project_id` 为空表示接受后加入组织；`project_id` 非空表示接受后加入该项目，且项目必须属于当前组织。`expires_in_hours` 默认 168 小时，最大 720 小时。
+
+```json
+{
+  "email": "user@example.com",
+  "role": "viewer",
+  "project_id": "demo-project",
+  "expires_in_hours": 168
+}
+```
+
+创建响应会额外包含一次性可见的 `token`：
+
+```json
+{
+  "invitation": {
+    "id": "inv_xxx",
+    "token": "invite_token_xxx",
+    "organization_id": "demo-org",
+    "project_id": "demo-project",
+    "email": "user@example.com",
+    "role": "viewer",
+    "status": "pending"
+  }
+}
+```
+
+`POST /api/invitations/{token}/accept`
+
+当前登录 actor 接受邀请。该接口允许尚未有组织/项目成员关系的已认证用户调用；接受组织邀请会写入 `organization_members`，接受项目邀请会写入 `project_members`。在 `trusted-header`/`oidc` 边界下，请求必须携带 `X-NiceAgent-User-Email`，且该邮箱必须与邀请邮箱一致。当前尚未做邮件发送或 NiceAgent 内置 OIDC identity binding，因此生产环境应放在可信身份网关之后，并在后续补齐 `issuer + sub + email` 绑定。
+
+如果上游同时传入 `X-NiceAgent-Identity-Issuer` 和 `X-NiceAgent-Identity-Subject`，接受邀请前也会经过 `user_identities` 绑定校验；如果只传其中一个会返回 401，发生身份冲突会返回 409。
+
+```json
+{ "name": "User" }
+```
+
+`GET /api/projects/{project_id}/members`
+
+列出当前项目成员。`project_id` 必须等于当前 actor 所在项目；否则返回 404。响应体：
+
+```json
+{
+  "members": [
+    {
+      "id": "prjmem_xxx",
+      "user_id": "demo-user",
+      "project_id": "demo-project",
+      "role": "owner",
+      "email": "demo@niceagent.local",
+      "name": "Demo User"
+    }
+  ]
+}
+```
+
+`POST /api/projects/{project_id}/members`
+
+添加或更新当前项目成员，只允许 `owner/admin`。第一版要求传入 `user_id` 和 `role`，`email`、`name` 可选；如果用户不存在，Control Plane 会创建一个最小用户记录。支持角色：`owner`、`admin`、`member`、`editor`、`writer`、`viewer`。为避免误锁，当前不允许通过该接口修改自己的项目成员角色。
+
+```json
+{
+  "user_id": "user-123",
+  "email": "user@example.com",
+  "name": "User",
+  "role": "viewer"
+}
+```
+
+`PATCH /api/projects/{project_id}/members/{user_id}`
+
+修改当前项目内某个成员的角色或展示信息，只允许 `owner/admin`。路径中的 `user_id` 为准，当前不允许修改自己的成员角色。
+
+`DELETE /api/projects/{project_id}/members/{user_id}`
+
+移除当前项目成员，只允许 `owner/admin`。当前不允许移除自己的项目成员关系。
+
+`GET /api/projects/{project_id}/quota`
+
+获取当前项目的有效 quota policy。若项目尚未持久化配置，则返回 env fallback 值；默认都是 `0`，表示不限制。
+
+```json
+{
+  "policy": {
+    "project_id": "demo-project",
+    "max_concurrent_runs": 1,
+    "max_runs_per_hour": 100,
+    "max_model_tokens_per_day": 100000,
+    "max_tool_calls_per_day": 1000,
+    "max_sandbox_seconds_per_day": 3600
+  }
+}
+```
+
+`PATCH /api/projects/{project_id}/quota`
+
+设置当前项目的持久 quota policy，只允许 `owner/admin`。所有字段必须是非负整数，`0` 表示关闭对应限制。默认 quota 统计基于 Postgres/memory 的 run 状态和 run usage；当 Control Plane 配置 `QUOTA_COUNTER_MODE=redis` 时，`max_concurrent_runs` 和 `max_runs_per_hour` 会先通过 Redis 预占，run 终态释放并发计数。`max_model_tokens_per_day` 可配合 `QUOTA_MODEL_TOKEN_RESERVATION_MODE=fixed|dynamic` 做创建前预占：fixed 使用 `QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN`，dynamic 按用户消息长度估算并叠加 `QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER`；run 终态按真实 `RunUsage.total_tokens` 结算差额。`max_tool_calls_per_day` 和 `max_sandbox_seconds_per_day` 会在创建 run 时按已有 `RunUsage` 做保护，并在 Runtime 调用 tool 前通过内部 quota reserve 做最小实时预占。
+
+```json
+{
+  "max_concurrent_runs": 1,
+  "max_runs_per_hour": 100,
+  "max_model_tokens_per_day": 100000,
+  "max_tool_calls_per_day": 1000,
+  "max_sandbox_seconds_per_day": 3600
+}
+```
+
 `GET /api/audit/events`
 
 列出当前 actor 在当前项目下最近的 audit events。支持 `limit`、`request_id`、`run_id`、`action`、`resource_id` 过滤，`limit` 最大 100。audit metadata 会按敏感 key 脱敏，API key、Authorization header、token、secret、password 和 cookie 不应出现在响应中。
@@ -151,6 +337,7 @@ Control Plane 支持 `AUTH_MODE=demo|oidc`：
       "resource_id": "run_xxx",
       "decision": "allow",
       "request_id": "req_xxx",
+      "trace_id": "trc_xxx",
       "run_id": "run_xxx",
       "created_at": "2026-05-31T00:00:00Z"
     }
@@ -193,7 +380,7 @@ Agent Runtime 执行 `RunExecutionRequest` 的入口，由 Control Plane 的 HTT
 
 `POST /internal/runs/{run_id}/events`
 
-Agent Runtime 向 Control Plane 写入单条 `RunEvent`。当任一服务配置了 `INTERNAL_API_TOKEN` 时，对应内部 API 需要请求头 `Authorization: Bearer <token>`。
+Agent Runtime 向 Control Plane 写入单条 `RunEvent`。当任一服务配置了 `INTERNAL_API_TOKEN` 时，对应内部 API 需要请求头 `Authorization: Bearer <token>`。本地开发可以让 token 为空；如果设置 `INTERNAL_API_TOKEN_REQUIRED=true`，或 `NICEAGENT_ENV` 不是 `local/dev/development/test/ci`，三服务都会在缺少 `INTERNAL_API_TOKEN` 时启动失败。
 
 请求体：
 
@@ -201,9 +388,64 @@ Agent Runtime 向 Control Plane 写入单条 `RunEvent`。当任一服务配置�
 {
   "type": "model.token",
   "message": "hello",
-  "payload": null
+  "payload": null,
+  "attempt_id": "attempt_xxx"
 }
 ```
+
+如果 run 已经被某个 active attempt claim，`events`、`complete` 和 `fail` 都必须携带相同的 `attempt_id`；旧 attempt 或未携带 attempt 的迟到回写会返回 `409 Conflict`。
+
+`POST /internal/runs/{run_id}/claim`
+
+Agent Runtime 在真正执行 run 之前 claim 当前 attempt。Control Plane 会把 `attempt_id` 写入 run 的 active attempt，并记录 `claimed_by`、`lease_expires_at` 和 `attempt_count`。如果已有未过期的不同 attempt，返回 `409 Conflict`；如果 run 已经处于终态，则返回当前 run，Runtime 应跳过执行。
+
+请求体：
+
+```json
+{
+  "attempt_id": "attempt_xxx",
+  "claimed_by": "agent-runtime-1",
+  "lease_seconds": 600
+}
+```
+
+`GET /internal/runs/{run_id}/execution-context`
+
+Redis worker 消费 queue payload 后，通过该接口按 `run_id` 拉取完整执行上下文。可选查询参数 `attempt_id` 会被写入返回的 `RunExecutionRequest.request.attempt_id`。
+
+响应体复用 `RunExecutionRequest`，包含最新用户消息、workspace、当前用户可用 `RuntimeSkill` 和 `control_plane_url`。Redis queue payload 只保存 `run_id`、`attempt_id` 和入队时间，不保存 skill secret 或完整用户消息。
+
+`POST /internal/runs/{run_id}/quota-reserve`
+
+Agent Runtime 在执行 Eino tool 前调用该接口预占 tool/sandbox 用量。Control Plane 会校验 active `attempt_id`，读取当前项目 quota policy，并将本次预占写入 run 级 `RunUsage`。如果达到上限，接口仍返回 `200 OK`，但 `allowed=false`，Runtime 会把该结果作为 tool observation 返回给模型，不会真正执行 tool。
+
+请求体：
+
+```json
+{
+  "attempt_id": "attempt_xxx",
+  "skill_id": "cli.exec",
+  "tool_calls": 1,
+  "sandbox_seconds": 10
+}
+```
+
+响应体：
+
+```json
+{
+  "allowed": false,
+  "message": "已达到当前项目每日工具调用上限，请明天再试。",
+  "quota": "tool_calls_per_day",
+  "usage": {
+    "tool_calls": 1000,
+    "sandbox_commands": 42,
+    "sandbox_duration_millis": 3600000
+  }
+}
+```
+
+当前预占是最小治理边界：它保护单 Control Plane repository 路径和 Runtime 调用前的 obvious over-limit，不等同于分布式强一致 token bucket。run 完成时，Runtime 仍会通过 `complete.usage` 回写实际用量，并覆盖此前的预占快照。
 
 `POST /internal/runs/{run_id}/complete`
 
@@ -214,6 +456,7 @@ Agent Runtime 通知 Control Plane 写入最终 assistant 消息、登记 artifa
 ```json
 {
   "content": "最终回复内容",
+  "attempt_id": "attempt_xxx",
   "artifacts": [
     {
       "path": "output/report.txt",
@@ -233,12 +476,43 @@ Agent Runtime 或 dispatcher 通知 Control Plane 将 run 置为 `failed`，并�
 请求体：
 
 ```json
-{ "error": "runtime unavailable" }
+{ "error": "runtime unavailable", "attempt_id": "attempt_xxx" }
 ```
 
 `GET /internal/runs/{run_id}/status`
 
 Agent Runtime 查询 run 状态，用于识别用户取消。
+
+`GET /internal/runs/{run_id}/artifacts`
+
+Agent Runtime 的 `workspace.read` 使用该接口列出当前 run 已登记 artifacts。请求会校验 active `attempt_id`，因此 Redis/HTTP Runtime 执行路径应带上 `?attempt_id=attempt_xxx`。
+
+响应体复用 `ArtifactListResponse`。
+
+`GET /internal/artifacts/{artifact_id}/content`
+
+Agent Runtime 的 `workspace.read` 使用该接口读取已登记文本 artifact 的内容摘要。查询参数：
+
+- `run_id`：必填或由 artifact 反查，建议显式传入当前 run。
+- `attempt_id`：当前 active attempt。
+- `max_bytes`：最大读取字节数，默认 64 KiB，服务端上限 256 KiB。
+
+该接口只读取通过 artifact metadata 登记的文件，并复用 workspace root、`output/` 路径限制、symlink escape 检查、regular file 检查、MIME 文本限制和读取大小限制。二进制 artifact、未登记文件、`../`、绝对路径和 symlink escape 会被拒绝。
+
+响应体：
+
+```json
+{
+  "artifact": {
+    "id": "art_xxx",
+    "path": "output/report.txt",
+    "mime_type": "text/plain"
+  },
+  "content": "文本内容摘要",
+  "truncated": false,
+  "bytes_read": 18
+}
+```
 
 `POST /internal/sandbox/exec`
 
@@ -267,9 +541,34 @@ Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。当前
 
 OpenAI-compatible provider 通过 Eino `eino-ext` OpenAI ChatModel 使用 `/v1/chat/completions` 协议，并支持模型原生 tool calling；该能力不改变外部 Web API 和 `RunExecutionRequest`。
 
-Runtime 完成 run 时会在 `RunCompleteRequest.usage` 回写模型运营数据。Control Plane 会持久化到 run 级 usage，并在 `GET /api/runs/{run_id}` 的 `Run.usage` 中返回。真实 provider usage 优先；provider 缺失 usage 或 mock provider 会返回估算 token，并设置 `estimated=true`。字段包括 provider、model、input/output/reasoning/cached/total tokens、latency、retry_count、fallback_from/fallback_to、error_class、cost 和 currency。
+Runtime 完成 run 时会在 `RunCompleteRequest.usage` 回写模型与工具运营数据。Control Plane 会持久化到 run 级 usage，并在 `GET /api/runs/{run_id}` 的 `Run.usage` 中返回。真实 provider usage 优先；provider 缺失 usage 或 mock provider 会返回估算 token，并设置 `estimated=true`。字段包括 provider、model、input/output/reasoning/cached/total tokens、latency、retry_count、fallback_from/fallback_to、error_class、cost、currency，以及 run 级工具/sandbox 聚合字段：`tool_calls`、`tool_errors`、`sandbox_commands`、`sandbox_duration_millis`、`sandbox_output_bytes`、`sandbox_cpu_millis`、`sandbox_memory_max_bytes`、`artifact_count`、`artifact_bytes`。这些工具字段用于审计、排障和 quota/账单聚合；当前项目 quota 已能按 UTC 自然日限制每日 tool calls 和 sandbox seconds，并在 Runtime tool 调用前做最小实时预占。
 
 OpenAI-compatible/DeepSeek 错误分类约定：401=`auth_error`，402=`billing_error`，400/422=`request_error`，429=`rate_limited`，500/503/网关错误=`provider_unavailable`，超时/连接错误=`network_error`。API key、Authorization header、token、secret、password 和 cookie 不应出现在日志、event payload 或 run error 中。
+
+Agent Runtime 的 `GET /healthz` 会返回模型 provider 健康快照。默认情况下快照来自实际请求后的运行状态；如果开启 `MODEL_HEALTH_PROBE_ENABLED=true`，Runtime 会按配置间隔主动发起最小模型探针，并在快照中展示 probe 状态。health 响应不会暴露 API key。
+
+```json
+{
+  "status": "ok",
+  "model_provider": {
+    "provider": "openai-compatible",
+    "model": "deepseek-v4-flash",
+    "status": "healthy",
+    "probe_enabled": true,
+    "probe_status": "healthy",
+    "probe_count": 2,
+    "probe_success": 2,
+    "last_probe_at": "2026-05-31T14:00:00Z",
+    "request_count": 3,
+    "success_count": 3,
+    "error_count": 0,
+    "retry_count": 1,
+    "last_latency_ms": 521
+  }
+}
+```
+
+当配置了 fallback provider 时，`model_provider` 会包含 `fallback_enabled`、`last_fallback`、`fallback_from`、`fallback_to` 和 `targets`，用于观察最近一次是否触发了后备模型。
 
 ## 事件约定
 

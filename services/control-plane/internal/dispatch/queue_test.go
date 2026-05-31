@@ -14,15 +14,9 @@ func TestRedisStreamsRunQueueEnqueueWritesStreamFields(t *testing.T) {
 	enqueuedAt := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
 
 	err := queue.Enqueue(context.Background(), QueuedRun{
-		RunID:       "run_1",
-		ChatID:      "chat_1",
-		UserID:      "demo-user",
-		WorkspaceID: "ws_1",
-		UserMessage: "hello",
-		AttemptID:   "attempt_1",
-		SkillIDs:    []string{"cli.exec", "workspace.read"},
-		ModelPolicy: "mock-default",
-		EnqueuedAt:  enqueuedAt,
+		RunID:      "run_1",
+		AttemptID:  "attempt_1",
+		EnqueuedAt: enqueuedAt,
 	})
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -37,8 +31,10 @@ func TestRedisStreamsRunQueueEnqueueWritesStreamFields(t *testing.T) {
 	if add.values["run_id"] != "run_1" || add.values["attempt_id"] != "attempt_1" {
 		t.Fatalf("identity fields = %#v", add.values)
 	}
-	if add.values["skill_ids"] != `["cli.exec","workspace.read"]` {
-		t.Fatalf("skill_ids = %#v", add.values["skill_ids"])
+	for _, removed := range []string{"chat_id", "user_id", "workspace_id", "user_message", "skill_ids", "model_policy"} {
+		if _, ok := add.values[removed]; ok {
+			t.Fatalf("queue payload contains execution context field %q: %#v", removed, add.values)
+		}
 	}
 	if add.values["enqueued_at"] != enqueuedAt.Format(time.RFC3339Nano) {
 		t.Fatalf("enqueued_at = %#v", add.values["enqueued_at"])
@@ -50,15 +46,9 @@ func TestRedisStreamsRunQueueDequeueCreatesGroupDecodesRunAndAcksOnSuccess(t *te
 		messages: []redisStreamMessage{{
 			ID: "1700000000000-0",
 			Values: map[string]any{
-				"run_id":       "run_1",
-				"chat_id":      "chat_1",
-				"user_id":      "demo-user",
-				"workspace_id": "ws_1",
-				"user_message": "hello",
-				"attempt_id":   "attempt_1",
-				"skill_ids":    `["cli.exec"]`,
-				"model_policy": "mock-default",
-				"enqueued_at":  "2026-05-31T10:00:00Z",
+				"run_id":      "run_1",
+				"attempt_id":  "attempt_1",
+				"enqueued_at": "2026-05-31T10:00:00Z",
 			},
 		}},
 	}
@@ -68,11 +58,8 @@ func TestRedisStreamsRunQueueDequeueCreatesGroupDecodesRunAndAcksOnSuccess(t *te
 	if err != nil {
 		t.Fatalf("dequeue: %v", err)
 	}
-	if run.RunID != "run_1" || run.AttemptID != "attempt_1" || run.UserMessage != "hello" {
+	if run.RunID != "run_1" || run.AttemptID != "attempt_1" {
 		t.Fatalf("run = %#v", run)
-	}
-	if !reflect.DeepEqual(run.SkillIDs, []string{"cli.exec"}) {
-		t.Fatalf("skill ids = %#v", run.SkillIDs)
 	}
 	if len(client.groups) != 1 || client.groups[0].group != "workers" {
 		t.Fatalf("groups = %#v", client.groups)

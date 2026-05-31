@@ -22,11 +22,47 @@ spec:
           env:
             - name: SANDBOX_EXECUTOR_ADDR
               value: ":8082"
+            - name: NICEAGENT_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: NICEAGENT_ENV
             - name: INTERNAL_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: niceagent-internal-api
                   key: token
+                  optional: false
+            - name: INTERNAL_API_TOKEN_REQUIRED
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INTERNAL_API_TOKEN_REQUIRED
+            - name: OTEL_TRACES_EXPORTER
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_TRACES_EXPORTER
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_INSECURE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OTEL_EXPORTER_OTLP_INSECURE
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-otel
+                  key: headers
                   optional: true
           volumeMounts:
             - name: workspaces

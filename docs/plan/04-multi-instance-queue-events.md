@@ -29,15 +29,15 @@ SSE replay 应使用事件 ID。服务端可以发送 `id: <seq>`，前端保留
 
 默认 dispatch 主路径是 HTTP dispatcher：后台 goroutine 调 `AGENT_RUNTIME_URL` 的 `/internal/runs/execute`。如果 HTTP 调用失败，Control Plane 直接写 `run.failed`。这条路径简单可用，但只有单一 runtime target，没有 queue、ack、retry 和多 runtime consumer group。
 
-`RunQueue`、`MemoryRunQueue`、`RedisStreamsRunQueue` 边界已经存在；`RedisStreamsRunQueue` 已提供基础 `XADD`、`XGROUP CREATE MKSTREAM`、`XREADGROUP`、成功 `XACK` adapter，并通过 `DISPATCH_MODE=redis` 接入 Control Plane 入队路径。`QueuedRun` 已携带最小 `attempt_id`，但还没有持久化 lease/heartbeat 和 Runtime Redis worker loop。
+`RunQueue`、`MemoryRunQueue`、`RedisStreamsRunQueue` 边界已经存在；`RedisStreamsRunQueue` 已提供基础 `XADD`、`XGROUP CREATE MKSTREAM`、`XREADGROUP`、成功 `XACK` adapter，并通过 `DISPATCH_MODE=redis` 接入 Control Plane 入队路径。当前 queue payload 已收敛为 `run_id`、`attempt_id` 和 `enqueued_at`，Agent Runtime 也已有 `RUNTIME_QUEUE_MODE=redis` worker，可通过 Control Plane `/internal/runs/{run_id}/execution-context` 拉取用户消息、workspace 和 `RuntimeSkill` 后执行。Runtime 执行前会 claim attempt，Control Plane 内部回写 API 会校验 `attempt_id`。因此 Redis 模式已经具备最小可执行闭环。
 
-`EventBus`、`RepositoryEventBus`、`RedisStreamsEventBus` 边界也已存在，但 HTTP API 当前主要还是直接通过 repository replay/subscribe。`RedisStreamsEventBus` 还是占位实现。
+`EventBus`、`RepositoryEventBus`、`RedisStreamsEventBus` 边界也已存在，但 HTTP API 当前主要还是直接通过 repository replay/subscribe。`RedisStreamsEventBus` 还是占位实现。当前新增了 `FanoutRepository + RedisNudgeBus`：repository 写入事件后发布轻量 nudge，其他 Control Plane 副本收到 nudge 后按 `seq` 从 repository 补读权威事件。
 
-Postgres event 写入已能保证单 run 内 `seq` 递增，memory/Postgres store 都有进程内 fanout。问题是 fanout 只在当前 Control Plane 进程内生效，多副本下其他副本不会收到 live event，只能靠 replay。
+Postgres event 写入已能保证单 run 内 `seq` 递增，memory/Postgres store 都有进程内 fanout。`EVENT_FANOUT_MODE=redis` 可补齐多副本 live nudge；Redis 只负责唤醒，不存放权威事件正文。
 
-SSE endpoint 支持 `?after=`、`Last-Event-ID` replay、SSE `id: <seq>` 和 ping；前端记录每个 run 的 last seq，打开连接时带 `after`，并在应用事件前丢弃重复 seq。跨 Control Plane 副本 live fanout 仍未完成。
+SSE endpoint 支持 `?after=`、`Last-Event-ID` replay、SSE `id: <seq>` 和 ping；前端记录每个 run 的 last seq，打开连接时带 `after`，并在应用事件前丢弃重复 seq。服务端订阅前后都会按 `seq` replay 一次，降低 replay 与 subscribe 之间的竞态窗口。
 
-终态保护已有基础：`Complete`/`Fail` 会跳过 terminal run，store 也阻止 terminal 被不同状态覆盖。但 assistant message、run status、terminal event 还没有统一 attempt fencing 和事务级幂等。
+终态保护已有基础：`Complete`/`Fail` 会跳过 terminal run，store 也阻止 terminal 被不同状态覆盖。`runs` 已补上 `active_attempt_id`、`claimed_by`、`lease_expires_at`、`attempt_count`，旧 attempt 的 event/complete/fail 会被拒绝。Redis worker 已支持 heartbeat 续租、idle pending `XAUTOCLAIM` 和 DLQ；跨 Control Plane 副本 live fanout 已有 Redis nudge 路径，仍需要真实多副本集成测试。
 
 ## 扩展点
 
@@ -113,9 +113,9 @@ Browser -> 任意 Control Plane
 ## 分阶段落地
 
 1. SSE replay 收口：`id:`、`Last-Event-ID`、前端 last seq、去重测试。
-2. 跨副本 event fanout：先用 Postgres `LISTEN/NOTIFY` 或 Redis nudge，权威仍是 Postgres。
+2. 跨副本 event fanout：Redis nudge 最小路径已落地，权威仍是 Postgres/repository；下一步补多 Control Plane 集成测试和指标。
 3. Redis Streams run queue：实现 `XADD`、`XREADGROUP`、`XACK` 基础路径。
-4. Attempt/lease/retry：增加 claim、heartbeat、`XPENDING/XAUTOCLAIM`、DLQ。
+4. Attempt/lease/retry：claim、heartbeat、`XAUTOCLAIM`、DLQ 已有最小闭环；`make smoke-three-services-redis` 已能启动临时 Redis 和两个 Agent Runtime consumer 做最小多 runtime 冒烟。后续继续补跨 Control Plane event fanout 集成测试、指标和压测。
 5. 压测与观测：覆盖 100/500/1000 并发 run、queue lag、SSE replay gap。
 
 ## 风险与验收

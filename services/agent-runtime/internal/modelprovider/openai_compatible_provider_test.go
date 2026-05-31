@@ -3,6 +3,7 @@ package modelprovider
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	"niceagent/common/protocol"
 )
 
 func TestNewOpenAICompatibleChatModelBuildsEinoModel(t *testing.T) {
@@ -128,6 +131,11 @@ func TestOpenAICompatibleProviderRetriesTransientErrorsAndCollectsUsage(t *testi
 			BaseDelay:   time.Nanosecond,
 			MaxDelay:    time.Nanosecond,
 		},
+		Pricing: PricingConfig{
+			InputPer1M:  0.20,
+			OutputPer1M: 0.80,
+			Currency:    "USD",
+		},
 	})
 	if err != nil {
 		t.Fatalf("new chat model: %v", err)
@@ -147,8 +155,32 @@ func TestOpenAICompatibleProviderRetriesTransientErrorsAndCollectsUsage(t *testi
 	if usage.InputTokens != 9 || usage.OutputTokens != 4 || usage.TotalTokens != 13 || usage.RetryCount != 1 {
 		t.Fatalf("usage = %#v, want real usage with one retry", usage)
 	}
+	wantCost := (9*0.20 + 4*0.80) / 1_000_000
+	if math.Abs(usage.Cost-wantCost) > 0.000000001 || usage.Currency != "USD" {
+		t.Fatalf("usage cost = %#v, want cost %f USD", usage, wantCost)
+	}
 	if attempts != 2 {
 		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestPricingConfigAppliesCachedAndReasoningPrices(t *testing.T) {
+	pricing := PricingConfig{
+		InputPer1M:           1,
+		CachedInputPer1M:     0.1,
+		OutputPer1M:          2,
+		ReasoningOutputPer1M: 3,
+		Currency:             "CNY",
+	}
+	usage := pricing.Apply(protocol.RunUsage{
+		InputTokens:     100,
+		CachedTokens:    40,
+		OutputTokens:    50,
+		ReasoningTokens: 10,
+	})
+	want := (60*1 + 40*0.1 + 40*2 + 10*3) / 1_000_000
+	if math.Abs(usage.Cost-want) > 0.000000001 || usage.Currency != "CNY" {
+		t.Fatalf("usage = %#v, want cost %f CNY", usage, want)
 	}
 }
 

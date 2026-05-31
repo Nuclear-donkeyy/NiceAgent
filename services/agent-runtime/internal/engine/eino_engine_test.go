@@ -53,6 +53,12 @@ func TestEinoAgentEngineRunsCLIToolLoop(t *testing.T) {
 	if !strings.Contains(sink.completed, "hello") {
 		t.Fatalf("completed content = %q, want tool observation", sink.completed)
 	}
+	if result.Usage.ToolCalls != 1 || result.Usage.SandboxCommands != 1 || result.Usage.SandboxOutputBytes == 0 {
+		t.Fatalf("usage = %#v, want one sandbox tool call with output bytes", result.Usage)
+	}
+	if sink.usage.ToolCalls != 1 || sink.usage.SandboxCommands != 1 {
+		t.Fatalf("sink usage = %#v, want persisted tool usage", sink.usage)
+	}
 }
 
 func TestEinoAgentEngineUsesUserHTTPSkill(t *testing.T) {
@@ -109,6 +115,9 @@ func TestEinoAgentEngineUsesUserHTTPSkill(t *testing.T) {
 	if !strings.Contains(sink.completed, `"ok":true`) {
 		t.Fatalf("completed content = %q, want http response", sink.completed)
 	}
+	if result.Usage.ToolCalls != 1 || result.Usage.SandboxCommands != 0 {
+		t.Fatalf("usage = %#v, want one non-sandbox tool call", result.Usage)
+	}
 }
 
 func TestEinoAgentEngineRejectsUnavailableModelToolCall(t *testing.T) {
@@ -150,5 +159,18 @@ func TestEinoAgentEngineRejectsUnavailableModelToolCall(t *testing.T) {
 	}
 	if sink.completed != "" {
 		t.Fatalf("completed content = %q, want no completion", sink.completed)
+	}
+}
+
+func TestToolUsageCollectorSkipsQuotaReservationFailures(t *testing.T) {
+	collector := &toolUsageCollector{}
+	collector.ObserveToolObservation(`{"ok":false,"error_type":"quota_denied","message":"limit"}`)
+	collector.ObserveToolObservation(`{"ok":false,"error_type":"quota_unavailable","message":"backend"}`)
+	if usage := collector.Snapshot(); usage.ToolCalls != 0 || usage.SandboxCommands != 0 {
+		t.Fatalf("usage = %#v, want quota reservation observations skipped", usage)
+	}
+	collector.ObserveToolObservation(`{"ok":false,"error_type":"invalid_arguments","message":"bad"}`)
+	if usage := collector.Snapshot(); usage.ToolCalls != 1 {
+		t.Fatalf("usage = %#v, want normal tool observation counted", usage)
 	}
 }

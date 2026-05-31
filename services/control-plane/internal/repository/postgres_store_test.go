@@ -41,6 +41,16 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if message.RunID != run.ID {
 		t.Fatalf("message run id = %q, want %q", message.RunID, run.ID)
 	}
+	claimed, err := store.ClaimRunAttempt(run.ID, "attempt-postgres", "runtime-pg", time.Now().UTC().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("claim run attempt: %v", err)
+	}
+	if claimed.AttemptID != "attempt-postgres" || claimed.ClaimedBy != "runtime-pg" || claimed.AttemptCount != 1 || claimed.LeaseExpiresAt == nil {
+		t.Fatalf("claimed run = %#v", claimed)
+	}
+	if _, err := store.CheckRunAttempt(run.ID, "attempt-stale"); err != app.ErrAttemptMismatch {
+		t.Fatalf("check stale attempt err = %v, want ErrAttemptMismatch", err)
+	}
 
 	events, cancel := store.Subscribe(run.ID)
 	defer cancel()
@@ -69,14 +79,30 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 		t.Fatalf("replayed events = %#v, want only second event", replayed)
 	}
 	if _, err := store.SaveRunUsage(run.ID, protocol.RunUsage{
-		Provider:     "openai-compatible",
-		Model:        "deepseek-v4-flash",
-		InputTokens:  9,
-		OutputTokens: 4,
-		TotalTokens:  13,
-		Estimated:    false,
+		Provider:              "openai-compatible",
+		Model:                 "deepseek-v4-flash",
+		InputTokens:           9,
+		OutputTokens:          4,
+		TotalTokens:           13,
+		Estimated:             false,
+		ToolCalls:             2,
+		ToolErrors:            1,
+		SandboxCommands:       1,
+		SandboxDurationMillis: 345,
+		SandboxOutputBytes:    678,
+		SandboxCPUMillis:      90,
+		SandboxMemoryMaxBytes: 2048,
+		ArtifactCount:         4,
+		ArtifactBytes:         8192,
 	}); err != nil {
 		t.Fatalf("save run usage: %v", err)
+	}
+	if total := store.SumRunUsageTokensSince("demo-user", app.DemoProjectID, time.Now().UTC().Add(-time.Hour)); total < 13 {
+		t.Fatalf("usage token total = %d, want at least 13", total)
+	}
+	totals := store.SumRunUsageSince("demo-user", app.DemoProjectID, time.Now().UTC().Add(-time.Hour))
+	if totals.TotalTokens < 13 || totals.ToolCalls != 2 || totals.SandboxCommands != 1 || totals.ArtifactBytes != 8192 {
+		t.Fatalf("usage totals = %#v, want token/tool/sandbox totals", totals)
 	}
 	if err := (app.RepositorySink{Repo: store}).Complete(run.ID, "persisted assistant"); err != nil {
 		t.Fatalf("complete run: %v", err)
@@ -99,6 +125,172 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	}
 	if gotRun.Usage.Provider != "openai-compatible" || gotRun.Usage.InputTokens != 9 || gotRun.Usage.OutputTokens != 4 {
 		t.Fatalf("reloaded run usage = %#v", gotRun.Usage)
+	}
+	if gotRun.Usage.ToolCalls != 2 || gotRun.Usage.ToolErrors != 1 || gotRun.Usage.SandboxCommands != 1 ||
+		gotRun.Usage.SandboxDurationMillis != 345 || gotRun.Usage.SandboxOutputBytes != 678 ||
+		gotRun.Usage.SandboxCPUMillis != 90 || gotRun.Usage.SandboxMemoryMaxBytes != 2048 ||
+		gotRun.Usage.ArtifactCount != 4 || gotRun.Usage.ArtifactBytes != 8192 {
+		t.Fatalf("reloaded tool/sandbox usage = %#v", gotRun.Usage)
+	}
+	if roles := reloaded.ListProjectRoles("demo-user", app.DemoProjectID); len(roles) != 1 || roles[0] != "owner" {
+		t.Fatalf("demo project roles = %#v, want owner", roles)
+	}
+	if roles := reloaded.ListOrganizationRoles("demo-user", app.DemoOrgID); len(roles) != 1 || roles[0] != "owner" {
+		t.Fatalf("demo organization roles = %#v, want owner", roles)
+	}
+	if !reloaded.ProjectBelongsToOrganization(app.DemoProjectID, app.DemoOrgID) {
+		t.Fatal("demo project should belong to demo org")
+	}
+	if reloaded.ProjectBelongsToOrganization(app.DemoProjectID, "other-org") {
+		t.Fatal("demo project unexpectedly belongs to other org")
+	}
+	identity, err := reloaded.BindUserIdentity(protocol.UserIdentity{
+		UserID:   "postgres-identity-user",
+		Provider: "oidc",
+		Issuer:   "https://issuer.example.test",
+		Subject:  "postgres-subject",
+		Email:    "postgres-identity@example.test",
+		Name:     "Postgres Identity",
+	})
+	if err != nil {
+		t.Fatalf("bind user identity: %v", err)
+	}
+	if identity.ID == "" || identity.UserID != "postgres-identity-user" || identity.Email != "postgres-identity@example.test" {
+		t.Fatalf("identity = %#v", identity)
+	}
+	if _, err := reloaded.BindUserIdentity(protocol.UserIdentity{
+		UserID:   "postgres-other-user",
+		Provider: "oidc",
+		Issuer:   "https://issuer.example.test",
+		Subject:  "postgres-subject",
+		Email:    "postgres-other@example.test",
+	}); err != app.ErrIdentityConflict {
+		t.Fatalf("same external identity err = %v, want ErrIdentityConflict", err)
+	}
+	if _, err := reloaded.BindUserIdentity(protocol.UserIdentity{
+		UserID:   "postgres-identity-user",
+		Provider: "oidc",
+		Issuer:   "https://issuer.example.test",
+		Subject:  "postgres-other-subject",
+		Email:    "postgres-identity@example.test",
+	}); err != app.ErrIdentityConflict {
+		t.Fatalf("same user different identity err = %v, want ErrIdentityConflict", err)
+	}
+	orgInvitation, err := reloaded.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email: "postgres-invited@example.test",
+		Role:  "admin",
+	})
+	if err != nil {
+		t.Fatalf("create organization invitation: %v", err)
+	}
+	if orgInvitation.Token == "" || orgInvitation.Status != protocol.InvitationPending {
+		t.Fatalf("organization invitation = %#v", orgInvitation)
+	}
+	invitations := reloaded.ListInvitations(app.DemoOrgID)
+	if len(invitations) == 0 || invitations[0].Token != "" {
+		t.Fatalf("listed invitations = %#v, want redacted token", invitations)
+	}
+	acceptedInvitation, err := reloaded.AcceptInvitation(orgInvitation.Token, "postgres-invited-user", "postgres-invited@example.test", "Postgres Invited")
+	if err != nil {
+		t.Fatalf("accept organization invitation: %v", err)
+	}
+	if acceptedInvitation.Status != protocol.InvitationAccepted || acceptedInvitation.AcceptedByUserID != "postgres-invited-user" {
+		t.Fatalf("accepted organization invitation = %#v", acceptedInvitation)
+	}
+	if roles := reloaded.ListOrganizationRoles("postgres-invited-user", app.DemoOrgID); len(roles) != 1 || roles[0] != "admin" {
+		t.Fatalf("organization roles after invitation = %#v, want admin", roles)
+	}
+	projectInvitation, err := reloaded.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email:     "postgres-project-invited@example.test",
+		Role:      "viewer",
+		ProjectID: app.DemoProjectID,
+	})
+	if err != nil {
+		t.Fatalf("create project invitation: %v", err)
+	}
+	if _, err := reloaded.AcceptInvitation(projectInvitation.Token, "postgres-project-invited", "postgres-project-invited@example.test", "Postgres Project Invited"); err != nil {
+		t.Fatalf("accept project invitation: %v", err)
+	}
+	if roles := reloaded.ListProjectRoles("postgres-project-invited", app.DemoProjectID); len(roles) != 1 || roles[0] != "viewer" {
+		t.Fatalf("project roles after invitation = %#v, want viewer", roles)
+	}
+	orgMember, err := reloaded.UpsertOrganizationMember(app.DemoOrgID, protocol.OrganizationMemberInput{
+		UserID: "postgres-org-member",
+		Email:  "postgres-org-member@example.test",
+		Name:   "Postgres Org Member",
+		Role:   "admin",
+	})
+	if err != nil {
+		t.Fatalf("upsert organization member: %v", err)
+	}
+	if orgMember.UserID != "postgres-org-member" || orgMember.Role != "admin" || orgMember.Email != "postgres-org-member@example.test" {
+		t.Fatalf("organization member = %#v", orgMember)
+	}
+	orgMembers := reloaded.ListOrganizationMembers(app.DemoOrgID)
+	if len(orgMembers) < 2 {
+		t.Fatalf("organization members = %#v, want demo owner and postgres org member", orgMembers)
+	}
+	updatedOrgMember, err := reloaded.UpsertOrganizationMember(app.DemoOrgID, protocol.OrganizationMemberInput{UserID: "postgres-org-member", Role: "viewer"})
+	if err != nil {
+		t.Fatalf("update organization member: %v", err)
+	}
+	if updatedOrgMember.Role != "viewer" {
+		t.Fatalf("updated organization member = %#v, want viewer", updatedOrgMember)
+	}
+	removedOrgMember, err := reloaded.RemoveOrganizationMember(app.DemoOrgID, "postgres-org-member")
+	if err != nil {
+		t.Fatalf("remove organization member: %v", err)
+	}
+	if removedOrgMember.UserID != "postgres-org-member" || removedOrgMember.Role != "viewer" {
+		t.Fatalf("removed organization member = %#v", removedOrgMember)
+	}
+	member, err := reloaded.UpsertProjectMember(app.DemoProjectID, protocol.ProjectMemberInput{
+		UserID: "postgres-member",
+		Email:  "postgres-member@example.test",
+		Name:   "Postgres Member",
+		Role:   "viewer",
+	})
+	if err != nil {
+		t.Fatalf("upsert project member: %v", err)
+	}
+	if member.UserID != "postgres-member" || member.Role != "viewer" || member.Email != "postgres-member@example.test" {
+		t.Fatalf("member = %#v", member)
+	}
+	members := reloaded.ListProjectMembers(app.DemoProjectID)
+	if len(members) < 2 {
+		t.Fatalf("project members = %#v, want demo owner and postgres member", members)
+	}
+	updated, err := reloaded.UpsertProjectMember(app.DemoProjectID, protocol.ProjectMemberInput{UserID: "postgres-member", Role: "member"})
+	if err != nil {
+		t.Fatalf("update project member: %v", err)
+	}
+	if updated.Role != "member" {
+		t.Fatalf("updated member = %#v, want member", updated)
+	}
+	removed, err := reloaded.RemoveProjectMember(app.DemoProjectID, "postgres-member")
+	if err != nil {
+		t.Fatalf("remove project member: %v", err)
+	}
+	if removed.UserID != "postgres-member" || removed.Role != "member" {
+		t.Fatalf("removed member = %#v", removed)
+	}
+	policy, err := reloaded.SetProjectQuotaPolicy(app.DemoProjectID, protocol.ProjectQuotaPolicyInput{
+		MaxConcurrentRuns:       3,
+		MaxRunsPerHour:          12,
+		MaxModelTokensPerDay:    1200,
+		MaxToolCallsPerDay:      33,
+		MaxSandboxSecondsPerDay: 44,
+	})
+	if err != nil {
+		t.Fatalf("set project quota policy: %v", err)
+	}
+	if policy.MaxConcurrentRuns != 3 || policy.MaxRunsPerHour != 12 || policy.MaxModelTokensPerDay != 1200 ||
+		policy.MaxToolCallsPerDay != 33 || policy.MaxSandboxSecondsPerDay != 44 {
+		t.Fatalf("quota policy = %#v", policy)
+	}
+	gotPolicy, ok := reloaded.GetProjectQuotaPolicy(app.DemoProjectID)
+	if !ok || gotPolicy.MaxConcurrentRuns != 3 || gotPolicy.MaxToolCallsPerDay != 33 || gotPolicy.MaxSandboxSecondsPerDay != 44 {
+		t.Fatalf("got quota policy = %#v ok=%v", gotPolicy, ok)
 	}
 
 	_, canceledRun, err := reloaded.AddUserMessage(chat.ID, "demo-user", "cancel me")

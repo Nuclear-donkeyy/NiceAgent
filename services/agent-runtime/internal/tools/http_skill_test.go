@@ -102,6 +102,36 @@ func TestHTTPSkillSecretRefPlaceholderDoesNotRequest(t *testing.T) {
 	}
 }
 
+func TestHTTPSkillResolvesEnvSecretRef(t *testing.T) {
+	t.Setenv("NICEAGENT_TEST_BEARER_TOKEN", "env-secret-token")
+	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if got := req.Header.Get("Authorization"); got != "Bearer env-secret-token" {
+			t.Fatalf("authorization = %q, want env secret token", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Header:     make(http.Header),
+		}, nil
+	}))
+	runtimeTool.runtimeSkill.Skill.RuntimeConfig = `{"type":"http","method":"POST","url":"https://api.example.com/weather","timeout_seconds":15,"auth_type":"bearer"}`
+	runtimeTool.runtimeSkill.SecretMaterials = map[string]protocol.RuntimeSecret{
+		"bearer_token": {SecretRef: "env://NICEAGENT_TEST_BEARER_TOKEN"},
+	}
+
+	output, ok, err := runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil {
+		t.Fatalf("invoke http skill: %v", err)
+	}
+	if !ok {
+		t.Fatalf("ok = false, output = %s", output)
+	}
+	observation := decodeObservation(t, output)
+	if !observation.OK || observation.StatusCode != http.StatusOK {
+		t.Fatalf("observation = %#v, want ok", observation)
+	}
+}
+
 func TestHTTPSkillValidatesOutputSchema(t *testing.T) {
 	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{

@@ -251,8 +251,10 @@ function validateField(form: HTTPSkillInput, field: FieldName): FieldErrors {
     } else {
       try {
         const parsed = new URL(url);
-        if (!["http:", "https:"].includes(parsed.protocol)) {
-          errors.url = "请求地址必须是 http 或 https";
+        if (parsed.protocol !== "https:") {
+          errors.url = "请求地址必须使用 https";
+        } else if (parsed.username || parsed.password) {
+          errors.url = "请求地址不能包含用户名或密码";
         }
       } catch {
         errors.url = "请输入有效的 URL";

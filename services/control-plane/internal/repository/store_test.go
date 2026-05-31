@@ -3,6 +3,7 @@ package repository
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"niceagent/common/protocol"
 	"niceagent/control-plane/internal/app"
@@ -228,6 +229,379 @@ func TestStoreUpdatesRunStatus(t *testing.T) {
 	}
 	if updated.FinishedAt == nil {
 		t.Fatal("expected finished_at to be set")
+	}
+}
+
+func TestStoreSumsRunUsageTokensSince(t *testing.T) {
+	store := NewStore()
+	chat := mustCreateChat(t, store, "demo-user", "usage quota")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "hello")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	if _, err := store.SaveRunUsage(run.ID, protocol.RunUsage{
+		InputTokens:           7,
+		OutputTokens:          5,
+		ToolCalls:             2,
+		ToolErrors:            1,
+		SandboxCommands:       1,
+		SandboxDurationMillis: 123,
+		SandboxOutputBytes:    456,
+		SandboxCPUMillis:      78,
+		SandboxMemoryMaxBytes: 1024,
+		ArtifactCount:         3,
+		ArtifactBytes:         4096,
+	}); err != nil {
+		t.Fatalf("save usage: %v", err)
+	}
+	usage, err := store.GetRunUsage(run.ID)
+	if err != nil {
+		t.Fatalf("get usage: %v", err)
+	}
+	if usage.ToolCalls != 2 || usage.ToolErrors != 1 || usage.SandboxCommands != 1 ||
+		usage.SandboxDurationMillis != 123 || usage.SandboxOutputBytes != 456 ||
+		usage.SandboxCPUMillis != 78 || usage.SandboxMemoryMaxBytes != 1024 ||
+		usage.ArtifactCount != 3 || usage.ArtifactBytes != 4096 {
+		t.Fatalf("usage = %#v, want tool and sandbox usage", usage)
+	}
+
+	total := store.SumRunUsageTokensSince("demo-user", app.DemoProjectID, time.Now().UTC().Add(-time.Hour))
+	if total != 12 {
+		t.Fatalf("usage token total = %d, want 12", total)
+	}
+	if total := store.SumRunUsageTokensSince("demo-user", "other-project", time.Now().UTC().Add(-time.Hour)); total != 0 {
+		t.Fatalf("other project token total = %d, want 0", total)
+	}
+	totals := store.SumRunUsageSince("demo-user", app.DemoProjectID, time.Now().UTC().Add(-time.Hour))
+	if totals.TotalTokens != 12 || totals.ToolCalls != 2 || totals.SandboxCommands != 1 || totals.ArtifactBytes != 4096 {
+		t.Fatalf("usage totals = %#v, want token/tool/sandbox totals", totals)
+	}
+}
+
+func TestStoreListsProjectRoles(t *testing.T) {
+	store := NewStore()
+	if roles := store.ListProjectRoles("demo-user", app.DemoProjectID); len(roles) != 1 || roles[0] != "owner" {
+		t.Fatalf("demo roles = %#v, want owner", roles)
+	}
+	store.SetProjectRole("user-a", "project-a", "viewer")
+	if roles := store.ListProjectRoles("user-a", "project-a"); len(roles) != 1 || roles[0] != "viewer" {
+		t.Fatalf("custom roles = %#v, want viewer", roles)
+	}
+}
+
+func TestStoreListsOrganizationRoles(t *testing.T) {
+	store := NewStore()
+	if roles := store.ListOrganizationRoles("demo-user", app.DemoOrgID); len(roles) != 1 || roles[0] != "owner" {
+		t.Fatalf("demo organization roles = %#v, want owner", roles)
+	}
+	store.SetOrganizationRole("user-a", "org-a", "admin")
+	if roles := store.ListOrganizationRoles("user-a", "org-a"); len(roles) != 1 || roles[0] != "admin" {
+		t.Fatalf("custom organization roles = %#v, want admin", roles)
+	}
+}
+
+func TestStoreChecksProjectOrganization(t *testing.T) {
+	store := NewStore()
+	if !store.ProjectBelongsToOrganization(app.DemoProjectID, app.DemoOrgID) {
+		t.Fatal("demo project should belong to demo org")
+	}
+	if store.ProjectBelongsToOrganization(app.DemoProjectID, "other-org") {
+		t.Fatal("demo project unexpectedly belongs to other org")
+	}
+	store.SetProjectOrganization("project-a", "org-a")
+	if !store.ProjectBelongsToOrganization("project-a", "org-a") {
+		t.Fatal("project-a should belong to org-a")
+	}
+}
+
+func TestStoreBindsUserIdentity(t *testing.T) {
+	store := NewStore()
+	identity, err := store.BindUserIdentity(protocol.UserIdentity{
+		UserID:   "user-a",
+		Provider: "oidc",
+		Issuer:   "https://issuer.example.test",
+		Subject:  "subject-a",
+		Email:    "user-a@example.test",
+		Name:     "User A",
+	})
+	if err != nil {
+		t.Fatalf("bind identity: %v", err)
+	}
+	if identity.ID == "" || identity.UserID != "user-a" || identity.Email != "user-a@example.test" {
+		t.Fatalf("identity = %#v", identity)
+	}
+	updated, err := store.BindUserIdentity(protocol.UserIdentity{
+		UserID:   "user-a",
+		Provider: "oidc",
+		Issuer:   "https://issuer.example.test",
+		Subject:  "subject-a",
+		Email:    "user-a-new@example.test",
+	})
+	if err != nil {
+		t.Fatalf("update same identity: %v", err)
+	}
+	if updated.ID != identity.ID || updated.Email != "user-a-new@example.test" {
+		t.Fatalf("updated identity = %#v", updated)
+	}
+	if _, err := store.BindUserIdentity(protocol.UserIdentity{
+		UserID:   "user-b",
+		Provider: "oidc",
+		Issuer:   "https://issuer.example.test",
+		Subject:  "subject-a",
+		Email:    "user-b@example.test",
+	}); err != app.ErrIdentityConflict {
+		t.Fatalf("same external identity err = %v, want ErrIdentityConflict", err)
+	}
+	if _, err := store.BindUserIdentity(protocol.UserIdentity{
+		UserID:   "user-a",
+		Provider: "oidc",
+		Issuer:   "https://issuer.example.test",
+		Subject:  "subject-other",
+		Email:    "user-a@example.test",
+	}); err != app.ErrIdentityConflict {
+		t.Fatalf("same user different identity err = %v, want ErrIdentityConflict", err)
+	}
+}
+
+func TestStoreManagesProjectMembers(t *testing.T) {
+	store := NewStore()
+	member, err := store.UpsertProjectMember(app.DemoProjectID, protocol.ProjectMemberInput{
+		UserID: "user-a",
+		Email:  "user-a@example.test",
+		Name:   "User A",
+		Role:   "viewer",
+	})
+	if err != nil {
+		t.Fatalf("upsert project member: %v", err)
+	}
+	if member.UserID != "user-a" || member.Role != "viewer" || member.Email != "user-a@example.test" {
+		t.Fatalf("member = %#v", member)
+	}
+	if roles := store.ListProjectRoles("user-a", app.DemoProjectID); len(roles) != 1 || roles[0] != "viewer" {
+		t.Fatalf("roles = %#v, want viewer", roles)
+	}
+	updated, err := store.UpsertProjectMember(app.DemoProjectID, protocol.ProjectMemberInput{UserID: "user-a", Role: "member"})
+	if err != nil {
+		t.Fatalf("update project member: %v", err)
+	}
+	if updated.Role != "member" {
+		t.Fatalf("updated member = %#v, want role member", updated)
+	}
+	members := store.ListProjectMembers(app.DemoProjectID)
+	if len(members) < 2 {
+		t.Fatalf("members = %#v, want demo owner and user-a", members)
+	}
+	removed, err := store.RemoveProjectMember(app.DemoProjectID, "user-a")
+	if err != nil {
+		t.Fatalf("remove project member: %v", err)
+	}
+	if removed.UserID != "user-a" || removed.Role != "member" {
+		t.Fatalf("removed member = %#v", removed)
+	}
+	if roles := store.ListProjectRoles("user-a", app.DemoProjectID); len(roles) != 0 {
+		t.Fatalf("roles after remove = %#v, want empty", roles)
+	}
+	if _, err := store.UpsertProjectMember(app.DemoProjectID, protocol.ProjectMemberInput{UserID: "bad", Role: "superuser"}); err != app.ErrInvalidInput {
+		t.Fatalf("invalid role err = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestStoreManagesOrganizationMembers(t *testing.T) {
+	store := NewStore()
+	member, err := store.UpsertOrganizationMember(app.DemoOrgID, protocol.OrganizationMemberInput{
+		UserID: "user-a",
+		Email:  "user-a@example.test",
+		Name:   "User A",
+		Role:   "admin",
+	})
+	if err != nil {
+		t.Fatalf("upsert organization member: %v", err)
+	}
+	if member.UserID != "user-a" || member.Role != "admin" || member.Email != "user-a@example.test" {
+		t.Fatalf("member = %#v", member)
+	}
+	members := store.ListOrganizationMembers(app.DemoOrgID)
+	if len(members) < 2 {
+		t.Fatalf("organization members = %#v, want demo owner and user-a", members)
+	}
+	updated, err := store.UpsertOrganizationMember(app.DemoOrgID, protocol.OrganizationMemberInput{UserID: "user-a", Role: "viewer"})
+	if err != nil {
+		t.Fatalf("update organization member: %v", err)
+	}
+	if updated.Role != "viewer" {
+		t.Fatalf("updated member = %#v, want role viewer", updated)
+	}
+	removed, err := store.RemoveOrganizationMember(app.DemoOrgID, "user-a")
+	if err != nil {
+		t.Fatalf("remove organization member: %v", err)
+	}
+	if removed.UserID != "user-a" || removed.Role != "viewer" {
+		t.Fatalf("removed member = %#v", removed)
+	}
+	if members := store.ListOrganizationMembers(app.DemoOrgID); len(members) != 1 || members[0].UserID != app.DemoUserID {
+		t.Fatalf("members after remove = %#v, want demo owner only", members)
+	}
+	if _, err := store.UpsertOrganizationMember(app.DemoOrgID, protocol.OrganizationMemberInput{UserID: "bad", Role: "superuser"}); err != app.ErrInvalidInput {
+		t.Fatalf("invalid role err = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestStoreManagesInvitations(t *testing.T) {
+	store := NewStore()
+	orgInvitation, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email: "invited@example.test",
+		Role:  "admin",
+	})
+	if err != nil {
+		t.Fatalf("create org invitation: %v", err)
+	}
+	if orgInvitation.Token == "" || orgInvitation.Status != protocol.InvitationPending {
+		t.Fatalf("org invitation = %#v", orgInvitation)
+	}
+	invitations := store.ListInvitations(app.DemoOrgID)
+	if len(invitations) != 1 || invitations[0].Token != "" {
+		t.Fatalf("listed invitations = %#v, want redacted token", invitations)
+	}
+	accepted, err := store.AcceptInvitation(orgInvitation.Token, "invited-user", "invited@example.test", "Invited User")
+	if err != nil {
+		t.Fatalf("accept org invitation: %v", err)
+	}
+	if accepted.Status != protocol.InvitationAccepted || accepted.AcceptedByUserID != "invited-user" || accepted.Token != "" {
+		t.Fatalf("accepted org invitation = %#v", accepted)
+	}
+	if roles := store.ListOrganizationRoles("invited-user", app.DemoOrgID); len(roles) != 1 || roles[0] != "admin" {
+		t.Fatalf("organization roles after accept = %#v, want admin", roles)
+	}
+
+	projectInvitation, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email:     "project-invited@example.test",
+		Role:      "viewer",
+		ProjectID: app.DemoProjectID,
+	})
+	if err != nil {
+		t.Fatalf("create project invitation: %v", err)
+	}
+	if _, err := store.AcceptInvitation(projectInvitation.Token, "project-invited", "project-invited@example.test", "Project Invited"); err != nil {
+		t.Fatalf("accept project invitation: %v", err)
+	}
+	if roles := store.ListProjectRoles("project-invited", app.DemoProjectID); len(roles) != 1 || roles[0] != "viewer" {
+		t.Fatalf("project roles after accept = %#v, want viewer", roles)
+	}
+	if _, err := store.AcceptInvitation(projectInvitation.Token, "project-invited-again", "project-invited@example.test", "Again"); err != app.ErrInvalidInput {
+		t.Fatalf("second accept err = %v, want ErrInvalidInput", err)
+	}
+	mismatchInvitation, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email: "mismatch@example.test",
+		Role:  "viewer",
+	})
+	if err != nil {
+		t.Fatalf("create mismatch invitation: %v", err)
+	}
+	if _, err := store.AcceptInvitation(mismatchInvitation.Token, "wrong-email", "other@example.test", "Wrong Email"); err != app.ErrInvalidInput {
+		t.Fatalf("wrong email err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{Email: "bad", Role: "viewer"}); err != app.ErrInvalidInput {
+		t.Fatalf("invalid email err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email:     "wrong-project@example.test",
+		Role:      "viewer",
+		ProjectID: "missing-project",
+	}); err != app.ErrInvalidInput {
+		t.Fatalf("wrong project err = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestStoreManagesProjectQuotaPolicy(t *testing.T) {
+	store := NewStore()
+	if _, ok := store.GetProjectQuotaPolicy(app.DemoProjectID); ok {
+		t.Fatal("unexpected default project quota policy")
+	}
+	policy, err := store.SetProjectQuotaPolicy(app.DemoProjectID, protocol.ProjectQuotaPolicyInput{
+		MaxConcurrentRuns:       2,
+		MaxRunsPerHour:          10,
+		MaxModelTokensPerDay:    1000,
+		MaxToolCallsPerDay:      50,
+		MaxSandboxSecondsPerDay: 60,
+	})
+	if err != nil {
+		t.Fatalf("set quota policy: %v", err)
+	}
+	if policy.ProjectID != app.DemoProjectID || policy.MaxConcurrentRuns != 2 || policy.MaxRunsPerHour != 10 ||
+		policy.MaxModelTokensPerDay != 1000 || policy.MaxToolCallsPerDay != 50 || policy.MaxSandboxSecondsPerDay != 60 {
+		t.Fatalf("policy = %#v", policy)
+	}
+	got, ok := store.GetProjectQuotaPolicy(app.DemoProjectID)
+	if !ok || got.MaxConcurrentRuns != 2 {
+		t.Fatalf("got policy = %#v ok=%v", got, ok)
+	}
+	if _, err := store.SetProjectQuotaPolicy(app.DemoProjectID, protocol.ProjectQuotaPolicyInput{MaxConcurrentRuns: -1}); err != app.ErrInvalidInput {
+		t.Fatalf("invalid quota err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := store.SetProjectQuotaPolicy(app.DemoProjectID, protocol.ProjectQuotaPolicyInput{MaxToolCallsPerDay: -1}); err != app.ErrInvalidInput {
+		t.Fatalf("invalid tool quota err = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestStoreCountsRunsForQuota(t *testing.T) {
+	store := NewStore()
+	chat := mustCreateChat(t, store, "demo-user", "quota")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "first")
+	if err != nil {
+		t.Fatalf("add first message: %v", err)
+	}
+	if active := store.CountActiveRuns("demo-user", app.DemoProjectID); active != 1 {
+		t.Fatalf("active runs = %d, want 1", active)
+	}
+	if recent := store.CountRunsCreatedSince("demo-user", app.DemoProjectID, time.Now().Add(-time.Hour)); recent != 1 {
+		t.Fatalf("recent runs = %d, want 1", recent)
+	}
+	if _, err := store.UpdateRunStatus(run.ID, protocol.RunSucceeded, ""); err != nil {
+		t.Fatalf("complete run: %v", err)
+	}
+	if active := store.CountActiveRuns("demo-user", app.DemoProjectID); active != 0 {
+		t.Fatalf("active runs after completion = %d, want 0", active)
+	}
+	if recent := store.CountRunsCreatedSince("demo-user", app.DemoProjectID, time.Now().Add(time.Minute)); recent != 0 {
+		t.Fatalf("future recent runs = %d, want 0", recent)
+	}
+}
+
+func TestStoreClaimsAndChecksRunAttempts(t *testing.T) {
+	store := NewStore()
+	chat := mustCreateChat(t, store, "demo-user", "attempt")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "go")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+
+	lease := time.Now().UTC().Add(time.Minute)
+	claimed, err := store.ClaimRunAttempt(run.ID, "attempt-1", "runtime-a", lease)
+	if err != nil {
+		t.Fatalf("claim attempt: %v", err)
+	}
+	if claimed.AttemptID != "attempt-1" || claimed.ClaimedBy != "runtime-a" || claimed.AttemptCount != 1 || claimed.LeaseExpiresAt == nil {
+		t.Fatalf("claimed run = %#v", claimed)
+	}
+	if _, err := store.CheckRunAttempt(run.ID, "attempt-1"); err != nil {
+		t.Fatalf("check active attempt: %v", err)
+	}
+	if _, err := store.CheckRunAttempt(run.ID, "attempt-2"); err != app.ErrAttemptMismatch {
+		t.Fatalf("check stale attempt err = %v, want ErrAttemptMismatch", err)
+	}
+	if _, err := store.ClaimRunAttempt(run.ID, "attempt-2", "runtime-b", time.Now().UTC().Add(time.Minute)); err != app.ErrAttemptMismatch {
+		t.Fatalf("claim competing attempt err = %v, want ErrAttemptMismatch", err)
+	}
+
+	if _, err := store.ClaimRunAttempt(run.ID, "attempt-1", "runtime-a", time.Now().UTC().Add(-time.Minute)); err != nil {
+		t.Fatalf("renew active attempt with expired lease: %v", err)
+	}
+	claimed, err = store.ClaimRunAttempt(run.ID, "attempt-2", "runtime-b", time.Now().UTC().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("claim after expired lease: %v", err)
+	}
+	if claimed.AttemptID != "attempt-2" || claimed.AttemptCount != 2 {
+		t.Fatalf("claimed after lease expiry = %#v", claimed)
 	}
 }
 

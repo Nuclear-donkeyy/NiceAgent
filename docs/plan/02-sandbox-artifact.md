@@ -28,15 +28,15 @@ Kubernetes 生产层可用 Job/Pod 承载 sandbox task，并通过 requests/limi
 
 `packages/common/sandbox/executor.go` 已有 local executor，包含 allowlist/dangerous 策略、超时、workspace 目录创建、环境变量过滤和输出截断。allowlist 目前包括 `curl`、`wget`、`dig`、`nslookup`、`date`、`echo`、`pwd`、`ls`；危险命令会按系统 CLI 只读策略拒绝。
 
-`packages/common/sandbox/container.go` 已有 Docker `ContainerExecutor`，当前参数包含 `--cpus 1`、`--memory 512m`、workspace volume 和可选 `--network none`，但还没有作为 Sandbox Executor 服务默认路径，也缺 pids、read-only、cap drop、seccomp 等加固项。
+`packages/common/sandbox/container.go` 已有 Docker `ContainerExecutor`，支持 `--cpus`、`--memory`、`--pids-limit`、`--read-only`、`--cap-drop ALL`、`no-new-privileges`、`tmpfs`、workspace volume 和可选 `--network none`。`services/sandbox-executor` 支持 `EXECUTOR_MODE=local|container`，但 Compose 里默认仍是 `local`，container 还没有成为默认生产路径，也没有 K8s RuntimeClass/NetworkPolicy 加固示例。
 
-`services/sandbox-executor` 已独立成服务，但当前装配仍偏轻量，只是把 common executor 暴露为 HTTP API。
+`services/sandbox-executor` 已独立成服务，并按配置装配 local 或 container executor，通过内部 HTTP API 暴露执行能力。Agent Runtime 如果配置了 `SANDBOX_EXECUTOR_URL` 会走 HTTP executor；否则回退到进程内 local executor。
 
-协议层已有 `Workspace` 和 `Artifact` 类型，`RunCompleteRequest` 和 `RunResult` 也预留了 `Artifacts`。但是 Postgres 迁移目前只有 `workspaces` 表，没有 `artifacts` 表；创建 run 时只生成 `workspace_id`，未写入 workspace 记录。
+协议层已有 `Workspace` 和 `Artifact` 类型，`RunCompleteRequest` 和 `RunResult` 支持 `Artifacts`。Postgres 迁移已包含 workspace metadata、`artifacts` 表和索引；memory store 与 Postgres store 都支持 workspace/artifact repository。创建 run 时会登记 workspace。
 
-`artifact.created` 事件类型已经存在，前端类型也知道这个事件，但 Runtime 和 Sandbox 还没有生产者，前端也没有 artifact 展示区。
+Sandbox 执行后会扫描 workspace `output/` 下的新增或修改文件，生成 artifact metadata 和 workspace diff。Agent Runtime 会从 tool observation 中提取 artifacts，并在 run complete 时交给 Control Plane 持久化；Control Plane 会写入 `artifact.created` event。前端已有 artifact domain/API、`ArtifactList` 展示和下载入口，刷新后可按 run 恢复 artifact metadata。
 
-`workspace.read` 当前仍是占位实现，返回“文件 artifact 浏览未实现”。
+`workspace.read` 已能通过 Control Plane 内部 API 列出当前 run artifacts，并安全读取已登记文本 artifact 的内容摘要。读取路径复用 artifact metadata、workspace root、`output/` 限制、symlink escape 检查、MIME 文本限制和最大读取字节数。
 
 ## 扩展点
 
@@ -44,7 +44,7 @@ Kubernetes 生产层可用 Job/Pod 承载 sandbox task，并通过 requests/limi
 - `SandboxResult` 扩展 artifact、workspace diff、resource usage、audit id、policy decision。
 - Control Plane 增加 `artifacts` 表、artifact repository、list/download API。
 - Runtime 在 tool 调用后根据 Sandbox result 写入 `artifact.created`。
-- `workspace.read` 改为读取 artifact metadata 或安全读取 workspace 内文件。
+- `workspace.read` 继续扩展更多 workspace 元数据，但仍只能读取已登记 artifact 或经过 Control Plane 校验的只读资源。
 - K8s 增加 NetworkPolicy、ResourceQuota、LimitRange、securityContext、RuntimeClass 示例。
 
 ## 技术架构
@@ -101,7 +101,7 @@ Artifact 元数据建议包括：
 
 ## 分阶段落地
 
-1. 持久化闭环：`artifacts` 表、workspace 记录、artifact list/download API、`artifact.created` event。
+1. 持久化与只读闭环：`artifacts` 表、workspace 记录、artifact list/download API、`artifact.created` event、`workspace.read` artifact list/text read。
 2. 容器默认执行：Sandbox Executor 接入 ContainerExecutor，加资源、网络和 security flags。
 3. Artifact 产品化：前端展示、下载、失败提示、过期状态、run replay 恢复。
 4. K8s 加固：NetworkPolicy、ResourceQuota、LimitRange、securityContext、RuntimeClass。

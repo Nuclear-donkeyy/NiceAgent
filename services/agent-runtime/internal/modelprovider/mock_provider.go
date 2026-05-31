@@ -6,6 +6,8 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	"niceagent/common/protocol"
 )
 
 type MockChatModel struct {
@@ -48,11 +50,26 @@ func (m MockChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingCha
 	return next, nil
 }
 
+func (m MockChatModel) Probe(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return nil
+}
+
 func (m MockChatModel) withUsage(msg *schema.Message) *schema.Message {
 	if msg != nil && m.Usage != nil {
 		msg.ResponseMeta = &schema.ResponseMeta{Usage: m.Usage}
 	}
 	return msg
+}
+
+func (m MockChatModel) ModelProviderHealth() protocol.ModelProviderHealth {
+	return protocol.ModelProviderHealth{
+		Provider: "mock",
+		Model:    "mock",
+		Status:   "healthy",
+	}
 }
 
 func latestToolObservation(messages []*schema.Message) (string, bool) {
@@ -85,3 +102,4 @@ func formatToolObservation(content string) string {
 }
 
 var _ model.ToolCallingChatModel = MockChatModel{}
+var _ Probeable = MockChatModel{}

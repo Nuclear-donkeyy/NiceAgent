@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 	"niceagent/control-plane/internal/app"
 	"niceagent/control-plane/internal/repository"
@@ -23,10 +24,12 @@ func TestHTTPDispatcherCallsRuntime(t *testing.T) {
 		t.Fatalf("add user message: %v", err)
 	}
 	received := make(chan protocol.RunExecutionRequest, 1)
+	traceHeaders := make(chan string, 1)
 	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/internal/runs/execute" {
 			t.Fatalf("runtime path = %q", r.URL.Path)
 		}
+		traceHeaders <- r.Header.Get("X-Trace-ID")
 		var request protocol.RunExecutionRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode runtime request: %v", err)
@@ -37,7 +40,7 @@ func TestHTTPDispatcherCallsRuntime(t *testing.T) {
 	defer runtimeServer.Close()
 
 	dispatcher := NewHTTPDispatcher(store, runtimeServer.URL, "http://control-plane.local", "", discardLogger())
-	if err := dispatcher.Dispatch(context.Background(), run, "hello"); err != nil {
+	if err := dispatcher.Dispatch(platform.ContextWithTraceID(context.Background(), "trace-dispatch-1"), run, "hello"); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
 
@@ -60,6 +63,9 @@ func TestHTTPDispatcherCallsRuntime(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("runtime did not receive dispatch request")
+	}
+	if got := <-traceHeaders; got != "trace-dispatch-1" {
+		t.Fatalf("trace header = %q, want propagated trace id", got)
 	}
 }
 
@@ -90,6 +96,33 @@ func TestHTTPDispatcherMarksRunFailedWhenRuntimeFails(t *testing.T) {
 	events := store.ListEvents(run.ID, 0)
 	if len(events) == 0 || events[len(events)-1].Type != protocol.EventRunFailed {
 		t.Fatalf("events = %#v, want trailing run.failed", events)
+	}
+}
+
+func TestHTTPDispatcherDoesNotFailRunOnAttemptConflict(t *testing.T) {
+	store := repository.NewStore()
+	chat := mustCreateChat(t, store, "demo-user", "dispatch conflict")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "hello")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "run attempt mismatch", http.StatusConflict)
+	}))
+	defer runtimeServer.Close()
+
+	dispatcher := NewHTTPDispatcher(store, runtimeServer.URL, "http://control-plane.local", "", discardLogger())
+	if err := dispatcher.Dispatch(context.Background(), run, "hello"); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	got, err := store.GetRun(run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if got.Status == protocol.RunFailed {
+		t.Fatalf("attempt conflict marked run failed: %#v", got)
 	}
 }
 

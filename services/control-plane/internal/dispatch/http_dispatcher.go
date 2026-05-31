@@ -64,12 +64,23 @@ func (d *HTTPDispatcher) dispatch(ctx context.Context, run protocol.Run, userMes
 	}
 	if err := d.postRun(ctx, request); err != nil {
 		d.log.Warn("http dispatch failed", "run_id", run.ID, "error", err)
+		var runtimeErr *RuntimeHTTPError
+		if errors.As(err, &runtimeErr) && runtimeErr.StatusCode == http.StatusConflict {
+			return
+		}
 		sink := app.RepositorySink{Repo: d.repo}
 		_ = sink.Fail(run.ID, fmt.Sprintf("Run dispatch failed: %v", err))
 	}
 }
 
-func (d *HTTPDispatcher) postRun(ctx context.Context, payload protocol.RunExecutionRequest) error {
+func (d *HTTPDispatcher) postRun(ctx context.Context, payload protocol.RunExecutionRequest) (err error) {
+	ctx, endSpan := platform.StartSpan(ctx, "niceagent/control_plane", "dispatch.agent_runtime.http", platform.Labels{
+		"run_id":     payload.Request.RunID,
+		"attempt_id": payload.Request.AttemptID,
+	})
+	defer func() {
+		endSpan(err, nil)
+	}()
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -79,6 +90,7 @@ func (d *HTTPDispatcher) postRun(ctx context.Context, payload protocol.RunExecut
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	platform.InjectTraceHeaders(ctx, req.Header)
 	if d.token != "" {
 		req.Header.Set("Authorization", "Bearer "+d.token)
 	}
@@ -87,9 +99,28 @@ func (d *HTTPDispatcher) postRun(ctx context.Context, payload protocol.RunExecut
 		return err
 	}
 	defer resp.Body.Close()
+	spanLabels := platform.Labels{"http_status": fmt.Sprint(resp.StatusCode)}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("agent runtime returned %s: %s", resp.Status, strings.TrimSpace(string(message)))
+		err = &RuntimeHTTPError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Message:    strings.TrimSpace(string(message)),
+		}
+		endSpan(err, spanLabels)
+		return err
 	}
+	endSpan(nil, spanLabels)
+	endSpan = func(error, platform.Labels) {}
 	return nil
+}
+
+type RuntimeHTTPError struct {
+	StatusCode int
+	Status     string
+	Message    string
+}
+
+func (e *RuntimeHTTPError) Error() string {
+	return fmt.Sprintf("agent runtime returned %s: %s", e.Status, e.Message)
 }

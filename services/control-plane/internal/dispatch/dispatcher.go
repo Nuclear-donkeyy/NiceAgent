@@ -86,16 +86,10 @@ func NewQueueDispatcher(repo app.Repository, queue RunQueue) *QueueDispatcher {
 }
 
 func (d *QueueDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMessage string) error {
-	runtimeSkills := app.RuntimeSkillsForRun(d.repo, run)
+	_ = userMessage
 	return d.queue.Enqueue(ctx, QueuedRun{
-		RunID:       run.ID,
-		ChatID:      run.ChatID,
-		UserID:      run.UserID,
-		WorkspaceID: run.WorkspaceID,
-		UserMessage: userMessage,
-		AttemptID:   firstNonEmpty(run.AttemptID, platform.NewID("attempt")),
-		SkillIDs:    app.SkillIDsFromRuntimeSkills(runtimeSkills),
-		ModelPolicy: "mock-default",
+		RunID:     run.ID,
+		AttemptID: firstNonEmpty(run.AttemptID, platform.NewID("attempt")),
 	})
 }
 

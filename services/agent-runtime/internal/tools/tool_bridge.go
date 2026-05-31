@@ -27,6 +27,15 @@ type SandboxExecutor interface {
 	Execute(ctx context.Context, request protocol.SandboxCommand) protocol.SandboxResult
 }
 
+type WorkspaceReader interface {
+	ListArtifacts(ctx context.Context, runID string) ([]protocol.Artifact, error)
+	ReadArtifactText(ctx context.Context, runID, artifactID string, maxBytes int) (protocol.ArtifactTextResponse, error)
+}
+
+type ToolQuotaReserver interface {
+	ReserveToolQuota(ctx context.Context, runID string, input protocol.ToolQuotaReserveRequest) (protocol.ToolQuotaReserveResponse, error)
+}
+
 type Definition struct {
 	ID          string
 	Name        string
@@ -112,6 +121,18 @@ func (t *runtimeTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...tool.Option) (string, error) {
 	skill := t.runtimeSkill.Skill
 	toolName := toolNameForSkillID(skill.ID)
+	if output, reserved, err := t.reserveToolQuota(ctx, skill, argumentsInJSON); !reserved {
+		if err != nil {
+			return output, nil
+		}
+		return output, nil
+	}
+	ctx, endSpan := platform.StartSpan(ctx, "niceagent/agent_runtime", "tool.invoke", platform.Labels{
+		"run_id":   t.runID,
+		"skill_id": skill.ID,
+		"kind":     string(skill.Kind),
+		"tool":     toolName,
+	})
 	_ = t.sink.Emit(t.runID, protocol.EventToolStarted, "Starting skill invocation.", map[string]any{
 		"skill_id": skill.ID,
 		"tool":     toolName,
@@ -136,6 +157,12 @@ func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, 
 	if err != nil {
 		payload["error"] = err.Error()
 	}
+	spanLabels := platform.Labels{"ok": fmt.Sprint(ok && err == nil)}
+	if err != nil {
+		endSpan(err, spanLabels)
+	} else {
+		endSpan(nil, spanLabels)
+	}
 	_ = t.sink.Emit(t.runID, protocol.EventToolOutput, "Skill invocation returned output.", payload)
 	_ = t.sink.Emit(t.runID, protocol.EventToolFinished, "Finished skill invocation.", map[string]any{
 		"skill_id": skill.ID,
@@ -143,6 +170,28 @@ func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, 
 		"ok":       ok && err == nil,
 	})
 	return output, err
+}
+
+func (t *runtimeTool) reserveToolQuota(ctx context.Context, skill protocol.Skill, argumentsInJSON string) (string, bool, error) {
+	reserver, ok := t.sink.(ToolQuotaReserver)
+	if !ok {
+		return "", true, nil
+	}
+	input := protocol.ToolQuotaReserveRequest{
+		SkillID:   skill.ID,
+		ToolCalls: 1,
+	}
+	if skill.ID == "cli.exec" {
+		input.SandboxSeconds = sandboxTimeoutSeconds(argumentsInJSON)
+	}
+	response, err := reserver.ReserveToolQuota(ctx, t.runID, input)
+	if err != nil {
+		return marshalToolQuotaObservation(false, "quota_unavailable", "工具配额服务暂时不可用: "+err.Error(), ""), false, err
+	}
+	if !response.Allowed {
+		return marshalToolQuotaObservation(false, "quota_denied", response.Message, response.Quota), false, nil
+	}
+	return "", true, nil
 }
 
 func (t *runtimeTool) invokeBuiltin(ctx context.Context, argumentsInJSON string) (string, error) {
@@ -162,9 +211,53 @@ func (t *runtimeTool) invokeBuiltin(ctx context.Context, argumentsInJSON string)
 		body, _ := json.Marshal(result)
 		return string(body), nil
 	case "workspace.read":
-		return `{"message":"workspace.read is registered but file artifact browsing is not implemented in this phase"}`, nil
+		return t.invokeWorkspaceRead(ctx, argumentsInJSON)
 	default:
 		return "", fmt.Errorf("unknown builtin skill %s", t.runtimeSkill.Skill.ID)
+	}
+}
+
+func (t *runtimeTool) invokeWorkspaceRead(ctx context.Context, argumentsInJSON string) (string, error) {
+	reader, ok := t.sink.(WorkspaceReader)
+	if !ok {
+		return "", fmt.Errorf("workspace reader is not configured")
+	}
+	var input struct {
+		Action     string `json:"action"`
+		ArtifactID string `json:"artifact_id"`
+		MaxBytes   int    `json:"max_bytes"`
+	}
+	_ = json.Unmarshal([]byte(argumentsInJSON), &input)
+	action := strings.TrimSpace(input.Action)
+	if action == "" {
+		action = "list"
+	}
+	switch action {
+	case "list":
+		artifacts, err := reader.ListArtifacts(ctx, t.runID)
+		if err != nil {
+			return "", err
+		}
+		body, _ := json.Marshal(map[string]any{
+			"artifacts": artifacts,
+			"count":     len(artifacts),
+		})
+		return string(body), nil
+	case "read":
+		if strings.TrimSpace(input.ArtifactID) == "" {
+			return "", fmt.Errorf("artifact_id is required")
+		}
+		if input.MaxBytes <= 0 {
+			input.MaxBytes = 64 * 1024
+		}
+		response, err := reader.ReadArtifactText(ctx, t.runID, input.ArtifactID, input.MaxBytes)
+		if err != nil {
+			return "", err
+		}
+		body, _ := json.Marshal(response)
+		return string(body), nil
+	default:
+		return "", fmt.Errorf("unsupported workspace.read action %q", action)
 	}
 }
 
@@ -201,6 +294,33 @@ func commandFromToolArgs(argumentsInJSON string) []string {
 		return strings.Fields(parsed.Query)
 	}
 	return nil
+}
+
+func sandboxTimeoutSeconds(argumentsInJSON string) int {
+	var parsed struct {
+		TimeoutSeconds int `json:"timeout_seconds"`
+	}
+	_ = json.Unmarshal([]byte(argumentsInJSON), &parsed)
+	if parsed.TimeoutSeconds <= 0 {
+		return 10
+	}
+	if parsed.TimeoutSeconds > 300 {
+		return 300
+	}
+	return parsed.TimeoutSeconds
+}
+
+func marshalToolQuotaObservation(ok bool, errorType, message, quota string) string {
+	payload := map[string]any{
+		"ok":         ok,
+		"error_type": errorType,
+		"message":    message,
+	}
+	if quota != "" {
+		payload["quota"] = quota
+	}
+	body, _ := json.Marshal(payload)
+	return string(body)
 }
 
 func toolNameForSkillID(id string) string {

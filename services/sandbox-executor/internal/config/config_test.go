@@ -27,3 +27,36 @@ func TestFromEnvReadsExecutorModeAndContainerConfig(t *testing.T) {
 		t.Fatalf("container booleans/limits = %#v", cfg)
 	}
 }
+
+func TestValidateRequiresInternalTokenWhenFlagEnabled(t *testing.T) {
+	t.Setenv("INTERNAL_API_TOKEN_REQUIRED", "true")
+	t.Setenv("INTERNAL_API_TOKEN", "")
+
+	cfg := FromEnv()
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected missing internal token to fail validation")
+	}
+}
+
+func TestValidateAllowsLocalWithoutInternalToken(t *testing.T) {
+	t.Setenv("NICEAGENT_ENV", "local")
+	t.Setenv("INTERNAL_API_TOKEN", "")
+
+	cfg := FromEnv()
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected local config without internal token to be valid: %v", err)
+	}
+}
+
+func TestNonLocalEnvironmentRequiresInternalTokenByDefault(t *testing.T) {
+	t.Setenv("NICEAGENT_ENV", "production")
+	t.Setenv("INTERNAL_API_TOKEN", "")
+
+	cfg := FromEnv()
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected production config without internal token to fail validation")
+	}
+}

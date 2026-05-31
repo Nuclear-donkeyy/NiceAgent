@@ -82,6 +82,10 @@ test("smoke covers chat, CLI state, artifacts, HTTP Skill and refresh recovery",
   await page.getByRole("button", { name: "保存 HTTP Skill" }).click();
   await expect(page.getByText("请输入有效的 URL")).toBeVisible();
 
+  await page.getByLabel("请求地址").fill("http://api.example.com/weather");
+  await page.getByRole("button", { name: "保存 HTTP Skill" }).click();
+  await expect(page.getByText("请求地址必须使用 https")).toBeVisible();
+
   await page.getByLabel("请求地址").fill("https://api.example.com/weather");
   await page.getByRole("button", { name: "保存 HTTP Skill" }).click();
   await expect(page.getByText("服务端返回：上游服务暂不可用")).toBeVisible();

@@ -23,9 +23,9 @@ HTTP Skill 还要按 SSRF 和第三方 API 风险处理：默认只允许 `https
 
 ## 当前仓库现状
 
-协议层已经有 `Skill`、`RuntimeSkill`、`SkillGroups`、`HTTPSkillInput`，位于 `packages/common/protocol/skill.go`。`Skill` 里已经包含 `InputSchema`、`OutputSchema`、`Annotations`、`RuntimeConfig`，但当前类型都是 `string`，尚未类型化或统一校验。
+协议层已经有 `Skill`、`RuntimeSkill`、`SkillGroups`、`HTTPSkillInput`，位于 `packages/common/protocol/skill.go`。`Skill` 中的 `InputSchema`、`OutputSchema`、`Annotations`、`RuntimeConfig` 仍以 JSON 字符串形式对外传输，但仓库已新增 `packages/common/skillmanifest`，用于解析和校验 HTTP Skill 的 JSON Schema 与 typed runtime config。
 
-Postgres schema 已有 `skills`、`skill_versions`、`skill_grants`、`skill_secrets`。`input_schema`、`output_schema`、`annotations`、`runtime_config` 已经是 `jsonb`；`skill_secrets` 同时预留了 `secret_ref` 和 `encrypted_value`。当前代码只读取 `encrypted_value`，`secret_ref` 还没有 resolver。
+Postgres schema 已有 `skills`、`skill_versions`、`skill_grants`、`skill_secrets`。`input_schema`、`output_schema`、`annotations`、`runtime_config` 是 `jsonb`；`skill_secrets` 同时预留了 `secret_ref` 和 `encrypted_value`。当前 runtime 通过 `SecretResolver` 接口解析 secret，本地实现支持 `encrypted_value`，并支持 `env://ENV_NAME` 形式的 `secret_ref`，可配合 K8s Secret/External Secrets 注入环境变量。Vault、KMS 或 External Secrets 原生 resolver 仍未接入。
 
 Control Plane 已经支持：
 
@@ -34,20 +34,20 @@ Control Plane 已经支持：
 - `PATCH /api/skills/{id}` 更新 HTTP Skill。
 - `POST /api/skills/{id}/enable|disable` 启停用户 skill。
 
-当前校验只覆盖 `name`、URL 格式、`GET|POST` 和 `auth_type`，还没有 JSON Schema 校验、runtime_config 结构校验、SSRF 防护和 OpenAPI/MCP 导入。
+创建/更新 HTTP Skill 时已经校验 `name`、`GET|POST`、`auth_type`、`https` URL、URL 不含 credentials、timeout 范围、`input_schema` 和 `output_schema`。`runtime_config` 会由 `HTTPSkillRuntimeConfig` 统一生成，避免 token 进入 runtime config。OpenAPI/MCP 导入仍未实现。
 
-Agent Runtime 的 `ToolBridge` 已能把 `RuntimeSkill` 转成 Eino tool。builtin skill 调 `cli.exec` 或 `workspace.read`；HTTP Skill 会按 `runtime_config` 构造请求，支持 bearer token，响应限制为 64KB。当前仍缺输入 schema validation、输出 schema validation、统一错误模型、重定向策略、secret redaction 和 per-skill retry。
+Agent Runtime 的 `ToolBridge` 已能把 `RuntimeSkill` 转成 Eino tool。builtin skill 调 `cli.exec` 或 `workspace.read`；HTTP Skill 会按 `runtime_config` 构造请求，支持 bearer token，响应限制为 64KB。Runtime 调用 HTTP Skill 前会校验 arguments；返回后会按 `output_schema` 校验 structured output；非 2xx、DNS、TLS、timeout、响应过大、schema 错误会转成结构化 observation。HTTP Skill 默认只允许 `https`，禁用重定向，拒绝 loopback、`.local`、metadata host 和字面量 private/link-local IP。当前仍缺 DNS 解析后的私网 IP 防护、per-skill retry/rate limit 和导入能力。
 
-HTTP dispatcher 已经把完整 `RuntimeSkill` 下发给 Runtime；但 `QueuedRun` 目前只包含 `SkillIDs`，后续接 Redis queue 时如果不补 manifest materialization，会导致 HTTP Skill 执行材料丢失。
+HTTP dispatcher 已经把完整 `RuntimeSkill` 下发给 Runtime。Redis queue 路径已经收敛为最小 `run_id/attempt_id` payload，并由 Agent Runtime worker 通过 Control Plane execution context API 拉取当前授权后的完整 `RuntimeSkill`，因此 HTTP Skill 执行材料不再依赖 queue payload。
 
 ## 扩展点
 
 - 增加 `SkillManifest` 领域模型，保留现有 JSON 字段兼容，同时内部用 typed config 解析。
-- 增加 `SecretResolver` 接口，支持 `local_encrypted`、`secret_ref`、Vault、阿里云 KMS、Kubernetes Secret 引用。
+- 增加 `SecretResolver` 接口，支持 `local_encrypted`、`env://` secret_ref、Vault、阿里云 KMS、Kubernetes Secret 引用。
 - 增加 `SkillMaterializer`：Control Plane 按 user/project/grant 读取当前版本 manifest，并只在内部请求中附带 Runtime 必需 secret。
 - 拆出 Runtime `SkillExecutionService` 和 HTTP Skill executor，统一校验、调用、错误分类、redaction 和事件输出。
 - 增加 OpenAPI/MCP importer：先做后端转换和 dry-run，不急着做完整 UI。
-- 修正 Redis queue 路径：队列里要么存完整 runtime skill snapshot，要么只存 `run_id` 并由 worker 在消费时向 Control Plane 拉取当前授权后的 manifest。
+- 继续加固 Redis queue 路径：当前 worker 已按 `run_id` 拉取当前授权后的 manifest，下一步需要配合 attempt fencing 固化授权快照和幂等边界。
 
 ## 技术架构
 
@@ -100,7 +100,7 @@ OpenAPI/MCP 导入放在下一层：
 ## 分阶段落地
 
 1. 最小生产闭环：schema validation、HTTP Skill 错误模型、secret redaction、Runtime 输入校验。
-2. Secret resolver：本地开发继续支持 `encrypted_value`，生产支持 `secret_ref`，优先阿里云 KMS/Vault/External Secrets。
+2. Secret resolver：本地开发继续支持 `encrypted_value`，`env://` secret_ref 已可用；生产继续补阿里云 KMS/Vault/External Secrets 原生 resolver。
 3. 导入能力：实现 OpenAPI/MCP manifest 转换器和 dry-run API。
 4. 治理能力：skill invocation 审计、per-skill rate limit、风险策略和 metrics/tracing。
 
@@ -112,7 +112,7 @@ OpenAPI/MCP 导入放在下一层：
 - HTTP Skill SSRF 打到内网、metadata service 或本机服务。
 - 第三方 API 返回 prompt injection 或超大响应。
 - annotations 被误当成强安全策略。
-- Redis queue 化后只携带 `SkillIDs`，Runtime 拿不到 HTTP Skill secret/config。
+- Redis queue worker 拉取 execution context 失败时会保留 pending entry；后续需要避免长期 pending 堆积并补 DLQ/claim 策略。
 
 验收：
 

@@ -18,7 +18,70 @@ memory 模式的权威状态在进程内存中，进程重启会丢失数据。P
 - runs、run events、artifacts。
 - skills、skill_versions、用户/项目 skill_grants、skill_secrets、配额、审计记录。
 
-当前 Postgres 模式支持单 Control Plane 进程内 SSE fanout 和基于数据库的 `RunEvent` replay。Redis Streams 已有基础 run queue adapter：`DISPATCH_MODE=redis` 时 Control Plane 会把 run 写入 `RUN_QUEUE_STREAM`，供后续 Runtime worker 通过 consumer group 消费；现阶段 Runtime consumer loop 和跨副本 event fanout 仍是后续工作，Redis 不替代 Postgres 的权威持久化。
+当前 Postgres 模式支持基于数据库的 `RunEvent` replay。单 Control Plane 副本会使用进程内 fanout；多 Control Plane 副本可设置 `EVENT_FANOUT_MODE=redis`，事件写入后发布轻量 nudge，其他副本收到 nudge 后仍从 repository 按 `seq` 补读权威事件。Redis nudge 只负责实时唤醒，不替代 Postgres 的权威持久化；即使通知丢失，前端也可以通过 `?after=` 或 `Last-Event-ID` replay 补齐。
+
+Redis Streams 已有 run queue 最小闭环：`DISPATCH_MODE=redis` 时 Control Plane 会把 run 写入 `RUN_QUEUE_STREAM`，`RUNTIME_QUEUE_MODE=redis` 时 Agent Runtime 会通过同一个 consumer group 消费 run，并回调 Control Plane 拉取完整 execution context。Runtime 执行前会 claim `attempt_id`，后续 event/complete/fail 都按 active attempt fencing。Runtime worker 也已经支持 idle pending `XAUTOCLAIM`、超最大投递次数写 DLQ、执行期间 heartbeat 续租。Redis 不替代 Postgres 的权威持久化。
+
+## 认证与配额
+
+外部 API 支持三种模式：
+
+- `AUTH_MODE=demo`：默认本地模式，所有请求映射到 `demo-user/demo-project`。
+- `AUTH_MODE=trusted-header`：生产网关模式，要求可信上游完成登录和 JWT/session 校验，再透传 `X-NiceAgent-User-ID`、`X-NiceAgent-Project-ID`、可选 `X-NiceAgent-Org-ID` 和 `X-NiceAgent-Roles`。
+- `AUTH_MODE=oidc`：当前作为 `trusted-header` 兼容别名。NiceAgent 内置 OIDC callback/session/JWT 仍是后续工作。
+
+最小 RBAC 优先读取 trusted header 中的 `X-NiceAgent-Roles`：`viewer` 只允许读取，`owner/admin/member/editor/writer` 允许创建聊天、发送消息、取消 run 和管理 HTTP Skill；项目成员管理只允许 `owner/admin`。缺少 roles 时会从 `project_members` 持久角色绑定中读取；仍找不到成员关系时返回 `403`，并写入 `auth.authorize` deny audit event。当前 migration 会给 `demo-user/demo-project` 写入 `owner` 角色。
+
+项目成员管理 API 已有最小版本：
+
+```bash
+GET /api/projects/{project_id}/members
+POST /api/projects/{project_id}/members
+PATCH /api/projects/{project_id}/members/{user_id}
+DELETE /api/projects/{project_id}/members/{user_id}
+```
+
+这些 API 只管理当前 actor 所在项目的 `project_members`，不会跨项目修改成员；第一版也不允许修改或删除自己的成员关系，避免把自己锁出项目。organization 级成员管理、邀请流程、身份绑定和更细粒度 action policy 仍是后续工作。
+
+run 配额是最小治理边界，默认关闭。env 配置是 fallback：
+
+```bash
+QUOTA_MAX_CONCURRENT_RUNS=0
+QUOTA_RUNS_PER_HOUR=0
+QUOTA_MODEL_TOKENS_PER_DAY=0
+QUOTA_TOOL_CALLS_PER_DAY=0
+QUOTA_SANDBOX_SECONDS_PER_DAY=0
+QUOTA_COUNTER_MODE=repository
+QUOTA_COUNTER_PREFIX=niceagent:quota
+QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN=0
+QUOTA_MODEL_TOKEN_RESERVATION_MODE=fixed
+QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER=0
+```
+
+当配额开启时，Control Plane 会在创建 run 前按当前 actor 的 `user_id + project_id` 统计 active runs、最近一小时 runs，以及 UTC 自然日内已有 `RunUsage` 的模型 token、tool calls 和 sandbox seconds 用量。超过限制时返回 `429 Too Many Requests`，前端会收到中文错误，同时写入 `quota.run.create` deny audit event。active run 状态包括 `queued`、`running` 和 `waiting_for_approval`。模型 token 可在 run 创建时做 fixed/dynamic 预占；tool calls 和 sandbox seconds 还会在 Runtime 每次 tool 调用前通过内部 `/internal/runs/{run_id}/quota-reserve` 做最小实时预占。
+
+`QUOTA_COUNTER_MODE=repository` 是默认模式，直接从 Postgres/memory 统计 run 状态。`QUOTA_COUNTER_MODE=redis` 会在创建 run 前用 Redis 对 `max_concurrent_runs` 和 `max_runs_per_hour` 做预占：并发计数在 run 进入 `succeeded/failed/canceled` 后释放，小时窗口计数保留到窗口 TTL。Redis quota 只作为高频计数和预占层，项目 policy 和最终 run 状态仍以 Control Plane repository 为权威。
+
+Redis quota 支持两种模型 token 预占模式。`QUOTA_MODEL_TOKEN_RESERVATION_MODE=fixed` 时，如果 `QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN>0`，每个 run 创建前会按固定值预占每日 token；`dynamic` 时，Control Plane 会按当前用户消息长度估算 input tokens，并叠加 `QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER` 作为输出缓冲。run 成功时按真实 `RunUsage.total_tokens` 结算差额；失败或取消时按 0 用量释放预占。动态模式比固定值更贴近请求大小，但仍不是精确 tokenizer，也无法预知模型真实输出。更精细的按模型/租户/账单维度 token bucket 仍属于后续工作。
+
+项目级持久 quota policy 已有最小版本：
+
+```bash
+GET /api/projects/{project_id}/quota
+PATCH /api/projects/{project_id}/quota
+```
+
+如果 `project_quota_policies` 中存在当前项目配置，Control Plane 会优先使用持久 policy；如果不存在，则使用上述 env fallback。policy 字段 `max_concurrent_runs`、`max_runs_per_hour`、`max_model_tokens_per_day`、`max_tool_calls_per_day`、`max_sandbox_seconds_per_day` 都是非负整数，`0` 表示关闭对应限制。Redis 计数缓存、并发/小时窗口预占、固定或动态模型 token 预扣/结算，以及 Runtime 调 tool 前的 tool/sandbox 最小预占已有闭环；分布式强一致 token bucket、真实 tokenizer 和账单维度 quota 仍是后续工作。
+
+三服务内部 API 使用同一个 bearer token：
+
+```bash
+NICEAGENT_ENV=production
+INTERNAL_API_TOKEN_REQUIRED=true
+INTERNAL_API_TOKEN=<random-internal-token>
+```
+
+本地裸跑可以保持 `INTERNAL_API_TOKEN_REQUIRED=false`。当显式开启 required，或 `NICEAGENT_ENV` 不是 `local/dev/development/test/ci` 时，Control Plane、Agent Runtime 和 Sandbox Executor 都会在缺少 `INTERNAL_API_TOKEN` 时启动失败。Kubernetes manifest 默认开启该检查，并要求 `niceagent-internal-api` Secret 存在；不要把该 token 暴露给浏览器或外部客户端。
 
 ## 模型 Provider
 
@@ -28,7 +91,15 @@ Agent Runtime 默认使用 `MODEL_PROVIDER=mock`，适合本地演示和 CI。�
 - `MODEL_BASE_URL`：兼容服务根地址，不包含 `/v1/chat/completions`、`/chat/completions` 或 `/completions`；启动时会做 URL 和 endpoint 校验。
 - `MODEL_API_KEY`：模型服务密钥，只能通过环境变量或 Kubernetes Secret 注入，不写入仓库。
 - `MODEL_NAME`：请求体中的 `model`。
+- `MODEL_FALLBACK_PROVIDER`：可选后备 provider，当前支持 `mock` 或 `openai-compatible`。为空时不启用 fallback。
+- `MODEL_FALLBACK_BASE_URL`、`MODEL_FALLBACK_API_KEY`、`MODEL_FALLBACK_NAME`：当后备 provider 为 `openai-compatible` 时使用；fallback API key 只能通过环境变量或 Secret 注入。
 - `MODEL_TIMEOUT_SECONDS`：模型 HTTP 请求超时，默认 120 秒。
+- `MODEL_INPUT_PRICE_PER_1M_TOKENS`、`MODEL_CACHED_INPUT_PRICE_PER_1M_TOKENS`、`MODEL_OUTPUT_PRICE_PER_1M_TOKENS`、`MODEL_REASONING_PRICE_PER_1M_TOKENS`：可选价格配置，单位是每 100 万 token 的价格；默认都是 0，不提交任何厂商实时价格。
+- `MODEL_PRICE_CURRENCY`：价格币种，默认 `USD`。
+- `MODEL_HEALTH_PROBE_ENABLED`：是否开启主动模型健康探针，默认 `false`，避免本地和 CI 无意产生真实模型调用。
+- `MODEL_HEALTH_PROBE_INTERVAL_SECONDS`：主动探针间隔，默认 60 秒。
+- `MODEL_HEALTH_PROBE_TIMEOUT_SECONDS`：单次探针超时，默认 10 秒。
+- `MODEL_HEALTH_PROBE_INITIAL_DELAY_SECONDS`：Runtime 启动后首次探针延迟，默认 0 秒。
 
 DeepSeek 接入不新增 provider 名，保持：
 
@@ -39,9 +110,19 @@ MODEL_API_KEY=sk-...
 MODEL_NAME=deepseek-v4-flash
 ```
 
-Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，优先采集 provider response 中的真实 token usage；缺失 usage 时按 run 的输入/输出文本做估算并标记 `estimated=true`。
+Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，优先采集 provider response 中的真实 token usage；缺失 usage 时按 run 的输入/输出文本做估算并标记 `estimated=true`。如果配置了价格，Runtime 会在 `RunUsage.cost` 和 `RunUsage.currency` 中回写本次 run 的估算费用；模型价格仍以服务商官方控制台/文档为准，不在仓库中硬编码。
 
-模型错误会按运营类目归一化：401 为 `auth_error`，402 为 `billing_error`，400/422 为 `request_error`，429 为 `rate_limited`，500/503/网关错误为 `provider_unavailable`，超时和连接错误为 `network_error`。429、5xx 和网络瞬时错误会按指数退避重试并尊重 `Retry-After`；401、402、400、422 不重试。当前 fallback 只保留策略骨架和 run usage 字段，尚未配置多 provider 自动切换。provider 错误、日志和 run error 会经过 redactor，默认不输出 API key、Authorization、token、secret、password 或 cookie。
+`RunUsage` 也会记录 run 级工具/sandbox 聚合：tool 调用数、tool 错误数、sandbox 命令数、sandbox 执行耗时、stdout/stderr 输出字节数、sandbox CPU/内存使用摘要以及 artifact 数量/大小。它们来自 Eino tool observation 和 `SandboxResult`，用于排障、审计和配额/账单聚合。Runtime 执行 tool 前会先向 Control Plane 预占一次 `tool_calls`；`cli.exec` 还会按 timeout 预占 `sandbox_seconds`。如果预占被拒绝，Runtime 不会执行真实 tool，而是把中文 quota deny 作为 tool observation 交给模型。run 完成时会用实际 `RunUsage` 覆盖预占快照。当前还没有更细的按 skill/provider 计费和分布式强一致 token bucket。
+
+模型错误会按运营类目归一化：401 为 `auth_error`，402 为 `billing_error`，400/422 为 `request_error`，429 为 `rate_limited`，500/503/网关错误为 `provider_unavailable`，超时和连接错误为 `network_error`。429、5xx 和网络瞬时错误会按指数退避重试并尊重 `Retry-After`；401、402、400、422 不重试。开启 `MODEL_FALLBACK_PROVIDER` 后，Runtime 只会对 `rate_limited`、`provider_unavailable`、`network_error` 触发后备 provider；成功后会在 `RunUsage.fallback_from`、`RunUsage.fallback_to` 和 `RunUsage.error_class` 记录切换原因。provider 错误、日志和 run error 会经过 redactor，默认不输出 API key、Authorization、token、secret、password 或 cookie。
+
+Agent Runtime 的 `GET /healthz` 会包含 `model_provider` 快照，展示 provider/model、最近请求计数、成功/失败计数、错误分类、最近延迟、fallback 状态和可选主动 probe 状态。默认不开启主动 probe；生产环境可以打开 `MODEL_HEALTH_PROBE_ENABLED=true`，让 Runtime 周期性调用当前 Eino ChatModel。该探针不会把 token 计入 run usage，但会产生真实模型请求和供应商侧费用，应结合告警阈值谨慎启用。
+
+建议告警规则：
+
+- `model_provider.status != healthy` 或 `probe_status != healthy` 持续 3 个探针周期。
+- `niceagent_model_health_probe_total{status="error"}` 在 5 分钟内持续增长。
+- `niceagent_model_health_probe_duration_seconds_sum / niceagent_model_health_probe_duration_seconds_count` 明显高于业务 SLO。
 
 ## Skill 与 Secret 排查
 
@@ -52,7 +133,9 @@ Skill 存储分为四层：
 - `skill_grants`：用户/项目可用性。
 - `skill_secrets`：secret 引用或本地开发密文。
 
-前端 `GET /api/skills` 不返回 secret。Runtime 通过 Control Plane 下发的内部 `RuntimeSkill` 获取执行所需 secret。当前本地开发允许把 bearer token 存入 `encrypted_value`；生产环境应替换为阿里云 KMS、Vault 或 External Secrets。
+前端 `GET /api/skills` 不返回 secret。Runtime 通过 Control Plane 下发的内部 `RuntimeSkill` 获取执行所需 secret。当前本地开发允许把 bearer token 存入 `encrypted_value`；`secret_ref` 第一版支持 `env://ENV_NAME`，适合把 K8s Secret 或外部 Secret Operator 注入为环境变量后再解析。生产环境后续仍应接阿里云 KMS、Vault 或 External Secrets，并避免长期使用明文环境变量作为唯一 secret backend。
+
+`workspace.read` 是系统内置只读 skill。它不会让 Runtime 直接读取任意磁盘路径，而是通过 Control Plane 内部 API 列出当前 run 已登记 artifacts，并只读取文本 artifact 的内容摘要。读取会校验 active `attempt_id`，并复用 artifact metadata、workspace root、`output/` 路径限制、symlink escape 检查、regular file 检查、MIME 文本限制和读取大小限制。排查读取失败时优先看 artifact 是否已登记、文件是否仍在 workspace、MIME 是否是文本类型，以及路径是否在 `output/` 下。
 
 ## Postgres 模式排查
 
@@ -73,14 +156,34 @@ docker compose -f deployments/docker-compose.yml restart control-plane
 Redis run queue 基础配置：
 
 ```bash
+EVENT_FANOUT_MODE=redis
+EVENT_FANOUT_PREFIX=niceagent:run-events
 DISPATCH_MODE=redis
+RUNTIME_QUEUE_MODE=redis
 REDIS_ADDR=redis:6379
 RUN_QUEUE_STREAM=niceagent:runs
 RUN_QUEUE_GROUP=agent-runtimes
-RUN_QUEUE_CONSUMER=control-plane-1
+RUN_QUEUE_CONSUMER=agent-runtime-1
+AGENT_RUNTIME_ID=agent-runtime-1
+RUN_QUEUE_RECLAIM_MIN_IDLE_SECONDS=60
+RUN_QUEUE_RECLAIM_COUNT=1
+RUN_QUEUE_MAX_DELIVERIES=5
+RUN_QUEUE_DLQ_STREAM=niceagent:runs:dlq
+RUN_ATTEMPT_LEASE_SECONDS=600
+RUN_ATTEMPT_HEARTBEAT_SECONDS=60
 ```
 
-该模式需要 Control Plane module 的 `github.com/redis/go-redis/v9` 依赖。当前 adapter 提供 `XADD`、`XGROUP CREATE MKSTREAM`、`XREADGROUP` 和成功处理后的 `XACK`；处理失败时不 ack，消息保留在 pending entries 中等待后续 retry/claim 策略。
+该模式需要 Control Plane 和 Agent Runtime module 的 `github.com/redis/go-redis/v9` 依赖。Control Plane 只负责 `XADD` 最小 payload；Agent Runtime worker 负责 `XGROUP CREATE MKSTREAM`、`XREADGROUP`、通过 `/internal/runs/{run_id}/execution-context` 拉取执行上下文，随后调用 `/internal/runs/{run_id}/claim` claim 当前 attempt，并在处理成功后 `XACK`。获取 execution context、claim 或执行失败时不 ack，消息保留在 pending entries 中。普通读取没有新消息时，worker 会按 `RUN_QUEUE_RECLAIM_MIN_IDLE_SECONDS` 使用 `XAUTOCLAIM` 回收 pending message；回收后会生成新的 `attempt_id`，避免旧 runtime 迟到回写覆盖新 attempt。超过 `RUN_QUEUE_MAX_DELIVERIES` 的消息会写入 `RUN_QUEUE_DLQ_STREAM` 后 ack，避免无限重试。
+
+attempt fencing 字段保存在 `runs` 上：`active_attempt_id`、`claimed_by`、`lease_expires_at`、`attempt_count`。如果旧 runtime 用旧 `attempt_id` 回写 event、complete 或 fail，Control Plane 会返回 `409 Conflict`，不会写 assistant message 或 terminal event。
+
+本地可用以下命令跑近似多实例的 Redis queue 冒烟。脚本会启动临时 Redis 容器、一个 Control Plane、一个 Sandbox Executor 和两个 Agent Runtime consumer，发送两条 `/cli echo ...` run，并等待 assistant 回写：
+
+```bash
+make smoke-three-services-redis
+```
+
+输出中的 `claimed_by` 可用于确认 run 被 Redis worker claim；该 smoke 只验证最小多 runtime 消费和回写链路，不替代生产压测。
 
 清理本地持久化数据：
 
@@ -95,12 +198,41 @@ docker compose -f deployments/docker-compose.yml down -v
 排查问题时优先关注：
 
 - `run_id`：贯穿一次用户请求的执行链路。
+- `X-Trace-ID`：三服务之间会透传的轻量 trace id。浏览器或网关可传入 `X-Trace-ID`/`Traceparent`，Control Plane、Agent Runtime 和 Sandbox Executor 会在响应头继续返回 `X-Trace-ID`。
+- `X-Request-ID`：Control Plane 外部 API 的请求标识，request log 和 audit event 会记录它。
 - `chat_id`：定位用户会话。
 - event `seq`：确认 SSE replay 和事件顺序。
 - run terminal state：确认 `succeeded`、`failed`、`canceled` 是否被迟到事件覆盖。
 - `MODEL_PROVIDER` 和模型 HTTP 状态：定位真实模型调用失败。
 
-后续需要接入结构化日志、metrics 和 trace，便于观测队列延迟、模型延迟、sandbox 启动耗时和失败率。
+OpenTelemetry traces 默认关闭，避免本地和 CI 误连外部 collector。需要导出到 OTLP HTTP collector 时，在三个服务上配置：
+
+```bash
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+# 或只覆盖 traces endpoint:
+# OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
+OTEL_EXPORTER_OTLP_INSECURE=true
+# collector 需要鉴权时使用，生产环境建议通过 Secret 注入:
+# OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>,x-tenant=niceagent"
+```
+
+服务启动后会以 `control_plane`、`agent_runtime`、`sandbox_executor` 作为默认 service name，也可以用 `OTEL_SERVICE_NAME` 覆盖。当前 OpenTelemetry 会为每个入站 HTTP 请求创建 server span，并通过 `traceparent` 在 Control Plane、Agent Runtime 和 Sandbox Executor 之间传播；`X-Trace-ID` 继续保留，便于日志、audit event 和非 OTel 工具串联。内部 span 已覆盖 Control Plane HTTP dispatcher、Redis run queue enqueue/process/fetch execution context、Runtime run execute、模型调用、tool invoke、HTTP Skill 请求、Runtime 调 Sandbox Executor、Sandbox Executor 命令执行和 Runtime 回写 Control Plane。DB repository 和 Redis 低层命令级 span 仍是后续工作。
+
+三服务都提供 `GET /metrics`，输出 Prometheus text exposition 风格指标。当前内置指标覆盖：
+
+- `niceagent_http_requests_total`：按 `service/method/path/status` 统计 HTTP 请求。
+- `niceagent_http_request_duration_seconds_*`：按同样标签统计 HTTP 请求耗时。
+- `niceagent_runs_created_total`：Control Plane 成功创建 run 的次数。
+- `niceagent_quota_denials_total`：Control Plane 配额拒绝次数。
+- `niceagent_runtime_runs_total`：Agent Runtime 执行结果次数。
+- `niceagent_model_runs_total`：Agent Runtime 按 provider/model/status/error_class/fallback 统计模型 run。
+- `niceagent_model_latency_seconds_*`：Agent Runtime 按 provider/model 统计模型调用耗时。
+- `niceagent_model_health_probe_total`：Agent Runtime 主动模型探针成功/失败次数。
+- `niceagent_model_health_probe_duration_seconds_*`：Agent Runtime 主动模型探针耗时。
+- `niceagent_sandbox_exec_total`：Sandbox Executor 命令执行结果次数。
+
+这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span 和主要 agent 执行内部 span；后续还需要继续补 DB repository、Redis 低层命令 span，以及外部告警系统接入。
 
 ## Sandbox 安全边界
 

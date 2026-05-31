@@ -13,40 +13,54 @@ import (
 )
 
 type Store struct {
-	mu           sync.RWMutex
-	users        map[string]protocol.User
-	chats        map[string]protocol.ChatSession
-	messages     map[string][]protocol.Message
-	runs         map[string]protocol.Run
-	runUsage     map[string]protocol.RunUsage
-	events       map[string][]protocol.RunEvent
-	auditEvents  []protocol.AuditEvent
-	workspaces   map[string]protocol.Workspace
-	artifacts    map[string]protocol.Artifact
-	skills       map[string]protocol.Skill
-	skillGrants  map[string][]string
-	skillSecrets map[string]map[string]protocol.RuntimeSecret
-	subscribers  map[string]map[chan protocol.RunEvent]struct{}
-	seq          map[string]int64
+	mu             sync.RWMutex
+	users          map[string]protocol.User
+	identities     map[string]protocol.UserIdentity
+	userIdentities map[string]string
+	projects       map[string]protocol.Project
+	chats          map[string]protocol.ChatSession
+	messages       map[string][]protocol.Message
+	runs           map[string]protocol.Run
+	runUsage       map[string]protocol.RunUsage
+	events         map[string][]protocol.RunEvent
+	auditEvents    []protocol.AuditEvent
+	workspaces     map[string]protocol.Workspace
+	artifacts      map[string]protocol.Artifact
+	invitations    map[string]protocol.Invitation
+	skills         map[string]protocol.Skill
+	skillGrants    map[string][]string
+	skillSecrets   map[string]map[string]protocol.RuntimeSecret
+	orgRoles       map[string][]string
+	projectRoles   map[string][]string
+	quotaPolicies  map[string]protocol.ProjectQuotaPolicy
+	subscribers    map[string]map[chan protocol.RunEvent]struct{}
+	seq            map[string]int64
 }
 
 func NewStore() *Store {
 	now := time.Now().UTC()
 	store := &Store{
-		users:        map[string]protocol.User{},
-		chats:        map[string]protocol.ChatSession{},
-		messages:     map[string][]protocol.Message{},
-		runs:         map[string]protocol.Run{},
-		runUsage:     map[string]protocol.RunUsage{},
-		events:       map[string][]protocol.RunEvent{},
-		auditEvents:  []protocol.AuditEvent{},
-		workspaces:   map[string]protocol.Workspace{},
-		artifacts:    map[string]protocol.Artifact{},
-		skills:       map[string]protocol.Skill{},
-		skillGrants:  map[string][]string{},
-		skillSecrets: map[string]map[string]protocol.RuntimeSecret{},
-		subscribers:  map[string]map[chan protocol.RunEvent]struct{}{},
-		seq:          map[string]int64{},
+		users:          map[string]protocol.User{},
+		identities:     map[string]protocol.UserIdentity{},
+		userIdentities: map[string]string{},
+		projects:       map[string]protocol.Project{},
+		chats:          map[string]protocol.ChatSession{},
+		messages:       map[string][]protocol.Message{},
+		runs:           map[string]protocol.Run{},
+		runUsage:       map[string]protocol.RunUsage{},
+		events:         map[string][]protocol.RunEvent{},
+		auditEvents:    []protocol.AuditEvent{},
+		workspaces:     map[string]protocol.Workspace{},
+		artifacts:      map[string]protocol.Artifact{},
+		invitations:    map[string]protocol.Invitation{},
+		skills:         map[string]protocol.Skill{},
+		skillGrants:    map[string][]string{},
+		skillSecrets:   map[string]map[string]protocol.RuntimeSecret{},
+		orgRoles:       map[string][]string{},
+		projectRoles:   map[string][]string{},
+		quotaPolicies:  map[string]protocol.ProjectQuotaPolicy{},
+		subscribers:    map[string]map[chan protocol.RunEvent]struct{}{},
+		seq:            map[string]int64{},
 	}
 	store.users["demo-user"] = protocol.User{
 		ID:        "demo-user",
@@ -54,6 +68,12 @@ func NewStore() *Store {
 		Name:      "Demo User",
 		Status:    "active",
 		CreatedAt: now,
+	}
+	store.projects["demo-project"] = protocol.Project{
+		ID:             "demo-project",
+		OrganizationID: "demo-org",
+		Name:           "Demo Project",
+		CreatedAt:      now,
 	}
 	store.skills["cli.exec"] = protocol.Skill{
 		ID:            "cli.exec",
@@ -87,6 +107,8 @@ func NewStore() *Store {
 		Enabled:       true,
 	}
 	store.skillGrants[skillGrantKey("demo-user", "demo-project")] = []string{"cli.exec", "workspace.read"}
+	store.orgRoles[orgRoleKey("demo-user", "demo-org")] = []string{"owner"}
+	store.projectRoles[projectRoleKey("demo-user", "demo-project")] = []string{"owner"}
 	return store
 }
 
@@ -245,6 +267,536 @@ func (s *Store) GetRun(runID string) (protocol.Run, error) {
 		return protocol.Run{}, app.ErrNotFound
 	}
 	run.Usage = s.runUsage[runID]
+	return run, nil
+}
+
+func (s *Store) CountActiveRuns(userID, projectID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, run := range s.runs {
+		if run.UserID != userID || !isActiveRunStatus(run.Status) {
+			continue
+		}
+		chat, ok := s.chats[run.ChatID]
+		if ok && chat.ProjectID == projectID {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Store) CountRunsCreatedSince(userID, projectID string, since time.Time) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, run := range s.runs {
+		if run.UserID != userID || run.CreatedAt.Before(since) {
+			continue
+		}
+		chat, ok := s.chats[run.ChatID]
+		if ok && chat.ProjectID == projectID {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Store) SumRunUsageTokensSince(userID, projectID string, since time.Time) int {
+	return s.SumRunUsageSince(userID, projectID, since).TotalTokens
+}
+
+func (s *Store) SumRunUsageSince(userID, projectID string, since time.Time) protocol.RunUsage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	total := protocol.RunUsage{}
+	for runID, usage := range s.runUsage {
+		run, ok := s.runs[runID]
+		if !ok || run.UserID != userID || run.CreatedAt.Before(since) {
+			continue
+		}
+		chat, ok := s.chats[run.ChatID]
+		if !ok || chat.ProjectID != projectID {
+			continue
+		}
+		normalized := protocol.NormalizeRunUsage(usage)
+		total.InputTokens += normalized.InputTokens
+		total.OutputTokens += normalized.OutputTokens
+		total.ReasoningTokens += normalized.ReasoningTokens
+		total.CachedTokens += normalized.CachedTokens
+		total.TotalTokens += normalized.TotalTokens
+		total.Cost += normalized.Cost
+		total.LatencyMillis += normalized.LatencyMillis
+		total.RetryCount += normalized.RetryCount
+		total.ToolCalls += normalized.ToolCalls
+		total.ToolErrors += normalized.ToolErrors
+		total.SandboxCommands += normalized.SandboxCommands
+		total.SandboxDurationMillis += normalized.SandboxDurationMillis
+		total.SandboxOutputBytes += normalized.SandboxOutputBytes
+		total.SandboxCPUMillis += normalized.SandboxCPUMillis
+		if normalized.SandboxMemoryMaxBytes > total.SandboxMemoryMaxBytes {
+			total.SandboxMemoryMaxBytes = normalized.SandboxMemoryMaxBytes
+		}
+		total.ArtifactCount += normalized.ArtifactCount
+		total.ArtifactBytes += normalized.ArtifactBytes
+	}
+	return total
+}
+
+func (s *Store) ProjectBelongsToOrganization(projectID, orgID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	project, ok := s.projects[projectID]
+	return ok && project.OrganizationID == orgID
+}
+
+func (s *Store) BindUserIdentity(identity protocol.UserIdentity) (protocol.UserIdentity, error) {
+	identity.Provider = strings.ToLower(strings.TrimSpace(identity.Provider))
+	identity.Issuer = strings.TrimSpace(identity.Issuer)
+	identity.Subject = strings.TrimSpace(identity.Subject)
+	identity.UserID = strings.TrimSpace(identity.UserID)
+	identity.Email = strings.ToLower(strings.TrimSpace(identity.Email))
+	identity.Name = strings.TrimSpace(identity.Name)
+	if identity.Provider == "" || identity.Issuer == "" || identity.Subject == "" || identity.UserID == "" {
+		return protocol.UserIdentity{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := identityKey(identity.Provider, identity.Issuer, identity.Subject)
+	userKey := userIdentityKey(identity.Provider, identity.UserID)
+	if existing, ok := s.identities[key]; ok {
+		if existing.UserID != identity.UserID {
+			return protocol.UserIdentity{}, app.ErrIdentityConflict
+		}
+		existing.Email = firstNonEmpty(identity.Email, existing.Email)
+		existing.Name = firstNonEmpty(identity.Name, existing.Name)
+		existing.UpdatedAt = now
+		s.identities[key] = existing
+		return existing, nil
+	}
+	if existingKey, ok := s.userIdentities[userKey]; ok && existingKey != key {
+		return protocol.UserIdentity{}, app.ErrIdentityConflict
+	}
+	user := s.users[identity.UserID]
+	user.ID = identity.UserID
+	user.Email = firstNonEmpty(identity.Email, user.Email, identity.UserID+"@niceagent.local")
+	user.Name = firstNonEmpty(identity.Name, user.Name, identity.UserID)
+	user.Status = firstNonEmpty(user.Status, "active")
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = now
+	}
+	s.users[identity.UserID] = user
+	identity.ID = platform.NewID("uid")
+	identity.CreatedAt = now
+	identity.UpdatedAt = now
+	s.identities[key] = identity
+	s.userIdentities[userKey] = key
+	return identity, nil
+}
+
+func (s *Store) ListOrganizationRoles(userID, orgID string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string(nil), s.orgRoles[orgRoleKey(userID, orgID)]...)
+}
+
+func (s *Store) ListProjectRoles(userID, projectID string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string(nil), s.projectRoles[projectRoleKey(userID, projectID)]...)
+}
+
+func (s *Store) ListOrganizationMembers(orgID string) []protocol.OrganizationMember {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	members := make([]protocol.OrganizationMember, 0)
+	for key, roles := range s.orgRoles {
+		userID, memberOrgID, ok := splitOrgRoleKey(key)
+		if !ok || memberOrgID != orgID || len(roles) == 0 {
+			continue
+		}
+		member := protocol.OrganizationMember{
+			ID:             "orgmem_" + userID + "_" + orgID,
+			UserID:         userID,
+			OrganizationID: orgID,
+			Role:           roles[0],
+			CreatedAt:      time.Now().UTC(),
+			UpdatedAt:      time.Now().UTC(),
+		}
+		if user, ok := s.users[userID]; ok {
+			member.Email = user.Email
+			member.Name = user.Name
+		}
+		members = append(members, member)
+	}
+	sort.Slice(members, func(i, j int) bool {
+		if members[i].Role == members[j].Role {
+			return members[i].UserID < members[j].UserID
+		}
+		return members[i].Role < members[j].Role
+	})
+	return members
+}
+
+func (s *Store) UpsertOrganizationMember(orgID string, input protocol.OrganizationMemberInput) (protocol.OrganizationMember, error) {
+	userID := strings.TrimSpace(input.UserID)
+	role := normalizeMemberRole(input.Role)
+	if userID == "" || role == "" {
+		return protocol.OrganizationMember{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user := s.users[userID]
+	user.ID = userID
+	user.Email = firstNonEmpty(strings.TrimSpace(input.Email), user.Email, userID+"@niceagent.local")
+	user.Name = firstNonEmpty(strings.TrimSpace(input.Name), user.Name, userID)
+	user.Status = firstNonEmpty(user.Status, "active")
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = now
+	}
+	s.users[userID] = user
+	s.orgRoles[orgRoleKey(userID, orgID)] = []string{role}
+	return protocol.OrganizationMember{
+		ID:             "orgmem_" + userID + "_" + orgID,
+		UserID:         userID,
+		OrganizationID: orgID,
+		Role:           role,
+		Email:          user.Email,
+		Name:           user.Name,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}, nil
+}
+
+func (s *Store) RemoveOrganizationMember(orgID, userID string) (protocol.OrganizationMember, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := orgRoleKey(userID, orgID)
+	roles := s.orgRoles[key]
+	if len(roles) == 0 {
+		return protocol.OrganizationMember{}, app.ErrNotFound
+	}
+	now := time.Now().UTC()
+	member := protocol.OrganizationMember{
+		ID:             "orgmem_" + userID + "_" + orgID,
+		UserID:         userID,
+		OrganizationID: orgID,
+		Role:           roles[0],
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if user, ok := s.users[userID]; ok {
+		member.Email = user.Email
+		member.Name = user.Name
+	}
+	delete(s.orgRoles, key)
+	return member, nil
+}
+
+func (s *Store) ListInvitations(orgID string) []protocol.Invitation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	invitations := make([]protocol.Invitation, 0)
+	now := time.Now().UTC()
+	for _, invitation := range s.invitations {
+		if invitation.OrganizationID != orgID {
+			continue
+		}
+		invitation.Token = ""
+		if invitation.Status == protocol.InvitationPending && !invitation.ExpiresAt.After(now) {
+			invitation.Status = protocol.InvitationExpired
+		}
+		invitations = append(invitations, invitation)
+	}
+	sort.Slice(invitations, func(i, j int) bool {
+		return invitations[i].CreatedAt.After(invitations[j].CreatedAt)
+	})
+	return invitations
+}
+
+func (s *Store) CreateInvitation(orgID, invitedByUserID string, input protocol.InvitationInput) (protocol.Invitation, error) {
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	role := normalizeMemberRole(input.Role)
+	projectID := strings.TrimSpace(input.ProjectID)
+	if email == "" || !strings.Contains(email, "@") || role == "" {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	expiresInHours := input.ExpiresInHours
+	if expiresInHours <= 0 {
+		expiresInHours = 168
+	}
+	if expiresInHours > 24*30 {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if projectID != "" {
+		project, ok := s.projects[projectID]
+		if !ok || project.OrganizationID != orgID {
+			return protocol.Invitation{}, app.ErrInvalidInput
+		}
+	}
+	invitation := protocol.Invitation{
+		ID:              platform.NewID("inv"),
+		Token:           platform.NewID("invite_token"),
+		OrganizationID:  orgID,
+		ProjectID:       projectID,
+		Email:           email,
+		Role:            role,
+		Status:          protocol.InvitationPending,
+		InvitedByUserID: invitedByUserID,
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(time.Duration(expiresInHours) * time.Hour),
+	}
+	s.invitations[invitation.Token] = invitation
+	return invitation, nil
+}
+
+func (s *Store) AcceptInvitation(token, userID, email, name string) (protocol.Invitation, error) {
+	token = strings.TrimSpace(token)
+	userID = strings.TrimSpace(userID)
+	email = strings.ToLower(strings.TrimSpace(email))
+	if token == "" || userID == "" || email == "" {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	invitation, ok := s.invitations[token]
+	if !ok {
+		return protocol.Invitation{}, app.ErrNotFound
+	}
+	if invitation.Status != protocol.InvitationPending {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	if !invitation.ExpiresAt.After(now) {
+		invitation.Status = protocol.InvitationExpired
+		s.invitations[token] = invitation
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	if email != invitation.Email {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	user := s.users[userID]
+	user.ID = userID
+	user.Email = invitation.Email
+	user.Name = firstNonEmpty(strings.TrimSpace(name), user.Name, userID)
+	user.Status = firstNonEmpty(user.Status, "active")
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = now
+	}
+	s.users[userID] = user
+	if invitation.ProjectID != "" {
+		s.projectRoles[projectRoleKey(userID, invitation.ProjectID)] = []string{invitation.Role}
+	} else {
+		s.orgRoles[orgRoleKey(userID, invitation.OrganizationID)] = []string{invitation.Role}
+	}
+	invitation.Status = protocol.InvitationAccepted
+	invitation.AcceptedByUserID = userID
+	invitation.AcceptedAt = &now
+	s.invitations[token] = invitation
+	invitation.Token = ""
+	return invitation, nil
+}
+
+func (s *Store) ListProjectMembers(projectID string) []protocol.ProjectMember {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	members := make([]protocol.ProjectMember, 0)
+	for key, roles := range s.projectRoles {
+		userID, memberProjectID, ok := splitProjectRoleKey(key)
+		if !ok || memberProjectID != projectID || len(roles) == 0 {
+			continue
+		}
+		member := protocol.ProjectMember{
+			ID:        "prjmem_" + userID + "_" + projectID,
+			UserID:    userID,
+			ProjectID: projectID,
+			Role:      roles[0],
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		}
+		if user, ok := s.users[userID]; ok {
+			member.Email = user.Email
+			member.Name = user.Name
+		}
+		members = append(members, member)
+	}
+	sort.Slice(members, func(i, j int) bool {
+		if members[i].Role == members[j].Role {
+			return members[i].UserID < members[j].UserID
+		}
+		return members[i].Role < members[j].Role
+	})
+	return members
+}
+
+func (s *Store) UpsertProjectMember(projectID string, input protocol.ProjectMemberInput) (protocol.ProjectMember, error) {
+	userID := strings.TrimSpace(input.UserID)
+	role := normalizeMemberRole(input.Role)
+	if userID == "" || role == "" {
+		return protocol.ProjectMember{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user := s.users[userID]
+	user.ID = userID
+	user.Email = firstNonEmpty(strings.TrimSpace(input.Email), user.Email, userID+"@niceagent.local")
+	user.Name = firstNonEmpty(strings.TrimSpace(input.Name), user.Name, userID)
+	user.Status = firstNonEmpty(user.Status, "active")
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = now
+	}
+	s.users[userID] = user
+	s.projectRoles[projectRoleKey(userID, projectID)] = []string{role}
+	return protocol.ProjectMember{
+		ID:        "prjmem_" + userID + "_" + projectID,
+		UserID:    userID,
+		ProjectID: projectID,
+		Role:      role,
+		Email:     user.Email,
+		Name:      user.Name,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, nil
+}
+
+func (s *Store) RemoveProjectMember(projectID, userID string) (protocol.ProjectMember, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := projectRoleKey(userID, projectID)
+	roles := s.projectRoles[key]
+	if len(roles) == 0 {
+		return protocol.ProjectMember{}, app.ErrNotFound
+	}
+	now := time.Now().UTC()
+	member := protocol.ProjectMember{
+		ID:        "prjmem_" + userID + "_" + projectID,
+		UserID:    userID,
+		ProjectID: projectID,
+		Role:      roles[0],
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if user, ok := s.users[userID]; ok {
+		member.Email = user.Email
+		member.Name = user.Name
+	}
+	delete(s.projectRoles, key)
+	return member, nil
+}
+
+func (s *Store) GetProjectQuotaPolicy(projectID string) (protocol.ProjectQuotaPolicy, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	policy, ok := s.quotaPolicies[projectID]
+	return policy, ok
+}
+
+func (s *Store) SetProjectQuotaPolicy(projectID string, input protocol.ProjectQuotaPolicyInput) (protocol.ProjectQuotaPolicy, error) {
+	if input.MaxConcurrentRuns < 0 || input.MaxRunsPerHour < 0 || input.MaxModelTokensPerDay < 0 ||
+		input.MaxToolCallsPerDay < 0 || input.MaxSandboxSecondsPerDay < 0 {
+		return protocol.ProjectQuotaPolicy{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	policy := s.quotaPolicies[projectID]
+	if policy.CreatedAt.IsZero() {
+		policy.CreatedAt = now
+	}
+	policy.ProjectID = projectID
+	policy.MaxConcurrentRuns = input.MaxConcurrentRuns
+	policy.MaxRunsPerHour = input.MaxRunsPerHour
+	policy.MaxModelTokensPerDay = input.MaxModelTokensPerDay
+	policy.MaxToolCallsPerDay = input.MaxToolCallsPerDay
+	policy.MaxSandboxSecondsPerDay = input.MaxSandboxSecondsPerDay
+	policy.UpdatedAt = now
+	s.quotaPolicies[projectID] = policy
+	return policy, nil
+}
+
+func (s *Store) SetProjectRole(userID, projectID, role string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.projectRoles[projectRoleKey(userID, projectID)] = []string{role}
+}
+
+func (s *Store) SetOrganizationRole(userID, orgID, role string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.orgRoles[orgRoleKey(userID, orgID)] = []string{role}
+}
+
+func (s *Store) SetProjectOrganization(projectID, orgID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	project := s.projects[projectID]
+	project.ID = projectID
+	project.OrganizationID = orgID
+	project.Name = firstNonEmpty(project.Name, projectID)
+	if project.CreatedAt.IsZero() {
+		project.CreatedAt = time.Now().UTC()
+	}
+	s.projects[projectID] = project
+}
+
+func (s *Store) ClaimRunAttempt(runID, attemptID, claimedBy string, leaseExpiresAt time.Time) (protocol.Run, error) {
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runs[runID]
+	if !ok {
+		return protocol.Run{}, app.ErrNotFound
+	}
+	if app.IsTerminalRunStatus(run.Status) {
+		return run, nil
+	}
+	if attemptID == "" {
+		return protocol.Run{}, app.ErrAttemptMismatch
+	}
+	if run.AttemptID != "" && run.AttemptID != attemptID && (run.LeaseExpiresAt == nil || run.LeaseExpiresAt.After(now)) {
+		return protocol.Run{}, app.ErrAttemptMismatch
+	}
+	if run.AttemptID != attemptID {
+		run.AttemptCount++
+	}
+	run.AttemptID = attemptID
+	run.ClaimedBy = claimedBy
+	run.LeaseExpiresAt = &leaseExpiresAt
+	run.Status = protocol.RunRunning
+	if run.StartedAt == nil {
+		run.StartedAt = &now
+	}
+	run.UpdatedAt = now
+	s.runs[runID] = run
+	return run, nil
+}
+
+func isActiveRunStatus(status protocol.RunStatus) bool {
+	return status == protocol.RunQueued || status == protocol.RunRunning || status == protocol.RunWaitingForApproval
+}
+
+func (s *Store) CheckRunAttempt(runID, attemptID string) (protocol.Run, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	run, ok := s.runs[runID]
+	if !ok {
+		return protocol.Run{}, app.ErrNotFound
+	}
+	if run.AttemptID == "" {
+		if attemptID == "" {
+			return run, nil
+		}
+		return protocol.Run{}, app.ErrAttemptMismatch
+	}
+	if attemptID != run.AttemptID {
+		return protocol.Run{}, app.ErrAttemptMismatch
+	}
 	return run, nil
 }
 
@@ -576,6 +1128,47 @@ func (s *Store) ListAuditEvents(actor app.ActorContext, opts app.AuditEventListO
 
 func skillGrantKey(userID, projectID string) string {
 	return userID + "\x00" + projectID
+}
+
+func identityKey(provider, issuer, subject string) string {
+	return provider + "\x00" + issuer + "\x00" + subject
+}
+
+func userIdentityKey(provider, userID string) string {
+	return provider + "\x00" + userID
+}
+
+func orgRoleKey(userID, orgID string) string {
+	return userID + "\x00" + orgID
+}
+
+func splitOrgRoleKey(key string) (string, string, bool) {
+	parts := strings.Split(key, "\x00")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func projectRoleKey(userID, projectID string) string {
+	return userID + "\x00" + projectID
+}
+
+func splitProjectRoleKey(key string) (string, string, bool) {
+	parts := strings.Split(key, "\x00")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func normalizeMemberRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "owner", "admin", "member", "editor", "writer", "viewer":
+		return strings.ToLower(strings.TrimSpace(role))
+	default:
+		return ""
+	}
 }
 
 func appendUnique(values []string, next string) []string {

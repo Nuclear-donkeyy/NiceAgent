@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 )
 
@@ -17,6 +18,9 @@ func TestHTTPExecutorCallsSandboxService(t *testing.T) {
 		}
 		if r.Header.Get("Authorization") != "Bearer secret" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("X-Trace-ID") != "trace-sandbox-1" {
+			t.Fatalf("trace id = %q", r.Header.Get("X-Trace-ID"))
 		}
 		var request protocol.SandboxCommand
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -34,7 +38,7 @@ func TestHTTPExecutorCallsSandboxService(t *testing.T) {
 	defer server.Close()
 
 	executor := NewHTTPExecutor(server.URL, "secret")
-	result := executor.Execute(context.Background(), protocol.SandboxCommand{
+	result := executor.Execute(platform.ContextWithTraceID(context.Background(), "trace-sandbox-1"), protocol.SandboxCommand{
 		RunID:       "run-1",
 		WorkspaceID: "ws-1",
 		Command:     []string{"echo", "hello"},

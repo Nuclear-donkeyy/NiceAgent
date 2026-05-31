@@ -216,12 +216,14 @@ func (s *PostgresStore) AddAssistantMessage(chatID, runID, content string) (prot
 
 func (s *PostgresStore) GetRun(runID string) (protocol.Run, error) {
 	var run protocol.Run
-	var startedAt, finishedAt sql.NullTime
-	var errText sql.NullString
+	var startedAt, finishedAt, leaseExpiresAt sql.NullTime
+	var errText, attemptID, claimedBy sql.NullString
 	if err := s.db.QueryRow(`
-		SELECT id, chat_id, user_id, workspace_id, status, error, created_at, updated_at, started_at, finished_at
+		SELECT id, chat_id, user_id, workspace_id, active_attempt_id, claimed_by, lease_expires_at, attempt_count,
+		       status, error, created_at, updated_at, started_at, finished_at
 		FROM runs WHERE id = $1`, runID).Scan(
-		&run.ID, &run.ChatID, &run.UserID, &run.WorkspaceID, &run.Status, &errText, &run.CreatedAt, &run.UpdatedAt, &startedAt, &finishedAt,
+		&run.ID, &run.ChatID, &run.UserID, &run.WorkspaceID, &attemptID, &claimedBy, &leaseExpiresAt, &run.AttemptCount,
+		&run.Status, &errText, &run.CreatedAt, &run.UpdatedAt, &startedAt, &finishedAt,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return protocol.Run{}, app.ErrNotFound
@@ -230,6 +232,15 @@ func (s *PostgresStore) GetRun(runID string) (protocol.Run, error) {
 	}
 	if errText.Valid {
 		run.Error = errText.String
+	}
+	if attemptID.Valid {
+		run.AttemptID = attemptID.String
+	}
+	if claimedBy.Valid {
+		run.ClaimedBy = claimedBy.String
+	}
+	if leaseExpiresAt.Valid {
+		run.LeaseExpiresAt = &leaseExpiresAt.Time
 	}
 	if startedAt.Valid {
 		run.StartedAt = &startedAt.Time
@@ -242,6 +253,707 @@ func (s *PostgresStore) GetRun(runID string) (protocol.Run, error) {
 		return protocol.Run{}, err
 	}
 	run.Usage = usage
+	return run, nil
+}
+
+func (s *PostgresStore) CountActiveRuns(userID, projectID string) int {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM runs r
+		JOIN chat_sessions c ON c.id = r.chat_id
+		WHERE r.user_id = $1
+		  AND c.project_id = $2
+		  AND r.status IN ($3, $4, $5)`,
+		userID, projectID, protocol.RunQueued, protocol.RunRunning, protocol.RunWaitingForApproval,
+	).Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+func (s *PostgresStore) CountRunsCreatedSince(userID, projectID string, since time.Time) int {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM runs r
+		JOIN chat_sessions c ON c.id = r.chat_id
+		WHERE r.user_id = $1
+		  AND c.project_id = $2
+		  AND r.created_at >= $3`,
+		userID, projectID, since,
+	).Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+func (s *PostgresStore) SumRunUsageTokensSince(userID, projectID string, since time.Time) int {
+	return s.SumRunUsageSince(userID, projectID, since).TotalTokens
+}
+
+func (s *PostgresStore) SumRunUsageSince(userID, projectID string, since time.Time) protocol.RunUsage {
+	var usage protocol.RunUsage
+	err := s.db.QueryRow(`
+		SELECT
+			COALESCE(SUM(ru.input_tokens), 0),
+			COALESCE(SUM(ru.output_tokens), 0),
+			COALESCE(SUM(ru.reasoning_tokens), 0),
+			COALESCE(SUM(ru.cached_tokens), 0),
+			COALESCE(SUM(
+				CASE
+					WHEN ru.total_tokens > 0 THEN ru.total_tokens
+					ELSE ru.input_tokens + ru.output_tokens
+				END
+			), 0),
+			COALESCE(SUM(ru.cost), 0),
+			COALESCE(SUM(ru.latency_millis), 0),
+			COALESCE(SUM(ru.retry_count), 0),
+			COALESCE(SUM(ru.tool_calls), 0),
+			COALESCE(SUM(ru.tool_errors), 0),
+			COALESCE(SUM(ru.sandbox_commands), 0),
+			COALESCE(SUM(ru.sandbox_duration_millis), 0),
+			COALESCE(SUM(ru.sandbox_output_bytes), 0),
+			COALESCE(SUM(ru.sandbox_cpu_millis), 0),
+			COALESCE(MAX(ru.sandbox_memory_max_bytes), 0),
+			COALESCE(SUM(ru.artifact_count), 0),
+			COALESCE(SUM(ru.artifact_bytes), 0)
+		FROM run_usage ru
+		JOIN runs r ON r.id = ru.run_id
+		JOIN chat_sessions c ON c.id = r.chat_id
+		WHERE r.user_id = $1
+		  AND c.project_id = $2
+		  AND r.created_at >= $3`,
+		userID, projectID, since,
+	).Scan(
+		&usage.InputTokens,
+		&usage.OutputTokens,
+		&usage.ReasoningTokens,
+		&usage.CachedTokens,
+		&usage.TotalTokens,
+		&usage.Cost,
+		&usage.LatencyMillis,
+		&usage.RetryCount,
+		&usage.ToolCalls,
+		&usage.ToolErrors,
+		&usage.SandboxCommands,
+		&usage.SandboxDurationMillis,
+		&usage.SandboxOutputBytes,
+		&usage.SandboxCPUMillis,
+		&usage.SandboxMemoryMaxBytes,
+		&usage.ArtifactCount,
+		&usage.ArtifactBytes,
+	)
+	if err != nil {
+		return protocol.RunUsage{}
+	}
+	return protocol.NormalizeRunUsage(usage)
+}
+
+func (s *PostgresStore) ProjectBelongsToOrganization(projectID, orgID string) bool {
+	var exists bool
+	err := s.db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM projects
+			WHERE id = $1 AND organization_id = $2
+		)`, projectID, orgID).Scan(&exists)
+	return err == nil && exists
+}
+
+func (s *PostgresStore) BindUserIdentity(identity protocol.UserIdentity) (protocol.UserIdentity, error) {
+	identity.Provider = strings.ToLower(strings.TrimSpace(identity.Provider))
+	identity.Issuer = strings.TrimSpace(identity.Issuer)
+	identity.Subject = strings.TrimSpace(identity.Subject)
+	identity.UserID = strings.TrimSpace(identity.UserID)
+	identity.Email = strings.ToLower(strings.TrimSpace(identity.Email))
+	identity.Name = strings.TrimSpace(identity.Name)
+	if identity.Provider == "" || identity.Issuer == "" || identity.Subject == "" || identity.UserID == "" {
+		return protocol.UserIdentity{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return protocol.UserIdentity{}, err
+	}
+	defer tx.Rollback()
+	var existing protocol.UserIdentity
+	err = tx.QueryRow(`
+		SELECT id, user_id, provider, issuer, subject, COALESCE(email, ''), COALESCE(name, ''), created_at, updated_at
+		FROM user_identities
+		WHERE provider = $1 AND issuer = $2 AND subject = $3
+		FOR UPDATE`, identity.Provider, identity.Issuer, identity.Subject).Scan(
+		&existing.ID, &existing.UserID, &existing.Provider, &existing.Issuer, &existing.Subject,
+		&existing.Email, &existing.Name, &existing.CreatedAt, &existing.UpdatedAt,
+	)
+	if err == nil {
+		if existing.UserID != identity.UserID {
+			return protocol.UserIdentity{}, app.ErrIdentityConflict
+		}
+		existing.Email = firstNonEmpty(identity.Email, existing.Email)
+		existing.Name = firstNonEmpty(identity.Name, existing.Name)
+		existing.UpdatedAt = now
+		if _, err := tx.Exec(`
+			UPDATE user_identities
+			SET email = NULLIF($1, ''), name = NULLIF($2, ''), updated_at = $3
+			WHERE id = $4`, existing.Email, existing.Name, existing.UpdatedAt, existing.ID); err != nil {
+			return protocol.UserIdentity{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return protocol.UserIdentity{}, err
+		}
+		return existing, nil
+	}
+	if err != sql.ErrNoRows {
+		return protocol.UserIdentity{}, err
+	}
+	var conflictingID string
+	err = tx.QueryRow(`
+		SELECT id
+		FROM user_identities
+		WHERE provider = $1 AND user_id = $2
+		FOR UPDATE`, identity.Provider, identity.UserID).Scan(&conflictingID)
+	if err == nil {
+		return protocol.UserIdentity{}, app.ErrIdentityConflict
+	}
+	if err != sql.ErrNoRows {
+		return protocol.UserIdentity{}, err
+	}
+	email := firstNonEmpty(identity.Email, identity.UserID+"@niceagent.local")
+	name := firstNonEmpty(identity.Name, identity.UserID)
+	if _, err := tx.Exec(`
+		INSERT INTO users (id, email, name, status, created_at)
+		VALUES ($1, $2, $3, 'active', $4)
+		ON CONFLICT (id)
+		DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, status = 'active'`,
+		identity.UserID, email, name, now); err != nil {
+		return protocol.UserIdentity{}, err
+	}
+	identity.ID = platform.NewID("uid")
+	identity.CreatedAt = now
+	identity.UpdatedAt = now
+	if _, err := tx.Exec(`
+		INSERT INTO user_identities (
+			id, user_id, provider, issuer, subject, email, name, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8, $9)`,
+		identity.ID, identity.UserID, identity.Provider, identity.Issuer, identity.Subject,
+		identity.Email, identity.Name, identity.CreatedAt, identity.UpdatedAt); err != nil {
+		return protocol.UserIdentity{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return protocol.UserIdentity{}, err
+	}
+	return identity, nil
+}
+
+func (s *PostgresStore) ListOrganizationRoles(userID, orgID string) []string {
+	rows, err := s.db.Query(`
+		SELECT role
+		FROM organization_members
+		WHERE user_id = $1 AND organization_id = $2
+		ORDER BY role`, userID, orgID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var roles []string
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err == nil && strings.TrimSpace(role) != "" {
+			roles = append(roles, role)
+		}
+	}
+	return roles
+}
+
+func (s *PostgresStore) ListProjectRoles(userID, projectID string) []string {
+	rows, err := s.db.Query(`
+		SELECT role
+		FROM project_members
+		WHERE user_id = $1 AND project_id = $2
+		ORDER BY role`, userID, projectID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var roles []string
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err == nil && strings.TrimSpace(role) != "" {
+			roles = append(roles, role)
+		}
+	}
+	return roles
+}
+
+func (s *PostgresStore) ListOrganizationMembers(orgID string) []protocol.OrganizationMember {
+	rows, err := s.db.Query(`
+		SELECT om.id, om.user_id, om.organization_id, om.role, u.email, u.name, om.created_at, om.updated_at
+		FROM organization_members om
+		JOIN users u ON u.id = om.user_id
+		WHERE om.organization_id = $1
+		ORDER BY om.role, u.name, om.user_id`, orgID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	members := []protocol.OrganizationMember{}
+	for rows.Next() {
+		var member protocol.OrganizationMember
+		if err := rows.Scan(&member.ID, &member.UserID, &member.OrganizationID, &member.Role, &member.Email, &member.Name, &member.CreatedAt, &member.UpdatedAt); err == nil {
+			members = append(members, member)
+		}
+	}
+	return members
+}
+
+func (s *PostgresStore) UpsertOrganizationMember(orgID string, input protocol.OrganizationMemberInput) (protocol.OrganizationMember, error) {
+	userID := strings.TrimSpace(input.UserID)
+	role := normalizeMemberRole(input.Role)
+	if userID == "" || role == "" {
+		return protocol.OrganizationMember{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	email := strings.TrimSpace(input.Email)
+	if email == "" {
+		email = userID + "@niceagent.local"
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		name = userID
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return protocol.OrganizationMember{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`
+		INSERT INTO users (id, email, name, status, created_at)
+		VALUES ($1, $2, $3, 'active', $4)
+		ON CONFLICT (id)
+		DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, status = 'active'`,
+		userID, email, name, now); err != nil {
+		return protocol.OrganizationMember{}, err
+	}
+	var memberID string
+	if err := tx.QueryRow(`
+		INSERT INTO organization_members (id, user_id, organization_id, role, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (user_id, organization_id)
+		DO UPDATE SET role = EXCLUDED.role, updated_at = EXCLUDED.updated_at
+		RETURNING id`,
+		platform.NewID("orgmem"), userID, orgID, role, now, now).Scan(&memberID); err != nil {
+		return protocol.OrganizationMember{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return protocol.OrganizationMember{}, err
+	}
+	return s.getOrganizationMember(orgID, userID)
+}
+
+func (s *PostgresStore) RemoveOrganizationMember(orgID, userID string) (protocol.OrganizationMember, error) {
+	member, err := s.getOrganizationMember(orgID, userID)
+	if err != nil {
+		return protocol.OrganizationMember{}, err
+	}
+	result, err := s.db.Exec(`DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2`, orgID, userID)
+	if err != nil {
+		return protocol.OrganizationMember{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return protocol.OrganizationMember{}, err
+	}
+	if affected == 0 {
+		return protocol.OrganizationMember{}, app.ErrNotFound
+	}
+	return member, nil
+}
+
+func (s *PostgresStore) ListInvitations(orgID string) []protocol.Invitation {
+	rows, err := s.db.Query(`
+		SELECT id, COALESCE(project_id, ''), email, role,
+		       CASE WHEN status = 'pending' AND expires_at <= now() THEN 'expired' ELSE status END,
+		       invited_by_user_id, COALESCE(accepted_by_user_id, ''), created_at, expires_at, accepted_at
+		FROM invitations
+		WHERE organization_id = $1
+		ORDER BY created_at DESC`, orgID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	invitations := []protocol.Invitation{}
+	for rows.Next() {
+		var invitation protocol.Invitation
+		var status string
+		var acceptedAt sql.NullTime
+		if err := rows.Scan(
+			&invitation.ID,
+			&invitation.ProjectID,
+			&invitation.Email,
+			&invitation.Role,
+			&status,
+			&invitation.InvitedByUserID,
+			&invitation.AcceptedByUserID,
+			&invitation.CreatedAt,
+			&invitation.ExpiresAt,
+			&acceptedAt,
+		); err == nil {
+			invitation.OrganizationID = orgID
+			invitation.Status = protocol.InvitationStatus(status)
+			if acceptedAt.Valid {
+				invitation.AcceptedAt = &acceptedAt.Time
+			}
+			invitations = append(invitations, invitation)
+		}
+	}
+	return invitations
+}
+
+func (s *PostgresStore) CreateInvitation(orgID, invitedByUserID string, input protocol.InvitationInput) (protocol.Invitation, error) {
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	role := normalizeMemberRole(input.Role)
+	projectID := strings.TrimSpace(input.ProjectID)
+	if email == "" || !strings.Contains(email, "@") || role == "" {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	if projectID != "" && !s.ProjectBelongsToOrganization(projectID, orgID) {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	expiresInHours := input.ExpiresInHours
+	if expiresInHours <= 0 {
+		expiresInHours = 168
+	}
+	if expiresInHours > 24*30 {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	invitation := protocol.Invitation{
+		ID:              platform.NewID("inv"),
+		Token:           platform.NewID("invite_token"),
+		OrganizationID:  orgID,
+		ProjectID:       projectID,
+		Email:           email,
+		Role:            role,
+		Status:          protocol.InvitationPending,
+		InvitedByUserID: invitedByUserID,
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(time.Duration(expiresInHours) * time.Hour),
+	}
+	var nullableProjectID any
+	if projectID != "" {
+		nullableProjectID = projectID
+	}
+	if _, err := s.db.Exec(`
+		INSERT INTO invitations (
+			id, token, organization_id, project_id, email, role, status,
+			invited_by_user_id, created_at, expires_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		invitation.ID, invitation.Token, orgID, nullableProjectID, email, role,
+		invitation.Status, invitedByUserID, invitation.CreatedAt, invitation.ExpiresAt,
+	); err != nil {
+		return protocol.Invitation{}, err
+	}
+	return invitation, nil
+}
+
+func (s *PostgresStore) AcceptInvitation(token, userID, email, name string) (protocol.Invitation, error) {
+	token = strings.TrimSpace(token)
+	userID = strings.TrimSpace(userID)
+	email = strings.ToLower(strings.TrimSpace(email))
+	if token == "" || userID == "" || email == "" {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return protocol.Invitation{}, err
+	}
+	defer tx.Rollback()
+	var invitation protocol.Invitation
+	var projectID sql.NullString
+	var status string
+	if err := tx.QueryRow(`
+		SELECT id, organization_id, project_id, email, role, status, invited_by_user_id, created_at, expires_at
+		FROM invitations
+		WHERE token = $1
+		FOR UPDATE`, token).Scan(
+		&invitation.ID,
+		&invitation.OrganizationID,
+		&projectID,
+		&invitation.Email,
+		&invitation.Role,
+		&status,
+		&invitation.InvitedByUserID,
+		&invitation.CreatedAt,
+		&invitation.ExpiresAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.Invitation{}, app.ErrNotFound
+		}
+		return protocol.Invitation{}, err
+	}
+	if projectID.Valid {
+		invitation.ProjectID = projectID.String
+	}
+	if protocol.InvitationStatus(status) != protocol.InvitationPending {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	if !invitation.ExpiresAt.After(now) {
+		_, _ = tx.Exec(`UPDATE invitations SET status = 'expired' WHERE id = $1`, invitation.ID)
+		if err := tx.Commit(); err != nil {
+			return protocol.Invitation{}, err
+		}
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	if email != invitation.Email {
+		return protocol.Invitation{}, app.ErrInvalidInput
+	}
+	displayName := strings.TrimSpace(name)
+	if displayName == "" {
+		displayName = userID
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO users (id, email, name, status, created_at)
+		VALUES ($1, $2, $3, 'active', $4)
+		ON CONFLICT (id)
+		DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, status = 'active'`,
+		userID, invitation.Email, displayName, now); err != nil {
+		return protocol.Invitation{}, err
+	}
+	if invitation.ProjectID != "" {
+		if _, err := tx.Exec(`
+			INSERT INTO project_members (id, user_id, project_id, role, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (user_id, project_id)
+			DO UPDATE SET role = EXCLUDED.role, updated_at = EXCLUDED.updated_at`,
+			platform.NewID("prjmem"), userID, invitation.ProjectID, invitation.Role, now, now); err != nil {
+			return protocol.Invitation{}, err
+		}
+	} else {
+		if _, err := tx.Exec(`
+			INSERT INTO organization_members (id, user_id, organization_id, role, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (user_id, organization_id)
+			DO UPDATE SET role = EXCLUDED.role, updated_at = EXCLUDED.updated_at`,
+			platform.NewID("orgmem"), userID, invitation.OrganizationID, invitation.Role, now, now); err != nil {
+			return protocol.Invitation{}, err
+		}
+	}
+	if _, err := tx.Exec(`
+		UPDATE invitations
+		SET status = 'accepted', accepted_by_user_id = $1, accepted_at = $2
+		WHERE id = $3`, userID, now, invitation.ID); err != nil {
+		return protocol.Invitation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return protocol.Invitation{}, err
+	}
+	invitation.Status = protocol.InvitationAccepted
+	invitation.AcceptedByUserID = userID
+	invitation.AcceptedAt = &now
+	return invitation, nil
+}
+
+func (s *PostgresStore) ListProjectMembers(projectID string) []protocol.ProjectMember {
+	rows, err := s.db.Query(`
+		SELECT pm.id, pm.user_id, pm.project_id, pm.role, u.email, u.name, pm.created_at, pm.updated_at
+		FROM project_members pm
+		JOIN users u ON u.id = pm.user_id
+		WHERE pm.project_id = $1
+		ORDER BY pm.role, u.name, pm.user_id`, projectID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	members := []protocol.ProjectMember{}
+	for rows.Next() {
+		var member protocol.ProjectMember
+		if err := rows.Scan(&member.ID, &member.UserID, &member.ProjectID, &member.Role, &member.Email, &member.Name, &member.CreatedAt, &member.UpdatedAt); err == nil {
+			members = append(members, member)
+		}
+	}
+	return members
+}
+
+func (s *PostgresStore) UpsertProjectMember(projectID string, input protocol.ProjectMemberInput) (protocol.ProjectMember, error) {
+	userID := strings.TrimSpace(input.UserID)
+	role := normalizeMemberRole(input.Role)
+	if userID == "" || role == "" {
+		return protocol.ProjectMember{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	email := strings.TrimSpace(input.Email)
+	if email == "" {
+		email = userID + "@niceagent.local"
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		name = userID
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return protocol.ProjectMember{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`
+		INSERT INTO users (id, email, name, status, created_at)
+		VALUES ($1, $2, $3, 'active', $4)
+		ON CONFLICT (id)
+		DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, status = 'active'`,
+		userID, email, name, now); err != nil {
+		return protocol.ProjectMember{}, err
+	}
+	var memberID string
+	if err := tx.QueryRow(`
+		INSERT INTO project_members (id, user_id, project_id, role, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (user_id, project_id)
+		DO UPDATE SET role = EXCLUDED.role, updated_at = EXCLUDED.updated_at
+		RETURNING id`,
+		platform.NewID("prjmem"), userID, projectID, role, now, now).Scan(&memberID); err != nil {
+		return protocol.ProjectMember{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return protocol.ProjectMember{}, err
+	}
+	return s.getProjectMember(projectID, userID)
+}
+
+func (s *PostgresStore) RemoveProjectMember(projectID, userID string) (protocol.ProjectMember, error) {
+	member, err := s.getProjectMember(projectID, userID)
+	if err != nil {
+		return protocol.ProjectMember{}, err
+	}
+	result, err := s.db.Exec(`DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`, projectID, userID)
+	if err != nil {
+		return protocol.ProjectMember{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return protocol.ProjectMember{}, err
+	}
+	if affected == 0 {
+		return protocol.ProjectMember{}, app.ErrNotFound
+	}
+	return member, nil
+}
+
+func (s *PostgresStore) GetProjectQuotaPolicy(projectID string) (protocol.ProjectQuotaPolicy, bool) {
+	var policy protocol.ProjectQuotaPolicy
+	err := s.db.QueryRow(`
+		SELECT project_id, max_concurrent_runs, max_runs_per_hour, max_model_tokens_per_day,
+		       max_tool_calls_per_day, max_sandbox_seconds_per_day, created_at, updated_at
+		FROM project_quota_policies
+		WHERE project_id = $1`, projectID).Scan(
+		&policy.ProjectID, &policy.MaxConcurrentRuns, &policy.MaxRunsPerHour, &policy.MaxModelTokensPerDay,
+		&policy.MaxToolCallsPerDay, &policy.MaxSandboxSecondsPerDay, &policy.CreatedAt, &policy.UpdatedAt,
+	)
+	if err != nil {
+		return protocol.ProjectQuotaPolicy{}, false
+	}
+	return policy, true
+}
+
+func (s *PostgresStore) SetProjectQuotaPolicy(projectID string, input protocol.ProjectQuotaPolicyInput) (protocol.ProjectQuotaPolicy, error) {
+	if input.MaxConcurrentRuns < 0 || input.MaxRunsPerHour < 0 || input.MaxModelTokensPerDay < 0 ||
+		input.MaxToolCallsPerDay < 0 || input.MaxSandboxSecondsPerDay < 0 {
+		return protocol.ProjectQuotaPolicy{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	var policy protocol.ProjectQuotaPolicy
+	err := s.db.QueryRow(`
+		INSERT INTO project_quota_policies (
+			project_id, max_concurrent_runs, max_runs_per_hour, max_model_tokens_per_day,
+			max_tool_calls_per_day, max_sandbox_seconds_per_day, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (project_id)
+		DO UPDATE SET
+			max_concurrent_runs = EXCLUDED.max_concurrent_runs,
+			max_runs_per_hour = EXCLUDED.max_runs_per_hour,
+			max_model_tokens_per_day = EXCLUDED.max_model_tokens_per_day,
+			max_tool_calls_per_day = EXCLUDED.max_tool_calls_per_day,
+			max_sandbox_seconds_per_day = EXCLUDED.max_sandbox_seconds_per_day,
+			updated_at = EXCLUDED.updated_at
+		RETURNING project_id, max_concurrent_runs, max_runs_per_hour, max_model_tokens_per_day,
+		          max_tool_calls_per_day, max_sandbox_seconds_per_day, created_at, updated_at`,
+		projectID, input.MaxConcurrentRuns, input.MaxRunsPerHour, input.MaxModelTokensPerDay,
+		input.MaxToolCallsPerDay, input.MaxSandboxSecondsPerDay, now, now).Scan(
+		&policy.ProjectID, &policy.MaxConcurrentRuns, &policy.MaxRunsPerHour, &policy.MaxModelTokensPerDay,
+		&policy.MaxToolCallsPerDay, &policy.MaxSandboxSecondsPerDay, &policy.CreatedAt, &policy.UpdatedAt,
+	)
+	if err != nil {
+		return protocol.ProjectQuotaPolicy{}, err
+	}
+	return policy, nil
+}
+
+func (s *PostgresStore) ClaimRunAttempt(runID, attemptID, claimedBy string, leaseExpiresAt time.Time) (protocol.Run, error) {
+	now := time.Now().UTC()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return protocol.Run{}, err
+	}
+	defer tx.Rollback()
+	var status protocol.RunStatus
+	var currentAttempt sql.NullString
+	var currentLease sql.NullTime
+	if err := tx.QueryRow(`SELECT status, active_attempt_id, lease_expires_at FROM runs WHERE id = $1 FOR UPDATE`, runID).Scan(&status, &currentAttempt, &currentLease); err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.Run{}, app.ErrNotFound
+		}
+		return protocol.Run{}, err
+	}
+	if app.IsTerminalRunStatus(status) {
+		if err := tx.Commit(); err != nil {
+			return protocol.Run{}, err
+		}
+		return s.GetRun(runID)
+	}
+	if attemptID == "" {
+		return protocol.Run{}, app.ErrAttemptMismatch
+	}
+	if currentAttempt.Valid && currentAttempt.String != attemptID && (!currentLease.Valid || currentLease.Time.After(now)) {
+		return protocol.Run{}, app.ErrAttemptMismatch
+	}
+	if _, err := tx.Exec(`
+		UPDATE runs
+		SET active_attempt_id = $1,
+		    claimed_by = NULLIF($2, ''),
+		    lease_expires_at = $3,
+		    attempt_count = attempt_count + CASE WHEN active_attempt_id IS DISTINCT FROM $1 THEN 1 ELSE 0 END,
+		    status = $4,
+		    started_at = COALESCE(started_at, $5),
+		    updated_at = $5
+		WHERE id = $6`,
+		attemptID, claimedBy, leaseExpiresAt, protocol.RunRunning, now, runID); err != nil {
+		return protocol.Run{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return protocol.Run{}, err
+	}
+	return s.GetRun(runID)
+}
+
+func (s *PostgresStore) CheckRunAttempt(runID, attemptID string) (protocol.Run, error) {
+	run, err := s.GetRun(runID)
+	if err != nil {
+		return protocol.Run{}, err
+	}
+	if run.AttemptID == "" {
+		if attemptID == "" {
+			return run, nil
+		}
+		return protocol.Run{}, app.ErrAttemptMismatch
+	}
+	if attemptID != run.AttemptID {
+		return protocol.Run{}, app.ErrAttemptMismatch
+	}
 	return run, nil
 }
 
@@ -281,9 +993,12 @@ func (s *PostgresStore) SaveRunUsage(runID string, usage protocol.RunUsage) (pro
 		INSERT INTO run_usage (
 			run_id, provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
 			total_tokens, estimated, cost, currency, latency_millis, retry_count, fallback_from,
-			fallback_to, error_class, created_at, updated_at
+			fallback_to, error_class, tool_calls, tool_errors, sandbox_commands, sandbox_duration_millis,
+			sandbox_output_bytes, sandbox_cpu_millis, sandbox_memory_max_bytes, artifact_count,
+			artifact_bytes, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+			$17, $18, $19, $20, $21, $22, $23, $24, $25, now(), now())
 		ON CONFLICT (run_id) DO UPDATE SET
 			provider = EXCLUDED.provider,
 			model = EXCLUDED.model,
@@ -300,10 +1015,20 @@ func (s *PostgresStore) SaveRunUsage(runID string, usage protocol.RunUsage) (pro
 			fallback_from = EXCLUDED.fallback_from,
 			fallback_to = EXCLUDED.fallback_to,
 			error_class = EXCLUDED.error_class,
+			tool_calls = EXCLUDED.tool_calls,
+			tool_errors = EXCLUDED.tool_errors,
+			sandbox_commands = EXCLUDED.sandbox_commands,
+			sandbox_duration_millis = EXCLUDED.sandbox_duration_millis,
+			sandbox_output_bytes = EXCLUDED.sandbox_output_bytes,
+			sandbox_cpu_millis = EXCLUDED.sandbox_cpu_millis,
+			sandbox_memory_max_bytes = EXCLUDED.sandbox_memory_max_bytes,
+			artifact_count = EXCLUDED.artifact_count,
+			artifact_bytes = EXCLUDED.artifact_bytes,
 			updated_at = now()`,
 		runID, usage.Provider, usage.Model, usage.InputTokens, usage.OutputTokens, usage.ReasoningTokens, usage.CachedTokens,
 		usage.TotalTokens, usage.Estimated, usage.Cost, usage.Currency, usage.LatencyMillis, usage.RetryCount, usage.FallbackFrom,
-		usage.FallbackTo, usage.ErrorClass)
+		usage.FallbackTo, usage.ErrorClass, usage.ToolCalls, usage.ToolErrors, usage.SandboxCommands, usage.SandboxDurationMillis,
+		usage.SandboxOutputBytes, usage.SandboxCPUMillis, usage.SandboxMemoryMaxBytes, usage.ArtifactCount, usage.ArtifactBytes)
 	if err != nil {
 		return protocol.RunUsage{}, err
 	}
@@ -326,12 +1051,16 @@ func (s *PostgresStore) getRunUsage(runID string) (protocol.RunUsage, error) {
 	if err := s.db.QueryRow(`
 		SELECT provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
 		       total_tokens, estimated, cost, currency, latency_millis, retry_count,
-		       fallback_from, fallback_to, error_class
+		       fallback_from, fallback_to, error_class, tool_calls, tool_errors,
+		       sandbox_commands, sandbox_duration_millis, sandbox_output_bytes,
+		       sandbox_cpu_millis, sandbox_memory_max_bytes, artifact_count, artifact_bytes
 		FROM run_usage
 		WHERE run_id = $1`, runID).Scan(
 		&usage.Provider, &usage.Model, &usage.InputTokens, &usage.OutputTokens, &usage.ReasoningTokens, &usage.CachedTokens,
 		&usage.TotalTokens, &usage.Estimated, &usage.Cost, &usage.Currency, &usage.LatencyMillis, &usage.RetryCount,
-		&usage.FallbackFrom, &usage.FallbackTo, &usage.ErrorClass,
+		&usage.FallbackFrom, &usage.FallbackTo, &usage.ErrorClass, &usage.ToolCalls, &usage.ToolErrors,
+		&usage.SandboxCommands, &usage.SandboxDurationMillis, &usage.SandboxOutputBytes,
+		&usage.SandboxCPUMillis, &usage.SandboxMemoryMaxBytes, &usage.ArtifactCount, &usage.ArtifactBytes,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return protocol.RunUsage{}, nil
@@ -852,6 +1581,42 @@ func (s *PostgresStore) ListAuditEvents(actor app.ActorContext, opts app.AuditEv
 		events = append(events, event)
 	}
 	return events
+}
+
+func (s *PostgresStore) getProjectMember(projectID, userID string) (protocol.ProjectMember, error) {
+	var member protocol.ProjectMember
+	err := s.db.QueryRow(`
+		SELECT pm.id, pm.user_id, pm.project_id, pm.role, u.email, u.name, pm.created_at, pm.updated_at
+		FROM project_members pm
+		JOIN users u ON u.id = pm.user_id
+		WHERE pm.project_id = $1 AND pm.user_id = $2`, projectID, userID).Scan(
+		&member.ID, &member.UserID, &member.ProjectID, &member.Role, &member.Email, &member.Name, &member.CreatedAt, &member.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.ProjectMember{}, app.ErrNotFound
+		}
+		return protocol.ProjectMember{}, err
+	}
+	return member, nil
+}
+
+func (s *PostgresStore) getOrganizationMember(orgID, userID string) (protocol.OrganizationMember, error) {
+	var member protocol.OrganizationMember
+	err := s.db.QueryRow(`
+		SELECT om.id, om.user_id, om.organization_id, om.role, u.email, u.name, om.created_at, om.updated_at
+		FROM organization_members om
+		JOIN users u ON u.id = om.user_id
+		WHERE om.organization_id = $1 AND om.user_id = $2`, orgID, userID).Scan(
+		&member.ID, &member.UserID, &member.OrganizationID, &member.Role, &member.Email, &member.Name, &member.CreatedAt, &member.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.OrganizationMember{}, app.ErrNotFound
+		}
+		return protocol.OrganizationMember{}, err
+	}
+	return member, nil
 }
 
 func (s *PostgresStore) getOwnedHTTPSkill(userID, skillID string) (protocol.Skill, error) {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"niceagent/common/protocol"
 )
@@ -13,15 +14,22 @@ const (
 )
 
 type ActorContext struct {
-	UserID    string
-	ProjectID string
-	OrgID     string
-	Roles     []string
+	UserID           string
+	Email            string
+	Name             string
+	IdentityProvider string
+	IdentityIssuer   string
+	IdentitySubject  string
+	ProjectID        string
+	OrgID            string
+	Roles            []string
 }
 
 func DemoActor() ActorContext {
 	return ActorContext{
 		UserID:    DemoUserID,
+		Email:     "demo@niceagent.local",
+		Name:      "Demo User",
 		ProjectID: DemoProjectID,
 		OrgID:     DemoOrgID,
 		Roles:     []string{"owner"},
@@ -49,6 +57,27 @@ type Repository interface {
 	AddUserMessage(chatID, userID, content string) (protocol.Message, protocol.Run, error)
 	AddAssistantMessage(chatID, runID, content string) (protocol.Message, error)
 	GetRun(runID string) (protocol.Run, error)
+	CountActiveRuns(userID, projectID string) int
+	CountRunsCreatedSince(userID, projectID string, since time.Time) int
+	SumRunUsageTokensSince(userID, projectID string, since time.Time) int
+	SumRunUsageSince(userID, projectID string, since time.Time) protocol.RunUsage
+	ProjectBelongsToOrganization(projectID, orgID string) bool
+	BindUserIdentity(identity protocol.UserIdentity) (protocol.UserIdentity, error)
+	ListOrganizationRoles(userID, orgID string) []string
+	ListProjectRoles(userID, projectID string) []string
+	ListOrganizationMembers(orgID string) []protocol.OrganizationMember
+	UpsertOrganizationMember(orgID string, input protocol.OrganizationMemberInput) (protocol.OrganizationMember, error)
+	RemoveOrganizationMember(orgID, userID string) (protocol.OrganizationMember, error)
+	ListInvitations(orgID string) []protocol.Invitation
+	CreateInvitation(orgID, invitedByUserID string, input protocol.InvitationInput) (protocol.Invitation, error)
+	AcceptInvitation(token, userID, email, name string) (protocol.Invitation, error)
+	ListProjectMembers(projectID string) []protocol.ProjectMember
+	UpsertProjectMember(projectID string, input protocol.ProjectMemberInput) (protocol.ProjectMember, error)
+	RemoveProjectMember(projectID, userID string) (protocol.ProjectMember, error)
+	GetProjectQuotaPolicy(projectID string) (protocol.ProjectQuotaPolicy, bool)
+	SetProjectQuotaPolicy(projectID string, input protocol.ProjectQuotaPolicyInput) (protocol.ProjectQuotaPolicy, error)
+	ClaimRunAttempt(runID, attemptID, claimedBy string, leaseExpiresAt time.Time) (protocol.Run, error)
+	CheckRunAttempt(runID, attemptID string) (protocol.Run, error)
 	UpdateRunStatus(runID string, status protocol.RunStatus, errMessage string) (protocol.Run, error)
 	SaveRunUsage(runID string, usage protocol.RunUsage) (protocol.RunUsage, error)
 	GetRunUsage(runID string) (protocol.RunUsage, error)

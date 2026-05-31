@@ -8,6 +8,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 )
 
@@ -36,26 +37,57 @@ func NewOperationalChatModel(inner model.ToolCallingChatModel, meta ProviderMeta
 }
 
 func (m *OperationalChatModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	ctx, endSpan := platform.StartSpan(ctx, "niceagent/agent_runtime", "model.generate", platform.Labels{
+		"provider": m.meta.Provider,
+		"model":    m.meta.Model,
+	})
 	start := time.Now()
 	msg, err := m.inner.Generate(ctx, input, opts...)
-	m.tracker.ObserveLatency(time.Since(start))
+	m.tracker.ObserveCall(time.Since(start), err)
 	if err != nil {
-		m.tracker.ObserveError(err)
-		return nil, m.redactError(err)
+		err = m.redactError(err)
+		endSpan(err, nil)
+		return nil, err
 	}
 	m.tracker.ObserveMessage(msg)
+	endSpan(nil, nil)
 	return msg, nil
 }
 
 func (m *OperationalChatModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	ctx, endSpan := platform.StartSpan(ctx, "niceagent/agent_runtime", "model.stream", platform.Labels{
+		"provider": m.meta.Provider,
+		"model":    m.meta.Model,
+	})
 	start := time.Now()
 	reader, err := m.inner.Stream(ctx, input, opts...)
-	m.tracker.ObserveLatency(time.Since(start))
+	m.tracker.ObserveCall(time.Since(start), err)
 	if err != nil {
-		m.tracker.ObserveError(err)
-		return nil, m.redactError(err)
+		err = m.redactError(err)
+		endSpan(err, nil)
+		return nil, err
 	}
+	endSpan(nil, nil)
 	return reader, nil
+}
+
+func (m *OperationalChatModel) Probe(ctx context.Context) error {
+	ctx, endSpan := platform.StartSpan(ctx, "niceagent/agent_runtime", "model.probe", platform.Labels{
+		"provider": m.meta.Provider,
+		"model":    m.meta.Model,
+	})
+	start := time.Now()
+	_, err := m.inner.Generate(ctx, []*schema.Message{schema.UserMessage("health check: reply with ok")})
+	if err != nil {
+		err = m.redactError(err)
+	}
+	m.tracker.ObserveProbe(time.Since(start), err)
+	endSpan(err, nil)
+	return err
+}
+
+func (m *OperationalChatModel) MarkProbeEnabled() {
+	m.tracker.MarkProbeEnabled()
 }
 
 func (m *OperationalChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
@@ -68,6 +100,14 @@ func (m *OperationalChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCa
 
 func (m *OperationalChatModel) UsageSnapshot() protocol.RunUsage {
 	return m.tracker.UsageSnapshot()
+}
+
+func (m *OperationalChatModel) PriceUsage(usage protocol.RunUsage) protocol.RunUsage {
+	return m.tracker.PriceUsage(usage)
+}
+
+func (m *OperationalChatModel) ModelProviderHealth() protocol.ModelProviderHealth {
+	return m.tracker.HealthSnapshot()
 }
 
 func (m *OperationalChatModel) redactError(err error) error {
@@ -83,3 +123,5 @@ func (m *OperationalChatModel) redactError(err error) error {
 }
 
 var _ model.ToolCallingChatModel = (*OperationalChatModel)(nil)
+var _ Probeable = (*OperationalChatModel)(nil)
+var _ ProbeStateRecorder = (*OperationalChatModel)(nil)
