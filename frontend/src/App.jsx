@@ -162,7 +162,7 @@ export default function App() {
 
   async function approveSkill(id) {
     await api(`/api/skills/${encodeURIComponent(id)}/approve`, { method: "POST" });
-    setNotice(`已授权 ${id}`);
+    setNotice(`已记录 ${id} 授权，恢复执行会在后续阶段实现`);
   }
 
   function openEvents(id) {
@@ -228,6 +228,11 @@ export default function App() {
       if (payload.exit_code !== undefined) next.push(`[exit_code] ${payload.exit_code}`);
       if (payload.duration) next.push(`[duration] ${payload.duration}`);
       setCliLines((prev) => [...prev, ...next.filter(Boolean)]);
+    }
+    if (event.type === "approval.needed") {
+      const command = Array.isArray(payload.command) ? payload.command.join(" ") : "unknown command";
+      const reason = payload.reason || payload.error || "approval required";
+      setCliLines((prev) => [...prev, `$ ${command}`, `[approval] ${reason}`]);
     }
   }
 
@@ -380,4 +385,3 @@ function SectionTitle({ text }) {
 function Empty({ text }) {
   return <div className="empty">{text}</div>;
 }
-

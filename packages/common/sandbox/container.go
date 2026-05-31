@@ -24,7 +24,7 @@ func NewContainerExecutor(image string) *ContainerExecutor {
 
 func (e *ContainerExecutor) Execute(ctx context.Context, request protocol.SandboxCommand) protocol.SandboxResult {
 	start := time.Now()
-	result := protocol.SandboxResult{RunID: request.RunID}
+	result := protocol.SandboxResult{RunID: request.RunID, Command: append([]string(nil), request.Command...)}
 	if e.Local == nil {
 		e.Local = NewExecutor()
 	}
@@ -38,6 +38,10 @@ func (e *ContainerExecutor) Execute(ctx context.Context, request protocol.Sandbo
 		result.ExitCode = -1
 		result.Error = err.Error()
 		result.ApprovalRequired = errors.Is(err, ErrApprovalRequired)
+		if result.ApprovalRequired {
+			result.Reason = "command requires explicit approval"
+			result.Policy = PolicyDangerousCommand
+		}
 		result.Duration = time.Since(start).String()
 		return result
 	}

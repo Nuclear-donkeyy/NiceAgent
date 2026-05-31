@@ -107,3 +107,53 @@ func TestInternalRunAPIsRequireTokenWhenConfigured(t *testing.T) {
 		t.Fatalf("status with token = %d, body = %s", response.Code, response.Body.String())
 	}
 }
+
+func TestInternalRunAPIApprovalNeededSetsWaitingStatus(t *testing.T) {
+	store, handler := newTestHandler()
+	chat := mustCreateChat(t, store, "demo-user", "approval")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "/cli rm -rf /")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/events", jsonBody(t, protocol.RunEventWriteRequest{
+		Type:    protocol.EventApprovalNeeded,
+		Message: "CLI command requires approval.",
+		Payload: map[string]any{
+			"skill_id":     "cli.exec",
+			"command":      []string{"rm", "-rf", "/"},
+			"reason":       "command requires explicit approval",
+			"policy":       "dangerous_command",
+			"workspace_id": run.WorkspaceID,
+		},
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("approval event status = %d, body = %s", response.Code, response.Body.String())
+	}
+	gotRun, err := store.GetRun(run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if gotRun.Status != protocol.RunWaitingForApproval {
+		t.Fatalf("status = %q, want waiting_for_approval", gotRun.Status)
+	}
+
+	cancelRequest := httptest.NewRequest(http.MethodPost, "/api/runs/"+run.ID+"/cancel", nil)
+	cancelResponse := httptest.NewRecorder()
+	handler.ServeHTTP(cancelResponse, cancelRequest)
+	if cancelResponse.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d, body = %s", cancelResponse.Code, cancelResponse.Body.String())
+	}
+	if err := (controlSink{repo: store}).Complete(run.ID, "late completion"); err != nil {
+		t.Fatalf("late complete: %v", err)
+	}
+	gotRun, err = store.GetRun(run.ID)
+	if err != nil {
+		t.Fatalf("get canceled run: %v", err)
+	}
+	if gotRun.Status != protocol.RunCanceled {
+		t.Fatalf("late complete overwrote status to %q", gotRun.Status)
+	}
+}

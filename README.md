@@ -26,7 +26,7 @@ docs                         中文架构、API、开发、路线图和运维文
 - Control Plane 默认使用 memory store，适合本地演示；配置 `STORE_DRIVER=postgres` 和 `DATABASE_URL` 后可切到 Postgres 持久化。
 - Control Plane 的主路径是 HTTP dispatcher，可通过 `AGENT_RUNTIME_URL` 调度独立 Agent Runtime；未配置时回退到本地 demo dispatcher。
 - Agent Runtime 支持 mock provider 和 OpenAI-compatible provider，可替换 `AgentEngine` 边界已建立，尚未真实接入 Eino ADK。
-- Sandbox 当前提供独立 Sandbox Executor 服务、local executor 和 container executor 入口，但还不是生产级强隔离沙箱。
+- Sandbox 当前提供独立 Sandbox Executor 服务、local executor 和 container executor 入口；高风险 CLI 会进入等待授权状态，但尚不支持审批后恢复执行。
 - Frontend 使用 React + Rspack，风格为黑、白、微黄色，面性+线性，少圆角。
 - Redis Streams、集中式模型密钥管理、认证、多租户、配额和完整审批闭环仍在后续阶段。
 

@@ -113,6 +113,17 @@ Sandbox Executor 在策略约束下执行命令的入口，由 Agent Runtime 的
 
 请求体复用 `SandboxCommand`，响应体复用 `SandboxResult`。
 
+当命令触发审批策略时，`SandboxResult` 会包含：
+
+```json
+{
+  "approval_required": true,
+  "reason": "command requires explicit approval",
+  "policy": "dangerous_command",
+  "command": ["rm", "-rf", "/"]
+}
+```
+
 ## 模型输出
 
 Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。无论 provider 类型如何，模型流式内容都通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端 SSE 展示。
@@ -128,6 +139,7 @@ OpenAI-compatible provider 使用 `/v1/chat/completions` 的 streaming 协议；
 - run 状态变化，例如 queued、running、succeeded、failed、canceled。
 - 模型流式 token。
 - tool/skill 调用开始、输出、完成或失败。
+- `approval.needed`：高风险 skill 需要用户审批。CLI 场景 payload 包含 `skill_id`、`command`、`reason`、`policy`、`workspace_id`，Control Plane 会将 run 状态置为 `waiting_for_approval`。
 - CLI stdout/stderr 摘要。
 - artifact 或文件变更提示。
 

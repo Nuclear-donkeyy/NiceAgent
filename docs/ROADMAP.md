@@ -55,11 +55,12 @@
 - 工具调用、工具失败、模型错误都会产生标准化 `RunEvent`。
 - 取消 run 后，runtime 不再写入成功终态。
 
-## Phase 4：Sandbox 与 CLI
+## Phase 4：Sandbox 与 CLI（Phase 4A 当前落地）
 
 - `services/sandbox-executor` 成为远端 CLI 的默认执行路径。
 - Agent Runtime 通过 HTTP 调用 Sandbox Executor。
-- 加强 workspace、输出截断、网络策略、环境变量过滤和审批语义。
+- Phase 4A：高风险 CLI 不执行，返回 `approval.needed` 并进入 `waiting_for_approval`。
+- 后续加强 workspace、输出截断、网络策略、环境变量过滤和审批恢复。
 - local executor 只用于单元测试和本地 fallback。
 - 记录命令审计事件，包括 command、exit code、duration、stdout/stderr 摘要。
 
