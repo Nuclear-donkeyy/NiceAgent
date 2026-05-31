@@ -1,10 +1,11 @@
-package controlplane
+package repository
 
 import (
 	"strings"
 	"testing"
 
 	"niceagent/common/protocol"
+	"niceagent/control-plane/internal/app"
 )
 
 func TestStoreCreatesChatMessageRunAndEvents(t *testing.T) {
@@ -44,11 +45,11 @@ func TestStoreListsSearchesArchivesAndRestoresChats(t *testing.T) {
 	alpha := mustCreateChat(t, store, "demo-user", "Alpha project")
 	beta := mustCreateChat(t, store, "demo-user", "Beta project")
 
-	list := store.ListChats("demo-user", ChatListOptions{})
+	list := store.ListChats("demo-user", app.ChatListOptions{})
 	if len(list) != 2 {
 		t.Fatalf("active chats len = %d, want 2", len(list))
 	}
-	matches := store.ListChats("demo-user", ChatListOptions{Query: "alpha"})
+	matches := store.ListChats("demo-user", app.ChatListOptions{Query: "alpha"})
 	if len(matches) != 1 || matches[0].ID != alpha.ID {
 		t.Fatalf("search matches = %#v, want alpha chat", matches)
 	}
@@ -60,11 +61,11 @@ func TestStoreListsSearchesArchivesAndRestoresChats(t *testing.T) {
 	if !archived.Archived {
 		t.Fatal("expected archived chat")
 	}
-	list = store.ListChats("demo-user", ChatListOptions{})
+	list = store.ListChats("demo-user", app.ChatListOptions{})
 	if len(list) != 1 || list[0].ID != alpha.ID {
 		t.Fatalf("active chats after archive = %#v, want alpha only", list)
 	}
-	list = store.ListChats("demo-user", ChatListOptions{IncludeArchived: true})
+	list = store.ListChats("demo-user", app.ChatListOptions{IncludeArchived: true})
 	if len(list) != 2 {
 		t.Fatalf("all chats after archive = %d, want 2", len(list))
 	}
@@ -248,7 +249,7 @@ func TestStoreSubscribeReceivesNewEvents(t *testing.T) {
 	}
 }
 
-func mustCreateChat(t *testing.T, repo Repository, userID, title string) protocol.ChatSession {
+func mustCreateChat(t *testing.T, repo app.Repository, userID, title string) protocol.ChatSession {
 	t.Helper()
 	chat, err := repo.CreateChat(userID, title)
 	if err != nil {

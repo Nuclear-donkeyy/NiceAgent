@@ -1,8 +1,8 @@
-# ADR 0001：前端使用 TypeScript 与 CSS Modules
+# ADR 0001：前端使用 TypeScript 与模块化样式
 
 ## 状态
 
-Accepted
+Superseded by [ADR 0003](0003-scss-modules-and-prettier.md)
 
 ## 背景
 
@@ -12,8 +12,8 @@ Accepted
 
 - 前端使用 TypeScript，开启 `strict` 渐进模式。
 - React 组件使用 `.tsx`，非组件逻辑使用 `.ts`。
-- 样式默认使用 CSS Modules。
-- `global.css` 只保留设计 token、reset 和基础页面背景。
+- 样式默认使用模块化方案；当前已由 ADR 0003 升级为 SCSS Modules。
+- 全局样式只保留设计 token、reset 和基础页面背景。
 - 目录按 `app`、`api`、`domain`、`features`、`components` 分层。
 
 ## 影响

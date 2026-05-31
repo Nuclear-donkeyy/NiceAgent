@@ -1,4 +1,4 @@
-package controlplane
+package httpapi
 
 import (
 	"bytes"
@@ -13,6 +13,9 @@ import (
 	"time"
 
 	"niceagent/common/protocol"
+	"niceagent/control-plane/internal/app"
+	"niceagent/control-plane/internal/dispatch"
+	"niceagent/control-plane/internal/repository"
 )
 
 func TestServerCreatesChatSendsMessageAndCancelsRun(t *testing.T) {
@@ -250,9 +253,9 @@ func TestServerCreatesUserHTTPSkill(t *testing.T) {
 }
 
 func TestControlPlaneHTTPRuntimeContract(t *testing.T) {
-	store := NewStore()
+	store := repository.NewStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	var dispatcher RunDispatcher
+	var dispatcher app.RunDispatcher
 	controlServer := httptest.NewServer(NewServer(store, dispatchFunc(func(ctx context.Context, run protocol.Run, userMessage string) error {
 		return dispatcher.Dispatch(ctx, run, userMessage)
 	}), log).Handler())
@@ -294,7 +297,7 @@ func TestControlPlaneHTTPRuntimeContract(t *testing.T) {
 		_, _ = w.Write([]byte(`{"status":"succeeded"}`))
 	}))
 	defer runtimeServer.Close()
-	dispatcher = NewHTTPDispatcher(store, runtimeServer.URL, controlServer.URL, "", log)
+	dispatcher = dispatch.NewHTTPDispatcher(store, runtimeServer.URL, controlServer.URL, "", log)
 
 	chat := createChatViaAPI(t, controlServer.URL)
 	response := postMessageViaAPI(t, controlServer.URL, chat.ID, "hello")
@@ -332,7 +335,7 @@ func TestControlPlaneHTTPRuntimeContract(t *testing.T) {
 }
 
 func TestControlSinkDoesNotOverwriteCanceledRun(t *testing.T) {
-	store := NewStore()
+	store := repository.NewStore()
 	chat := mustCreateChat(t, store, "demo-user", "sink")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "cancel")
 	if err != nil {
@@ -341,7 +344,7 @@ func TestControlSinkDoesNotOverwriteCanceledRun(t *testing.T) {
 	if _, err := store.UpdateRunStatus(run.ID, protocol.RunCanceled, ""); err != nil {
 		t.Fatalf("cancel run: %v", err)
 	}
-	sink := controlSink{repo: store}
+	sink := app.RepositorySink{Repo: store}
 
 	if err := sink.Complete(run.ID, "late completion"); err != nil {
 		t.Fatalf("late complete: %v", err)
@@ -381,10 +384,10 @@ func (f dispatchFunc) Dispatch(ctx context.Context, run protocol.Run, userMessag
 	return f(ctx, run, userMessage)
 }
 
-func newTestHandler() (*Store, http.Handler) {
-	store := NewStore()
+func newTestHandler() (*repository.Store, http.Handler) {
+	store := repository.NewStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	dispatcher := NewLocalDispatcher(store, log)
+	dispatcher := dispatch.NewLocalDispatcher(store, log)
 	return store, NewServer(store, dispatcher, log).Handler()
 }
 
@@ -430,6 +433,15 @@ func createChatWithHandler(t *testing.T, handler http.Handler, title string) pro
 	}
 	var chat protocol.ChatSession
 	decodeJSON(t, response.Body, &chat)
+	return chat
+}
+
+func mustCreateChat(t *testing.T, repo app.Repository, userID, title string) protocol.ChatSession {
+	t.Helper()
+	chat, err := repo.CreateChat(userID, title)
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
 	return chat
 }
 

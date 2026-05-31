@@ -43,8 +43,42 @@ module.exports = {
         },
       },
       {
+        test: /\.module\.s[ac]ss$/,
+        use: [
+          {
+            loader: "sass-loader",
+            options: {
+              api: "modern",
+              implementation: require("sass-embedded"),
+            },
+          },
+        ],
+        type: "css/module",
+        parser: {
+          namedExports: false,
+        },
+        generator: {
+          esModule: true,
+          exportsConvention: "camel-case-only",
+        },
+      },
+      {
         test: /\.css$/,
         exclude: /\.module\.css$/,
+        type: "css",
+      },
+      {
+        test: /\.s[ac]ss$/,
+        exclude: /\.module\.s[ac]ss$/,
+        use: [
+          {
+            loader: "sass-loader",
+            options: {
+              api: "modern",
+              implementation: require("sass-embedded"),
+            },
+          },
+        ],
         type: "css",
       },
     ],

@@ -216,7 +216,8 @@ export function useNiceAgentWorkspace() {
     sourceRef.current = source;
     source.onopen = () => setAgentStatus("Agent Runtime 已连接");
     source.onerror = () => {
-      if (!terminalRunStatuses.has(runStatusRef.current)) setNotice("连接暂时中断，浏览器会自动重连");
+      if (!terminalRunStatuses.has(runStatusRef.current))
+        setNotice("连接暂时中断，浏览器会自动重连");
     };
     runEventTypes.forEach((type) => {
       source.addEventListener(type, (raw) => {
@@ -244,7 +245,9 @@ export function useNiceAgentWorkspace() {
     if (next.assistantToken) {
       setAssistantDraft((prev) => {
         if (event.type === "run.failed" && prev) return prev;
-        return event.type === "run.failed" ? next.assistantToken || prev : prev + next.assistantToken;
+        return event.type === "run.failed"
+          ? next.assistantToken || prev
+          : prev + next.assistantToken;
       });
     }
   }

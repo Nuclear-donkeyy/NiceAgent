@@ -1,9 +1,10 @@
-package controlplane
+package events
 
 import (
 	"context"
 
 	"niceagent/common/protocol"
+	"niceagent/control-plane/internal/app"
 )
 
 type EventBus interface {
@@ -13,10 +14,10 @@ type EventBus interface {
 }
 
 type RepositoryEventBus struct {
-	repo Repository
+	repo app.Repository
 }
 
-func NewRepositoryEventBus(repo Repository) *RepositoryEventBus {
+func NewRepositoryEventBus(repo app.Repository) *RepositoryEventBus {
 	return &RepositoryEventBus{repo: repo}
 }
 
@@ -40,13 +41,13 @@ type RedisStreamsEventBus struct {
 }
 
 func (b RedisStreamsEventBus) Publish(context.Context, protocol.RunEvent) error {
-	return ErrExternalAdapterNotImplemented
+	return app.ErrExternalAdapterNotImplemented
 }
 
 func (b RedisStreamsEventBus) Replay(context.Context, string, int64) ([]protocol.RunEvent, error) {
-	return nil, ErrExternalAdapterNotImplemented
+	return nil, app.ErrExternalAdapterNotImplemented
 }
 
 func (b RedisStreamsEventBus) Subscribe(context.Context, string) (<-chan protocol.RunEvent, func(), error) {
-	return nil, nil, ErrExternalAdapterNotImplemented
+	return nil, nil, app.ErrExternalAdapterNotImplemented
 }

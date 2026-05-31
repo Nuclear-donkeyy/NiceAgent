@@ -12,6 +12,16 @@
 
 仓库根目录使用 `go.work` 组织多个 module：
 
+三个服务都是独立部署单元，服务内按职责分层：
+
+- `cmd/main.go`：只做配置读取、依赖装配和 HTTP server 启动。
+- `internal/config`：环境变量解析。
+- Control Plane：`httpapi/app/repository/dispatch/events`。
+- Agent Runtime：`httpapi/engine/modelprovider/tools/sink`。
+- Sandbox Executor：`httpapi/executor/policy`。
+
+进入子项目修改前先读对应目录下的 `AGENTS.md`。
+
 memory 快速开发路径：
 
 ```bash
@@ -90,14 +100,16 @@ make build-web
 - `src/app` 只负责应用装配和跨 feature 状态编排。
 - `src/api` 放 HTTP client 和 API 函数。
 - `src/domain` 放前端领域类型和展示 label。
-- `src/features` 按业务能力放组件、hook 和同名 CSS Module。
+- `src/features` 按业务能力放组件、hook 和同名 SCSS Module。
 - `src/components` 放跨 feature 复用的小组件。
-- 样式默认使用 CSS Modules；`src/styles/global.css` 只放 reset、CSS variables 和基础页面背景。
+- 样式默认使用 SCSS Modules；`src/styles/global.scss` 只放 reset、CSS variables 和基础页面背景。
+- Prettier 负责 TS/TSX/SCSS/JSON/MD 格式检查。
 
 前端检查：
 
 ```bash
 cd frontend
+npm run format:check
 npm run typecheck
 npm run lint
 npm run build

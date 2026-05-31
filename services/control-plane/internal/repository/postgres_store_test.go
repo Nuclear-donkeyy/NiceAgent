@@ -1,4 +1,4 @@
-package controlplane
+package repository
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"niceagent/common/protocol"
+	"niceagent/control-plane/internal/app"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -67,7 +68,7 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if len(replayed) != 1 || replayed[0].ID != second.ID {
 		t.Fatalf("replayed events = %#v, want only second event", replayed)
 	}
-	if err := (controlSink{repo: store}).Complete(run.ID, "persisted assistant"); err != nil {
+	if err := (app.RepositorySink{Repo: store}).Complete(run.ID, "persisted assistant"); err != nil {
 		t.Fatalf("complete run: %v", err)
 	}
 
@@ -94,7 +95,7 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if _, err := reloaded.UpdateRunStatus(canceledRun.ID, protocol.RunCanceled, ""); err != nil {
 		t.Fatalf("cancel run: %v", err)
 	}
-	if err := (controlSink{repo: reloaded}).Complete(canceledRun.ID, "late completion"); err != nil {
+	if err := (app.RepositorySink{Repo: reloaded}).Complete(canceledRun.ID, "late completion"); err != nil {
 		t.Fatalf("late complete: %v", err)
 	}
 	gotRun, err = reloaded.GetRun(canceledRun.ID)
@@ -127,7 +128,7 @@ func TestPostgresStoreSearchesArchivesAndRestoresChatsWhenConfigured(t *testing.
 	if err != nil {
 		t.Fatalf("create chat: %v", err)
 	}
-	matches := store.ListChats("demo-user", ChatListOptions{Query: title})
+	matches := store.ListChats("demo-user", app.ChatListOptions{Query: title})
 	if len(matches) != 1 || matches[0].ID != chat.ID {
 		t.Fatalf("search matches = %#v, want created chat", matches)
 	}
@@ -139,11 +140,11 @@ func TestPostgresStoreSearchesArchivesAndRestoresChatsWhenConfigured(t *testing.
 	if !archived.Archived {
 		t.Fatalf("archived chat = %#v, want archived", archived)
 	}
-	matches = store.ListChats("demo-user", ChatListOptions{Query: title})
+	matches = store.ListChats("demo-user", app.ChatListOptions{Query: title})
 	if len(matches) != 0 {
 		t.Fatalf("active search matches after archive = %#v, want none", matches)
 	}
-	matches = store.ListChats("demo-user", ChatListOptions{Query: title, IncludeArchived: true})
+	matches = store.ListChats("demo-user", app.ChatListOptions{Query: title, IncludeArchived: true})
 	if len(matches) != 1 || !matches[0].Archived {
 		t.Fatalf("archived search matches = %#v, want archived chat", matches)
 	}

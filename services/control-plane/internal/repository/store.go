@@ -1,8 +1,7 @@
-package controlplane
+package repository
 
 import (
 	"encoding/json"
-	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -10,11 +9,7 @@ import (
 
 	"niceagent/common/platform"
 	"niceagent/common/protocol"
-)
-
-var (
-	ErrNotFound = errors.New("not found")
-	ErrClosed   = errors.New("closed")
+	"niceagent/control-plane/internal/app"
 )
 
 type Store struct {
@@ -87,7 +82,7 @@ func NewStore() *Store {
 	return store
 }
 
-func (s *Store) ListChats(userID string, opts ChatListOptions) []protocol.ChatSession {
+func (s *Store) ListChats(userID string, opts app.ChatListOptions) []protocol.ChatSession {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	query := strings.ToLower(strings.TrimSpace(opts.Query))
@@ -135,7 +130,7 @@ func (s *Store) GetChat(chatID string) (protocol.ChatSession, []protocol.Message
 	defer s.mu.RUnlock()
 	chat, ok := s.chats[chatID]
 	if !ok {
-		return protocol.ChatSession{}, nil, ErrNotFound
+		return protocol.ChatSession{}, nil, app.ErrNotFound
 	}
 	msgs := append([]protocol.Message(nil), s.messages[chatID]...)
 	chat.MessageCount = len(msgs)
@@ -147,7 +142,7 @@ func (s *Store) SetChatArchived(chatID, userID string, archived bool) (protocol.
 	defer s.mu.Unlock()
 	chat, ok := s.chats[chatID]
 	if !ok || chat.UserID != userID {
-		return protocol.ChatSession{}, ErrNotFound
+		return protocol.ChatSession{}, app.ErrNotFound
 	}
 	chat.Archived = archived
 	chat.UpdatedAt = time.Now().UTC()
@@ -162,7 +157,7 @@ func (s *Store) AddUserMessage(chatID, userID, content string) (protocol.Message
 	defer s.mu.Unlock()
 	chat, ok := s.chats[chatID]
 	if !ok || chat.UserID != userID {
-		return protocol.Message{}, protocol.Run{}, ErrNotFound
+		return protocol.Message{}, protocol.Run{}, app.ErrNotFound
 	}
 	msg := protocol.Message{
 		ID:        platform.NewID("msg"),
@@ -204,7 +199,7 @@ func (s *Store) AddAssistantMessage(chatID, runID, content string) (protocol.Mes
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.chats[chatID]; !ok {
-		return protocol.Message{}, ErrNotFound
+		return protocol.Message{}, app.ErrNotFound
 	}
 	s.messages[chatID] = append(s.messages[chatID], msg)
 	chat := s.chats[chatID]
@@ -230,7 +225,7 @@ func (s *Store) GetRun(runID string) (protocol.Run, error) {
 	defer s.mu.RUnlock()
 	run, ok := s.runs[runID]
 	if !ok {
-		return protocol.Run{}, ErrNotFound
+		return protocol.Run{}, app.ErrNotFound
 	}
 	return run, nil
 }
@@ -241,9 +236,9 @@ func (s *Store) UpdateRunStatus(runID string, status protocol.RunStatus, errMess
 	defer s.mu.Unlock()
 	run, ok := s.runs[runID]
 	if !ok {
-		return protocol.Run{}, ErrNotFound
+		return protocol.Run{}, app.ErrNotFound
 	}
-	if isTerminalRunStatus(run.Status) && run.Status != status {
+	if app.IsTerminalRunStatus(run.Status) && run.Status != status {
 		return run, nil
 	}
 	if status == protocol.RunRunning && run.StartedAt == nil {
@@ -259,16 +254,12 @@ func (s *Store) UpdateRunStatus(runID string, status protocol.RunStatus, errMess
 	return run, nil
 }
 
-func isTerminalRunStatus(status protocol.RunStatus) bool {
-	return status == protocol.RunSucceeded || status == protocol.RunFailed || status == protocol.RunCanceled
-}
-
 func (s *Store) AddEvent(runID string, typ protocol.RunEventType, message string, payload any) (protocol.RunEvent, error) {
 	s.mu.Lock()
 	run, ok := s.runs[runID]
 	if !ok {
 		s.mu.Unlock()
-		return protocol.RunEvent{}, ErrNotFound
+		return protocol.RunEvent{}, app.ErrNotFound
 	}
 	s.seq[runID]++
 	event := protocol.RunEvent{
@@ -400,7 +391,7 @@ func (s *Store) UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkill
 	defer s.mu.Unlock()
 	current, ok := s.skills[skillID]
 	if !ok || current.OwnerUserID != userID || current.Kind != protocol.SkillKindHTTP {
-		return protocol.Skill{}, ErrNotFound
+		return protocol.Skill{}, app.ErrNotFound
 	}
 	updated, secret := httpSkillFromInput(skillID, platform.NewID("skv"), userID, current.ProjectID, current.Version, input)
 	updated.Enabled = current.Enabled
@@ -420,7 +411,7 @@ func (s *Store) SetSkillEnabled(userID, skillID string, enabled bool) (protocol.
 	defer s.mu.Unlock()
 	skill, ok := s.skills[skillID]
 	if !ok || skill.OwnerUserID != userID || skill.Scope != protocol.SkillScopeUser {
-		return protocol.Skill{}, ErrNotFound
+		return protocol.Skill{}, app.ErrNotFound
 	}
 	skill.Enabled = enabled
 	if enabled {

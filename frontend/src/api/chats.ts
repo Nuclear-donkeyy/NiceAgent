@@ -35,7 +35,10 @@ export function sendChatMessage(chatID: string, content: string): Promise<SendMe
 }
 
 export function setChatArchived(chatID: string, archived: boolean): Promise<ChatSession> {
-  return api<ChatSession>(`/api/chats/${encodeURIComponent(chatID)}/${archived ? "archive" : "restore"}`, {
-    method: "POST",
-  });
+  return api<ChatSession>(
+    `/api/chats/${encodeURIComponent(chatID)}/${archived ? "archive" : "restore"}`,
+    {
+      method: "POST",
+    },
+  );
 }

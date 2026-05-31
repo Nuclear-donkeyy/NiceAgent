@@ -1,7 +1,7 @@
 import type { ChatSession } from "../../domain/chat";
 import { Empty } from "../../components/Empty";
 import { SectionTitle } from "../../components/SectionTitle";
-import styles from "./ChatList.module.css";
+import styles from "./ChatList.module.scss";
 
 interface ChatListProps {
   chats: ChatSession[];
@@ -30,7 +30,11 @@ export function ChatList({
     <>
       <SectionTitle text="会话" />
       <div className={styles.filters}>
-        <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="搜索会话标题" />
+        <input
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder="搜索会话标题"
+        />
         <label>
           <input
             type="checkbox"

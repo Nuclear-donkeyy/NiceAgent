@@ -1,4 +1,4 @@
-package controlplane
+package dispatch
 
 import (
 	"bytes"
@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"niceagent/common/protocol"
+	"niceagent/control-plane/internal/app"
 )
 
 type HTTPDispatcher struct {
-	repo            Repository
+	repo            app.Repository
 	runtimeURL      string
 	controlPlaneURL string
 	token           string
@@ -24,7 +25,7 @@ type HTTPDispatcher struct {
 	log             *slog.Logger
 }
 
-func NewHTTPDispatcher(repo Repository, runtimeURL, controlPlaneURL, token string, log *slog.Logger) *HTTPDispatcher {
+func NewHTTPDispatcher(repo app.Repository, runtimeURL, controlPlaneURL, token string, log *slog.Logger) *HTTPDispatcher {
 	return &HTTPDispatcher{
 		repo:            repo,
 		runtimeURL:      strings.TrimRight(runtimeURL, "/"),
@@ -44,8 +45,8 @@ func (d *HTTPDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMes
 }
 
 func (d *HTTPDispatcher) dispatch(ctx context.Context, run protocol.Run, userMessage string) {
-	runtimeSkills := runtimeSkillsForRun(d.repo, run)
-	skills := skillIDsFromRuntimeSkills(runtimeSkills)
+	runtimeSkills := app.RuntimeSkillsForRun(d.repo, run)
+	skills := app.SkillIDsFromRuntimeSkills(runtimeSkills)
 	request := protocol.RunExecutionRequest{
 		Request: protocol.RunRequest{
 			RunID:       run.ID,
@@ -61,7 +62,7 @@ func (d *HTTPDispatcher) dispatch(ctx context.Context, run protocol.Run, userMes
 	}
 	if err := d.postRun(ctx, request); err != nil {
 		d.log.Warn("http dispatch failed", "run_id", run.ID, "error", err)
-		sink := controlSink{repo: d.repo}
+		sink := app.RepositorySink{Repo: d.repo}
 		_ = sink.Fail(run.ID, fmt.Sprintf("Run dispatch failed: %v", err))
 	}
 }

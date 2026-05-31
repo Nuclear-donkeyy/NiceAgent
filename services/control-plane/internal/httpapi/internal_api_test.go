@@ -1,4 +1,4 @@
-package controlplane
+package httpapi
 
 import (
 	"net/http"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"niceagent/common/protocol"
+	"niceagent/control-plane/internal/app"
 )
 
 func TestInternalRunAPIsWriteEventsCompleteFailAndStatus(t *testing.T) {
@@ -146,7 +147,7 @@ func TestInternalRunAPIApprovalNeededSetsWaitingStatus(t *testing.T) {
 	if cancelResponse.Code != http.StatusOK {
 		t.Fatalf("cancel status = %d, body = %s", cancelResponse.Code, cancelResponse.Body.String())
 	}
-	if err := (controlSink{repo: store}).Complete(run.ID, "late completion"); err != nil {
+	if err := (app.RepositorySink{Repo: store}).Complete(run.ID, "late completion"); err != nil {
 		t.Fatalf("late complete: %v", err)
 	}
 	gotRun, err = store.GetRun(run.ID)

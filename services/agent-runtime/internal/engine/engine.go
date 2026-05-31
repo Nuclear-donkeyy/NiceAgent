@@ -1,4 +1,4 @@
-package runtime
+package engine
 
 import (
 	"context"
@@ -6,20 +6,15 @@ import (
 	"strings"
 	"time"
 
+	"niceagent/agent-runtime/internal/modelprovider"
+	"niceagent/agent-runtime/internal/tools"
 	"niceagent/common/protocol"
 )
 
-type EventSink interface {
-	Emit(runID string, typ protocol.RunEventType, message string, payload any) error
-	Complete(runID string, content string) error
-	Fail(runID string, message string) error
-	IsCanceled(runID string) bool
-}
-
 type Engine struct {
-	Sandbox SandboxExecutor
+	Sandbox tools.SandboxExecutor
 	Models  ModelProvider
-	Tools   ToolBridge
+	Tools   *tools.DefaultToolBridge
 	Limits  LoopLimits
 }
 
@@ -28,15 +23,16 @@ type LoopLimits struct {
 	Timeout  time.Duration
 }
 
-func NewEngine(executor SandboxExecutor) *Engine {
+func NewEngine(executor tools.SandboxExecutor) *Engine {
 	return &Engine{
 		Sandbox: executor,
-		Models:  MockProvider{},
+		Models:  modelprovider.MockProvider{},
+		Tools:   tools.NewDefaultToolBridge(executor),
 		Limits:  LoopLimits{MaxSteps: 8, Timeout: 2 * time.Minute},
 	}
 }
 
-func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessage string, sink EventSink) protocol.RunResult {
+func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessage string, sink tools.EventSink) protocol.RunResult {
 	if e.Limits.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, e.Limits.Timeout)
@@ -128,9 +124,9 @@ func (e *Engine) Execute(ctx context.Context, req protocol.RunRequest, userMessa
 func (e *Engine) streamModel(ctx context.Context, req protocol.RunRequest, userMessage string, writeToken func(string)) error {
 	provider := e.Models
 	if provider == nil {
-		provider = MockProvider{}
+		provider = modelprovider.MockProvider{}
 	}
-	chunks, err := provider.Stream(ctx, ModelRequest{
+	chunks, err := provider.Stream(ctx, modelprovider.Request{
 		RunID:       req.RunID,
 		ModelPolicy: req.ModelPolicy,
 		Messages: []protocol.Message{{

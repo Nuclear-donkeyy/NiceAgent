@@ -1,4 +1,4 @@
-package runtime
+package engine
 
 import (
 	"context"
@@ -12,26 +12,28 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
+	"niceagent/agent-runtime/internal/modelprovider"
+	"niceagent/agent-runtime/internal/tools"
 	"niceagent/common/protocol"
 )
 
 type EinoAgentEngine struct {
-	Sandbox SandboxExecutor
+	Sandbox tools.SandboxExecutor
 	Models  ModelProvider
-	Tools   *DefaultToolBridge
+	Tools   *tools.DefaultToolBridge
 	Limits  LoopLimits
 }
 
-func NewEinoAgentEngine(executor SandboxExecutor) *EinoAgentEngine {
+func NewEinoAgentEngine(executor tools.SandboxExecutor) *EinoAgentEngine {
 	return &EinoAgentEngine{
 		Sandbox: executor,
-		Models:  MockProvider{},
-		Tools:   NewDefaultToolBridge(executor),
+		Models:  modelprovider.MockProvider{},
+		Tools:   tools.NewDefaultToolBridge(executor),
 		Limits:  LoopLimits{MaxSteps: 8, Timeout: 2 * time.Minute},
 	}
 }
 
-func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, userMessage string, sink EventSink) protocol.RunResult {
+func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, userMessage string, sink tools.EventSink) protocol.RunResult {
 	if e.Limits.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, e.Limits.Timeout)
@@ -51,7 +53,7 @@ func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, 
 
 	bridge := e.Tools
 	if bridge == nil {
-		bridge = NewDefaultToolBridge(e.Sandbox)
+		bridge = tools.NewDefaultToolBridge(e.Sandbox)
 	}
 	tools := bridge.BuildTools(req, sink)
 	chatModel := newEinoModelBridge(e.Models, req, tools)
@@ -119,7 +121,7 @@ type einoModelBridge struct {
 
 func newEinoModelBridge(provider ModelProvider, req protocol.RunRequest, tools []tool.BaseTool) *einoModelBridge {
 	if provider == nil {
-		provider = MockProvider{}
+		provider = modelprovider.MockProvider{}
 	}
 	infos := make([]*schema.ToolInfo, 0, len(tools))
 	for _, baseTool := range tools {
@@ -210,7 +212,7 @@ func (m *einoModelBridge) hasTool(name string) bool {
 }
 
 func (m *einoModelBridge) generateWithProvider(ctx context.Context, userMessage string) (string, error) {
-	chunks, err := m.provider.Stream(ctx, ModelRequest{
+	chunks, err := m.provider.Stream(ctx, modelprovider.Request{
 		RunID:       m.req.RunID,
 		ModelPolicy: m.req.ModelPolicy,
 		Messages: []protocol.Message{{

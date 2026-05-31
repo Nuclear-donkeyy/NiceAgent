@@ -1,4 +1,4 @@
-package runtime
+package tools
 
 import (
 	"bytes"
@@ -18,6 +18,25 @@ import (
 	"niceagent/common/protocol"
 )
 
+type EventSink interface {
+	Emit(runID string, typ protocol.RunEventType, message string, payload any) error
+	Complete(runID string, content string) error
+	Fail(runID string, message string) error
+	IsCanceled(runID string) bool
+}
+
+type SandboxExecutor interface {
+	Execute(ctx context.Context, request protocol.SandboxCommand) protocol.SandboxResult
+}
+
+type Definition struct {
+	ID          string
+	Name        string
+	Description string
+	InputSchema string
+	Risk        protocol.SkillRisk
+}
+
 type DefaultToolBridge struct {
 	Sandbox SandboxExecutor
 	Client  *http.Client
@@ -30,14 +49,14 @@ func NewDefaultToolBridge(executor SandboxExecutor) *DefaultToolBridge {
 	}
 }
 
-func (b *DefaultToolBridge) Definitions(ctx context.Context, skills []protocol.RuntimeSkill) ([]ToolDefinition, error) {
-	defs := make([]ToolDefinition, 0, len(skills))
+func (b *DefaultToolBridge) Definitions(ctx context.Context, skills []protocol.RuntimeSkill) ([]Definition, error) {
+	defs := make([]Definition, 0, len(skills))
 	for _, runtimeSkill := range skills {
 		info, err := toolInfoForSkill(runtimeSkill.Skill)
 		if err != nil {
 			return nil, err
 		}
-		defs = append(defs, ToolDefinition{
+		defs = append(defs, Definition{
 			ID:          runtimeSkill.Skill.ID,
 			Name:        info.Name,
 			Description: info.Desc,

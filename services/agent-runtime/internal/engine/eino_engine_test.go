@@ -1,4 +1,4 @@
-package runtime
+package engine
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"niceagent/agent-runtime/internal/tools"
 	"niceagent/common/protocol"
 	"niceagent/common/sandbox"
 )
@@ -54,7 +55,7 @@ func TestEinoAgentEngineRunsCLIToolLoop(t *testing.T) {
 func TestEinoAgentEngineUsesUserHTTPSkill(t *testing.T) {
 	sink := &recordingSink{}
 	engine := NewEinoAgentEngine(nil)
-	engine.Tools = NewDefaultToolBridge(nil)
+	engine.Tools = tools.NewDefaultToolBridge(nil)
 	engine.Tools.Client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Header.Get("Authorization") != "Bearer secret-token" {
 			t.Fatalf("authorization header = %q, want bearer token", req.Header.Get("Authorization"))

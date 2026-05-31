@@ -1,4 +1,4 @@
-package runtime
+package modelprovider
 
 import (
 	"context"
@@ -48,7 +48,7 @@ func TestOpenAICompatibleProviderStreamsTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
-	chunks, err := provider.Stream(context.Background(), ModelRequest{
+	chunks, err := provider.Stream(context.Background(), Request{
 		Messages: []protocol.Message{
 			{Role: protocol.RoleSystem, Content: "be brief"},
 			{Role: protocol.RoleUser, Content: "hello"},
@@ -90,7 +90,7 @@ func TestOpenAICompatibleProviderSurfacesHTTPError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
-	_, err = provider.Stream(context.Background(), ModelRequest{Messages: []protocol.Message{{Role: protocol.RoleUser, Content: "hello"}}})
+	_, err = provider.Stream(context.Background(), Request{Messages: []protocol.Message{{Role: protocol.RoleUser, Content: "hello"}}})
 	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("error = %v, want http status", err)
 	}
@@ -111,7 +111,7 @@ func TestOpenAICompatibleProviderSurfacesInvalidStreamJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
-	chunks, err := provider.Stream(context.Background(), ModelRequest{Messages: []protocol.Message{{Role: protocol.RoleUser, Content: "hello"}}})
+	chunks, err := provider.Stream(context.Background(), Request{Messages: []protocol.Message{{Role: protocol.RoleUser, Content: "hello"}}})
 	if err != nil {
 		t.Fatalf("stream: %v", err)
 	}

@@ -3,7 +3,7 @@ import { useState, type FormEvent } from "react";
 import { Empty } from "../../components/Empty";
 import { SectionTitle } from "../../components/SectionTitle";
 import type { HTTPSkillInput, SkillGroups } from "../../domain/skill";
-import styles from "./SkillPanel.module.css";
+import styles from "./SkillPanel.module.scss";
 
 const defaultForm: HTTPSkillInput = {
   name: "",
@@ -29,7 +29,7 @@ export function SkillPanel({ groups, onCreateHTTPSkill, onSetSkillEnabled }: Ski
     const payload: HTTPSkillInput = {
       ...form,
       bearer_token: form.auth_type === "bearer" ? form.bearer_token : "",
-      input_schema: "{\"type\":\"object\",\"additionalProperties\":true}",
+      input_schema: '{"type":"object","additionalProperties":true}',
     };
     await onCreateHTTPSkill(payload);
     setForm(defaultForm);
@@ -54,7 +54,11 @@ export function SkillPanel({ groups, onCreateHTTPSkill, onSetSkillEnabled }: Ski
 
       <div className={styles.sectionRow}>
         <SectionTitle text="我的能力" />
-        <button className={styles.miniButton} onClick={() => setFormOpen((value) => !value)} type="button">
+        <button
+          className={styles.miniButton}
+          onClick={() => setFormOpen((value) => !value)}
+          type="button"
+        >
           {formOpen ? "收起" : "添加"}
         </button>
       </div>
@@ -80,14 +84,18 @@ export function SkillPanel({ groups, onCreateHTTPSkill, onSetSkillEnabled }: Ski
           <div className={styles.formRow}>
             <select
               value={form.method}
-              onChange={(event) => setForm((prev) => ({ ...prev, method: event.target.value as "GET" | "POST" }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, method: event.target.value as "GET" | "POST" }))
+              }
             >
               <option value="POST">POST</option>
               <option value="GET">GET</option>
             </select>
             <select
               value={form.auth_type}
-              onChange={(event) => setForm((prev) => ({ ...prev, auth_type: event.target.value as "none" | "bearer" }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, auth_type: event.target.value as "none" | "bearer" }))
+              }
             >
               <option value="none">无鉴权</option>
               <option value="bearer">Bearer</option>
@@ -96,7 +104,9 @@ export function SkillPanel({ groups, onCreateHTTPSkill, onSetSkillEnabled }: Ski
           {form.auth_type === "bearer" && (
             <input
               value={form.bearer_token}
-              onChange={(event) => setForm((prev) => ({ ...prev, bearer_token: event.target.value }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, bearer_token: event.target.value }))
+              }
               placeholder="Bearer token，不会展示给前端列表"
               type="password"
             />
@@ -115,7 +125,11 @@ export function SkillPanel({ groups, onCreateHTTPSkill, onSetSkillEnabled }: Ski
               <span>{skill.enabled ? "已启用" : "已停用"}</span>
             </div>
             <p>{skill.description || "暂无说明"}</p>
-            <button className={styles.secondaryButton} onClick={() => onSetSkillEnabled(skill.id, !skill.enabled)} type="button">
+            <button
+              className={styles.secondaryButton}
+              onClick={() => onSetSkillEnabled(skill.id, !skill.enabled)}
+              type="button"
+            >
               {skill.enabled ? "停用" : "启用"}
             </button>
           </article>

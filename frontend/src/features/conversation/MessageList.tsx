@@ -1,7 +1,7 @@
 import type { Message } from "../../domain/chat";
 import { roleText } from "../../domain/labels";
 import { Empty } from "../../components/Empty";
-import styles from "./Conversation.module.css";
+import styles from "./Conversation.module.scss";
 
 interface MessageListProps {
   messages: Message[];
@@ -34,7 +34,11 @@ function MessageBubble({ message }: { message: Message }) {
     <article className={[styles.message, styles[message.role] || ""].filter(Boolean).join(" ")}>
       <div className={styles.messageRole}>{roleText[message.role] || message.role}</div>
       {message.status && <div className={styles.agentStatus}>{message.status}</div>}
-      {message.content ? <p>{message.content}</p> : <p className={styles.mutedText}>Agent 正在思考...</p>}
+      {message.content ? (
+        <p>{message.content}</p>
+      ) : (
+        <p className={styles.mutedText}>Agent 正在思考...</p>
+      )}
     </article>
   );
 }

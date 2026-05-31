@@ -1,10 +1,11 @@
-package runtime
+package engine
 
 import (
 	"context"
 	"strings"
 	"testing"
 
+	"niceagent/agent-runtime/internal/modelprovider"
 	"niceagent/common/protocol"
 	"niceagent/common/sandbox"
 )
@@ -186,7 +187,7 @@ func TestEngineHonorsCancellationBeforeExecution(t *testing.T) {
 func TestEngineUsesConfiguredModelProvider(t *testing.T) {
 	sink := &recordingSink{}
 	engine := NewEngine(sandbox.NewExecutor())
-	engine.Models = MockProvider{Response: "来自配置模型的回复"}
+	engine.Models = modelprovider.MockProvider{Response: "来自配置模型的回复"}
 
 	result := engine.Execute(context.Background(), protocol.RunRequest{
 		RunID:       "run-7",

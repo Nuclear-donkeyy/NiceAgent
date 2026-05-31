@@ -1,4 +1,4 @@
-package controlplane
+package dispatch
 
 import (
 	"context"
@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"niceagent/common/protocol"
+	"niceagent/control-plane/internal/app"
+	"niceagent/control-plane/internal/repository"
 )
 
 func TestHTTPDispatcherCallsRuntime(t *testing.T) {
-	store := NewStore()
+	store := repository.NewStore()
 	chat := mustCreateChat(t, store, "demo-user", "dispatch")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "hello")
 	if err != nil {
@@ -59,7 +61,7 @@ func TestHTTPDispatcherCallsRuntime(t *testing.T) {
 }
 
 func TestHTTPDispatcherMarksRunFailedWhenRuntimeFails(t *testing.T) {
-	store := NewStore()
+	store := repository.NewStore()
 	chat := mustCreateChat(t, store, "demo-user", "dispatch")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "hello")
 	if err != nil {
@@ -99,4 +101,24 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func mustCreateChat(t *testing.T, repo app.Repository, userID, title string) protocol.ChatSession {
+	t.Helper()
+	chat, err := repo.CreateChat(userID, title)
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	return chat
+}
+
+func eventually(timeout time.Duration, fn func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fn()
 }

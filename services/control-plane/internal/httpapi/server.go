@@ -1,4 +1,4 @@
-package controlplane
+package httpapi
 
 import (
 	"context"
@@ -14,17 +14,16 @@ import (
 
 	"niceagent/common/platform"
 	"niceagent/common/protocol"
+	"niceagent/control-plane/internal/app"
 )
 
-const demoUserID = "demo-user"
-
 type Server struct {
-	repo       Repository
-	dispatcher RunDispatcher
+	repo       app.Repository
+	dispatcher app.RunDispatcher
 	log        *slog.Logger
 }
 
-func NewServer(repo Repository, dispatcher RunDispatcher, log *slog.Logger) *Server {
+func NewServer(repo app.Repository, dispatcher app.RunDispatcher, log *slog.Logger) *Server {
 	return &Server{repo: repo, dispatcher: dispatcher, log: log}
 }
 
@@ -55,17 +54,17 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		opts := ChatListOptions{
+		opts := app.ChatListOptions{
 			Query:           r.URL.Query().Get("q"),
 			IncludeArchived: parseBool(r.URL.Query().Get("include_archived")),
 		}
-		platform.WriteJSON(w, http.StatusOK, map[string]any{"chats": s.repo.ListChats(demoUserID, opts)})
+		platform.WriteJSON(w, http.StatusOK, map[string]any{"chats": s.repo.ListChats(app.DemoUserID, opts)})
 	case http.MethodPost:
 		var input struct {
 			Title string `json:"title"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&input)
-		chat, err := s.repo.CreateChat(demoUserID, input.Title)
+		chat, err := s.repo.CreateChat(app.DemoUserID, input.Title)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -97,7 +96,7 @@ func (s *Server) chatSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "archive" && r.Method == http.MethodPost {
-		chat, err := s.repo.SetChatArchived(chatID, demoUserID, true)
+		chat, err := s.repo.SetChatArchived(chatID, app.DemoUserID, true)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -106,7 +105,7 @@ func (s *Server) chatSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "restore" && r.Method == http.MethodPost {
-		chat, err := s.repo.SetChatArchived(chatID, demoUserID, false)
+		chat, err := s.repo.SetChatArchived(chatID, app.DemoUserID, false)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -130,7 +129,7 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, chatID st
 		platform.WriteError(w, http.StatusBadRequest, "content is required")
 		return
 	}
-	message, run, err := s.repo.AddUserMessage(chatID, demoUserID, input.Content)
+	message, run, err := s.repo.AddUserMessage(chatID, app.DemoUserID, input.Content)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -218,7 +217,7 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, runID string)
 }
 
 func (s *Server) skills(w http.ResponseWriter, _ *http.Request) {
-	skills := s.repo.ListSkillsForUser(demoUserID, "demo-project")
+	skills := s.repo.ListSkillsForUser(app.DemoUserID, app.DemoProjectID)
 	platform.WriteJSON(w, http.StatusOK, protocol.SkillsResponse{
 		Skills: skills,
 		Groups: groupSkills(skills),
@@ -236,7 +235,7 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "enable" && r.Method == http.MethodPost {
-		skill, err := s.repo.SetSkillEnabled(demoUserID, parts[0], true)
+		skill, err := s.repo.SetSkillEnabled(app.DemoUserID, parts[0], true)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -245,7 +244,7 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "disable" && r.Method == http.MethodPost {
-		skill, err := s.repo.SetSkillEnabled(demoUserID, parts[0], false)
+		skill, err := s.repo.SetSkillEnabled(app.DemoUserID, parts[0], false)
 		if err != nil {
 			writeStoreErr(w, err)
 			return
@@ -273,7 +272,7 @@ func (s *Server) createHTTPSkill(w http.ResponseWriter, r *http.Request) {
 		platform.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	skill, err := s.repo.CreateHTTPSkill(demoUserID, "demo-project", input)
+	skill, err := s.repo.CreateHTTPSkill(app.DemoUserID, app.DemoProjectID, input)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -291,7 +290,7 @@ func (s *Server) updateHTTPSkill(w http.ResponseWriter, r *http.Request, skillID
 		platform.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	skill, err := s.repo.UpdateHTTPSkill(demoUserID, skillID, input)
+	skill, err := s.repo.UpdateHTTPSkill(app.DemoUserID, skillID, input)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -395,7 +394,7 @@ func (s *Server) internalCompleteRun(w http.ResponseWriter, r *http.Request, run
 		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	if err := (controlSink{repo: s.repo}).Complete(runID, input.Content); err != nil {
+	if err := (app.RepositorySink{Repo: s.repo}).Complete(runID, input.Content); err != nil {
 		writeStoreErr(w, err)
 		return
 	}
@@ -416,7 +415,7 @@ func (s *Server) internalFailRun(w http.ResponseWriter, r *http.Request, runID s
 	if strings.TrimSpace(input.Error) == "" {
 		input.Error = "run failed"
 	}
-	if err := (controlSink{repo: s.repo}).Fail(runID, input.Error); err != nil {
+	if err := (app.RepositorySink{Repo: s.repo}).Fail(runID, input.Error); err != nil {
 		writeStoreErr(w, err)
 		return
 	}
@@ -440,55 +439,8 @@ func authorizeInternal(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-type controlSink struct {
-	repo Repository
-}
-
-func (s controlSink) Emit(runID string, typ protocol.RunEventType, message string, payload any) error {
-	_, err := s.repo.AddEvent(runID, typ, message, payload)
-	return err
-}
-
-func (s controlSink) Complete(runID string, content string) error {
-	run, err := s.repo.GetRun(runID)
-	if err != nil {
-		return err
-	}
-	if isTerminalRunStatus(run.Status) {
-		return nil
-	}
-	if _, err := s.repo.AddAssistantMessage(run.ChatID, runID, content); err != nil {
-		return err
-	}
-	if _, err := s.repo.UpdateRunStatus(runID, protocol.RunSucceeded, ""); err != nil {
-		return err
-	}
-	_, err = s.repo.AddEvent(runID, protocol.EventRunSucceeded, "Run completed.", nil)
-	return err
-}
-
-func (s controlSink) Fail(runID string, message string) error {
-	run, err := s.repo.GetRun(runID)
-	if err != nil {
-		return err
-	}
-	if isTerminalRunStatus(run.Status) {
-		return nil
-	}
-	if _, err := s.repo.UpdateRunStatus(runID, protocol.RunFailed, message); err != nil {
-		return err
-	}
-	_, err = s.repo.AddEvent(runID, protocol.EventRunFailed, message, nil)
-	return err
-}
-
-func (s controlSink) IsCanceled(runID string) bool {
-	run, err := s.repo.GetRun(runID)
-	return err == nil && run.Status == protocol.RunCanceled
-}
-
 func writeStoreErr(w http.ResponseWriter, err error) {
-	if errors.Is(err, ErrNotFound) {
+	if errors.Is(err, app.ErrNotFound) {
 		platform.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}

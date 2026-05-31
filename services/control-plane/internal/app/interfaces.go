@@ -1,6 +1,15 @@
-package controlplane
+package app
 
-import "niceagent/common/protocol"
+import (
+	"context"
+
+	"niceagent/common/protocol"
+)
+
+const (
+	DemoUserID    = "demo-user"
+	DemoProjectID = "demo-project"
+)
 
 type ChatListOptions struct {
 	Query           string
@@ -24,4 +33,8 @@ type Repository interface {
 	CreateHTTPSkill(userID, projectID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
 	UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
 	SetSkillEnabled(userID, skillID string, enabled bool) (protocol.Skill, error)
+}
+
+type RunDispatcher interface {
+	Dispatch(ctx context.Context, run protocol.Run, userMessage string) error
 }

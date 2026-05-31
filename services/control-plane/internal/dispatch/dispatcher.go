@@ -1,4 +1,4 @@
-package controlplane
+package dispatch
 
 import (
 	"context"
@@ -8,26 +8,23 @@ import (
 
 	"niceagent/common/protocol"
 	"niceagent/common/sandbox"
+	"niceagent/control-plane/internal/app"
 )
 
-type RunDispatcher interface {
-	Dispatch(ctx context.Context, run protocol.Run, userMessage string) error
-}
-
 type LocalDispatcher struct {
-	repo    Repository
+	repo    app.Repository
 	sandbox *sandbox.Executor
 	log     *slog.Logger
 }
 
-func NewLocalDispatcher(repo Repository, log *slog.Logger) *LocalDispatcher {
+func NewLocalDispatcher(repo app.Repository, log *slog.Logger) *LocalDispatcher {
 	return &LocalDispatcher{repo: repo, sandbox: sandbox.NewExecutor(), log: log}
 }
 
 func (d *LocalDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMessage string) error {
 	go func() {
 		_, _ = d.repo.UpdateRunStatus(run.ID, protocol.RunRunning, "")
-		sink := controlSink{repo: d.repo}
+		sink := app.RepositorySink{Repo: d.repo}
 		_ = sink.Emit(run.ID, protocol.EventRunStarted, "Local demo dispatcher accepted the run.", map[string]any{
 			"mode": "local-demo",
 		})
@@ -35,7 +32,7 @@ func (d *LocalDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMe
 		_ = sink.Emit(run.ID, protocol.EventModelToken, content, nil)
 		time.Sleep(30 * time.Millisecond)
 		if command, ok := parseLocalCLI(userMessage); ok {
-			if !containsSkillID(skillIDsForRun(d.repo, run), "cli.exec") {
+			if !app.ContainsSkillID(app.SkillIDsForRun(d.repo, run), "cli.exec") {
 				content += "\n\n当前用户未启用系统 CLI 工具，无法执行 /cli 请求。"
 				if err := sink.Complete(run.ID, content); err != nil {
 					d.log.Warn("local run failed", "run_id", run.ID, "error", err)
@@ -77,52 +74,23 @@ func parseLocalCLI(content string) ([]string, bool) {
 }
 
 type QueueDispatcher struct {
-	repo  Repository
+	repo  app.Repository
 	queue RunQueue
 }
 
-func NewQueueDispatcher(repo Repository, queue RunQueue) *QueueDispatcher {
+func NewQueueDispatcher(repo app.Repository, queue RunQueue) *QueueDispatcher {
 	return &QueueDispatcher{repo: repo, queue: queue}
 }
 
 func (d *QueueDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMessage string) error {
-	runtimeSkills := runtimeSkillsForRun(d.repo, run)
+	runtimeSkills := app.RuntimeSkillsForRun(d.repo, run)
 	return d.queue.Enqueue(ctx, QueuedRun{
 		RunID:       run.ID,
 		ChatID:      run.ChatID,
 		UserID:      run.UserID,
 		WorkspaceID: run.WorkspaceID,
 		UserMessage: userMessage,
-		SkillIDs:    skillIDsFromRuntimeSkills(runtimeSkills),
+		SkillIDs:    app.SkillIDsFromRuntimeSkills(runtimeSkills),
 		ModelPolicy: "mock-default",
 	})
-}
-
-func skillIDsForRun(repo Repository, run protocol.Run) []string {
-	return skillIDsFromRuntimeSkills(runtimeSkillsForRun(repo, run))
-}
-
-func runtimeSkillsForRun(repo Repository, run protocol.Run) []protocol.RuntimeSkill {
-	chat, _, err := repo.GetChat(run.ChatID)
-	if err != nil {
-		return nil
-	}
-	return repo.ListRuntimeSkillsForUser(run.UserID, chat.ProjectID)
-}
-
-func skillIDsFromRuntimeSkills(skills []protocol.RuntimeSkill) []string {
-	ids := make([]string, 0, len(skills))
-	for _, runtimeSkill := range skills {
-		ids = append(ids, runtimeSkill.Skill.ID)
-	}
-	return ids
-}
-
-func containsSkillID(skillIDs []string, id string) bool {
-	for _, skillID := range skillIDs {
-		if skillID == id {
-			return true
-		}
-	}
-	return false
 }

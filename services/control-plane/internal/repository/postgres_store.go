@@ -1,4 +1,4 @@
-package controlplane
+package repository
 
 import (
 	"database/sql"
@@ -9,6 +9,7 @@ import (
 
 	"niceagent/common/platform"
 	"niceagent/common/protocol"
+	"niceagent/control-plane/internal/app"
 )
 
 type PostgresStore struct {
@@ -24,7 +25,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	}
 }
 
-func (s *PostgresStore) ListChats(userID string, opts ChatListOptions) []protocol.ChatSession {
+func (s *PostgresStore) ListChats(userID string, opts app.ChatListOptions) []protocol.ChatSession {
 	query := "%" + strings.ToLower(strings.TrimSpace(opts.Query)) + "%"
 	rows, err := s.db.Query(`
 		SELECT c.id, c.user_id, c.project_id, c.title, c.archived, COALESCE(c.last_run_id, ''),
@@ -82,7 +83,7 @@ func (s *PostgresStore) GetChat(chatID string) (protocol.ChatSession, []protocol
 		&chat.ID, &chat.UserID, &chat.ProjectID, &chat.Title, &chat.Archived, &chat.LastRunID, &chat.CreatedAt, &chat.UpdatedAt,
 	); err != nil {
 		if err == sql.ErrNoRows {
-			return protocol.ChatSession{}, nil, ErrNotFound
+			return protocol.ChatSession{}, nil, app.ErrNotFound
 		}
 		return protocol.ChatSession{}, nil, err
 	}
@@ -123,7 +124,7 @@ func (s *PostgresStore) SetChatArchived(chatID, userID string, archived bool) (p
 		return protocol.ChatSession{}, err
 	}
 	if affected == 0 {
-		return protocol.ChatSession{}, ErrNotFound
+		return protocol.ChatSession{}, app.ErrNotFound
 	}
 	chat, _, err := s.GetChat(chatID)
 	return chat, err
@@ -139,7 +140,7 @@ func (s *PostgresStore) AddUserMessage(chatID, userID, content string) (protocol
 	var currentTitle string
 	if err := tx.QueryRow(`SELECT title FROM chat_sessions WHERE id = $1 AND user_id = $2`, chatID, userID).Scan(&currentTitle); err != nil {
 		if err == sql.ErrNoRows {
-			return protocol.Message{}, protocol.Run{}, ErrNotFound
+			return protocol.Message{}, protocol.Run{}, app.ErrNotFound
 		}
 		return protocol.Message{}, protocol.Run{}, err
 	}
@@ -218,7 +219,7 @@ func (s *PostgresStore) GetRun(runID string) (protocol.Run, error) {
 		&run.ID, &run.ChatID, &run.UserID, &run.WorkspaceID, &run.Status, &errText, &run.CreatedAt, &run.UpdatedAt, &startedAt, &finishedAt,
 	); err != nil {
 		if err == sql.ErrNoRows {
-			return protocol.Run{}, ErrNotFound
+			return protocol.Run{}, app.ErrNotFound
 		}
 		return protocol.Run{}, err
 	}
@@ -239,7 +240,7 @@ func (s *PostgresStore) UpdateRunStatus(runID string, status protocol.RunStatus,
 	if err != nil {
 		return protocol.Run{}, err
 	}
-	if isTerminalRunStatus(run.Status) && run.Status != status {
+	if app.IsTerminalRunStatus(run.Status) && run.Status != status {
 		return run, nil
 	}
 	now := time.Now().UTC()
@@ -248,7 +249,7 @@ func (s *PostgresStore) UpdateRunStatus(runID string, status protocol.RunStatus,
 	if status == protocol.RunRunning && startedAt == nil {
 		startedAt = &now
 	}
-	if isTerminalRunStatus(status) && finishedAt == nil {
+	if app.IsTerminalRunStatus(status) && finishedAt == nil {
 		finishedAt = &now
 	}
 	_, err = s.db.Exec(`
@@ -270,7 +271,7 @@ func (s *PostgresStore) AddEvent(runID string, typ protocol.RunEventType, messag
 	var chatID string
 	if err := tx.QueryRow(`SELECT chat_id FROM runs WHERE id = $1 FOR UPDATE`, runID).Scan(&chatID); err != nil {
 		if err == sql.ErrNoRows {
-			return protocol.RunEvent{}, ErrNotFound
+			return protocol.RunEvent{}, app.ErrNotFound
 		}
 		return protocol.RunEvent{}, err
 	}
@@ -493,12 +494,12 @@ func (s *PostgresStore) UpdateHTTPSkill(userID, skillID string, input protocol.H
 		&current.ID, &current.Slug, &scope, &kind, &projectID, &status,
 	); err != nil {
 		if err == sql.ErrNoRows {
-			return protocol.Skill{}, ErrNotFound
+			return protocol.Skill{}, app.ErrNotFound
 		}
 		return protocol.Skill{}, err
 	}
 	if protocol.SkillKind(kind) != protocol.SkillKindHTTP {
-		return protocol.Skill{}, ErrNotFound
+		return protocol.Skill{}, app.ErrNotFound
 	}
 	versionID := platform.NewID("skv")
 	skill, secret := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
@@ -556,7 +557,7 @@ func (s *PostgresStore) SetSkillEnabled(userID, skillID string, enabled bool) (p
 		return protocol.Skill{}, err
 	}
 	if affected == 0 {
-		return protocol.Skill{}, ErrNotFound
+		return protocol.Skill{}, app.ErrNotFound
 	}
 	return s.getOwnedHTTPSkill(userID, skillID)
 }
@@ -579,7 +580,7 @@ func (s *PostgresStore) getOwnedHTTPSkill(userID, skillID string) (protocol.Skil
 		&skill.RuntimeConfig,
 	); err != nil {
 		if err == sql.ErrNoRows {
-			return protocol.Skill{}, ErrNotFound
+			return protocol.Skill{}, app.ErrNotFound
 		}
 		return protocol.Skill{}, err
 	}

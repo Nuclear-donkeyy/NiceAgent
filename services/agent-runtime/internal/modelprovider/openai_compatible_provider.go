@@ -1,4 +1,4 @@
-package runtime
+package modelprovider
 
 import (
 	"bufio"
@@ -47,7 +47,7 @@ func NewOpenAICompatibleProvider(config OpenAICompatibleProviderConfig) (*OpenAI
 	}, nil
 }
 
-func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request ModelRequest) (<-chan ModelChunk, error) {
+func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request Request) (<-chan Chunk, error) {
 	if p == nil {
 		return nil, errors.New("openai-compatible provider is nil")
 	}
@@ -81,13 +81,13 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request ModelRequ
 		return nil, fmt.Errorf("openai-compatible provider returned %s: %s", response.Status, strings.TrimSpace(string(raw)))
 	}
 
-	chunks := make(chan ModelChunk, 16)
+	chunks := make(chan Chunk, 16)
 	go func() {
 		defer close(chunks)
 		defer response.Body.Close()
 		if err := scanOpenAIStream(response.Body, chunks); err != nil {
 			select {
-			case chunks <- ModelChunk{Error: err, Done: true}:
+			case chunks <- Chunk{Error: err, Done: true}:
 			case <-ctx.Done():
 			}
 		}
@@ -152,7 +152,7 @@ func openAIRole(role protocol.MessageRole) string {
 	}
 }
 
-func scanOpenAIStream(body io.Reader, chunks chan<- ModelChunk) error {
+func scanOpenAIStream(body io.Reader, chunks chan<- Chunk) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -165,7 +165,7 @@ func scanOpenAIStream(body io.Reader, chunks chan<- ModelChunk) error {
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
-			chunks <- ModelChunk{Done: true}
+			chunks <- Chunk{Done: true}
 			return nil
 		}
 		var event openAIStreamChunk
@@ -174,7 +174,7 @@ func scanOpenAIStream(body io.Reader, chunks chan<- ModelChunk) error {
 		}
 		for _, choice := range event.Choices {
 			if choice.Delta.Content != "" {
-				chunks <- ModelChunk{Text: choice.Delta.Content}
+				chunks <- Chunk{Text: choice.Delta.Content}
 			}
 		}
 	}
