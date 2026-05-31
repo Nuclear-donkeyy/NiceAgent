@@ -4,16 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"mime"
 	"net/http"
-	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"niceagent/common/platform"
 	"niceagent/common/protocol"
+	"niceagent/common/skillmanifest"
 	"niceagent/control-plane/internal/app"
 )
 
@@ -33,6 +36,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chats", s.chats)
 	mux.HandleFunc("/api/chats/", s.chatSubroutes)
 	mux.HandleFunc("/api/runs/", s.runSubroutes)
+	mux.HandleFunc("/api/artifacts/", s.artifactSubroutes)
 	mux.HandleFunc("/api/skills", platform.Method(http.MethodGet, s.skills))
 	mux.HandleFunc("/api/skills/", s.skillSubroutes)
 	mux.HandleFunc("/internal/runs/", s.internalRunSubroutes)
@@ -168,6 +172,10 @@ func (s *Server) runSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "artifacts" && r.Method == http.MethodGet {
+		if !s.actorCanReadRun(actorFromRequest(r), runID) {
+			platform.WriteError(w, http.StatusNotFound, "not found")
+			return
+		}
 		platform.WriteJSON(w, http.StatusOK, protocol.ArtifactListResponse{Artifacts: s.repo.ListArtifacts(runID)})
 		return
 	}
@@ -182,6 +190,87 @@ func (s *Server) runSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platform.WriteError(w, http.StatusNotFound, "run route not found")
+}
+
+func (s *Server) artifactSubroutes(w http.ResponseWriter, r *http.Request) {
+	parts := splitPath(strings.TrimPrefix(r.URL.Path, "/api/artifacts/"))
+	if len(parts) == 0 {
+		platform.WriteError(w, http.StatusNotFound, "artifact route not found")
+		return
+	}
+	artifactID := parts[0]
+	if len(parts) == 1 && r.Method == http.MethodGet {
+		artifact, err := s.readAuthorizedArtifact(r, artifactID)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		platform.WriteJSON(w, http.StatusOK, artifact)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "download" && r.Method == http.MethodGet {
+		s.downloadArtifact(w, r, artifactID)
+		return
+	}
+	platform.WriteError(w, http.StatusNotFound, "artifact route not found")
+}
+
+func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request, artifactID string) {
+	artifact, err := s.readAuthorizedArtifact(r, artifactID)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	workspaceID := artifact.WorkspaceID
+	if workspaceID == "" {
+		if run, err := s.repo.GetRun(artifact.RunID); err == nil {
+			workspaceID = run.WorkspaceID
+		}
+	}
+	workspace, err := s.repo.GetWorkspace(workspaceID)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	filePath, err := resolveArtifactDownloadPath(workspace, artifact)
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			platform.WriteError(w, http.StatusNotFound, "artifact file not found")
+			return
+		}
+		platform.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		platform.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !stat.Mode().IsRegular() {
+		platform.WriteError(w, http.StatusBadRequest, "artifact is not a regular file")
+		return
+	}
+	filename := artifact.Name
+	if filename == "" {
+		filename = filepath.Base(filePath)
+	}
+	contentType := artifact.MimeType
+	if contentType == "" {
+		contentType = mime.TypeByExtension(filepath.Ext(filename))
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(stat.Size(), 10))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	http.ServeContent(w, r, filename, stat.ModTime(), file)
 }
 
 func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, runID string) {
@@ -311,25 +400,7 @@ func (s *Server) updateHTTPSkill(w http.ResponseWriter, r *http.Request, skillID
 }
 
 func validateHTTPSkillInput(input protocol.HTTPSkillInput) error {
-	if strings.TrimSpace(input.Name) == "" {
-		return errors.New("name is required")
-	}
-	parsed, err := url.Parse(strings.TrimSpace(input.URL))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return errors.New("valid url is required")
-	}
-	method := strings.ToUpper(strings.TrimSpace(input.Method))
-	if method == "" {
-		method = http.MethodPost
-	}
-	if method != http.MethodGet && method != http.MethodPost {
-		return errors.New("method must be GET or POST")
-	}
-	authType := strings.TrimSpace(input.AuthType)
-	if authType != "" && authType != "none" && authType != "bearer" {
-		return errors.New("auth_type must be none or bearer")
-	}
-	return nil
+	return skillmanifest.ValidateHTTPSkillInput(input)
 }
 
 func groupSkills(skills []protocol.Skill) protocol.SkillGroups {
@@ -406,18 +477,24 @@ func (s *Server) internalCompleteRun(w http.ResponseWriter, r *http.Request, run
 		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	if err := (app.RepositorySink{Repo: s.repo}).Complete(runID, input.Content); err != nil {
+	current, err := s.repo.GetRun(runID)
+	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	for _, artifact := range input.Artifacts {
-		artifact.RunID = firstNonEmpty(artifact.RunID, runID)
-		saved, err := s.repo.AddArtifact(artifact)
-		if err != nil {
+	if app.IsTerminalRunStatus(current.Status) {
+		platform.WriteJSON(w, http.StatusOK, current)
+		return
+	}
+	if usage := usageFromCompleteRequest(input); !protocol.IsZeroRunUsage(usage) {
+		if _, err := s.repo.SaveRunUsage(runID, usage); err != nil {
 			writeStoreErr(w, err)
 			return
 		}
-		_, _ = s.repo.AddEvent(runID, protocol.EventArtifactCreated, "Artifact created.", saved)
+	}
+	if err := (app.RepositorySink{Repo: s.repo}).Complete(runID, input.Content, input.Artifacts...); err != nil {
+		writeStoreErr(w, err)
+		return
 	}
 	run, err := s.repo.GetRun(runID)
 	if err != nil {
@@ -425,6 +502,16 @@ func (s *Server) internalCompleteRun(w http.ResponseWriter, r *http.Request, run
 		return
 	}
 	platform.WriteJSON(w, http.StatusOK, run)
+}
+
+func usageFromCompleteRequest(input protocol.RunCompleteRequest) protocol.RunUsage {
+	usage := input.Usage
+	if protocol.IsZeroRunUsage(usage) && (input.TokenUsage.InputTokens > 0 || input.TokenUsage.OutputTokens > 0) {
+		usage.InputTokens = input.TokenUsage.InputTokens
+		usage.OutputTokens = input.TokenUsage.OutputTokens
+		usage.Estimated = true
+	}
+	return protocol.NormalizeRunUsage(usage)
 }
 
 func (s *Server) internalFailRun(w http.ResponseWriter, r *http.Request, runID string) {
@@ -511,6 +598,103 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (s *Server) readAuthorizedArtifact(r *http.Request, artifactID string) (protocol.Artifact, error) {
+	artifact, err := s.repo.GetArtifact(artifactID)
+	if err != nil {
+		return protocol.Artifact{}, err
+	}
+	if !s.actorCanReadArtifact(actorFromRequest(r), artifact) {
+		return protocol.Artifact{}, app.ErrNotFound
+	}
+	return artifact, nil
+}
+
+func (s *Server) actorCanReadArtifact(actor app.ActorContext, artifact protocol.Artifact) bool {
+	if artifact.UserID != "" {
+		return artifact.UserID == actor.UserID
+	}
+	if artifact.RunID == "" {
+		return false
+	}
+	return s.actorCanReadRun(actor, artifact.RunID)
+}
+
+func (s *Server) actorCanReadRun(actor app.ActorContext, runID string) bool {
+	run, err := s.repo.GetRun(runID)
+	return err == nil && run.UserID == actor.UserID
+}
+
+func resolveArtifactDownloadPath(workspace protocol.Workspace, artifact protocol.Artifact) (string, error) {
+	rel, err := cleanArtifactPath(artifact.Path)
+	if err != nil {
+		return "", err
+	}
+	rootPath := workspace.RootPath
+	if rootPath == "" {
+		rootPath = workspace.ID
+	}
+	if !filepath.IsAbs(rootPath) {
+		rootPath = filepath.Join(workspaceRoot(), rootPath)
+	}
+	rootAbs, err := filepath.Abs(rootPath)
+	if err != nil {
+		return "", err
+	}
+	rootReal, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", fmt.Errorf("workspace root is unavailable: %w", err)
+	}
+	target := filepath.Join(rootReal, rel)
+	targetReal, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", fmt.Errorf("artifact file is unavailable: %w", err)
+	}
+	if !pathWithin(rootReal, targetReal) {
+		return "", errors.New("artifact path escapes workspace root")
+	}
+	return targetReal, nil
+}
+
+func cleanArtifactPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("artifact path is required")
+	}
+	if filepath.IsAbs(path) {
+		return "", errors.New("artifact path must be relative")
+	}
+	clean := filepath.Clean(filepath.FromSlash(path))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return "", errors.New("artifact path escapes workspace root")
+	}
+	for _, part := range strings.Split(clean, string(os.PathSeparator)) {
+		if part == "." || part == ".." || part == "" {
+			return "", errors.New("artifact path contains an unsafe segment")
+		}
+	}
+	outputPrefix := "output" + string(os.PathSeparator)
+	if clean != "output" && !strings.HasPrefix(clean, outputPrefix) {
+		return "", errors.New("artifact path must be under workspace output")
+	}
+	return clean, nil
+}
+
+func workspaceRoot() string {
+	if root := strings.TrimSpace(os.Getenv("SANDBOX_WORKSPACE_ROOT")); root != "" {
+		return root
+	}
+	if root := strings.TrimSpace(os.Getenv("WORKSPACE_ROOT")); root != "" {
+		return root
+	}
+	return "workspaces"
+}
+
+func pathWithin(root, target string) bool {
+	root = filepath.Clean(root)
+	target = filepath.Clean(target)
+	return target == root || strings.HasPrefix(target, root+string(os.PathSeparator))
 }
 
 func requestLogger(log *slog.Logger, next http.Handler) http.Handler {

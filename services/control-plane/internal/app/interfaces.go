@@ -42,6 +42,8 @@ type Repository interface {
 	AddAssistantMessage(chatID, runID, content string) (protocol.Message, error)
 	GetRun(runID string) (protocol.Run, error)
 	UpdateRunStatus(runID string, status protocol.RunStatus, errMessage string) (protocol.Run, error)
+	SaveRunUsage(runID string, usage protocol.RunUsage) (protocol.RunUsage, error)
+	GetRunUsage(runID string) (protocol.RunUsage, error)
 	AddEvent(runID string, typ protocol.RunEventType, message string, payload any) (protocol.RunEvent, error)
 	ListEvents(runID string, afterSeq int64) []protocol.RunEvent
 	Subscribe(runID string) (<-chan protocol.RunEvent, func())

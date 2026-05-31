@@ -47,6 +47,34 @@
 
 订阅 run 的 Server-Sent Events。使用 `?after={seq}` 可以重放断线期间错过的事件。
 
+`GET /api/runs/{run_id}/artifacts`
+
+列出当前用户可访问 run 下已登记的 artifact metadata。响应体：
+
+```json
+{
+  "artifacts": [
+    {
+      "id": "art_xxx",
+      "run_id": "run_xxx",
+      "workspace_id": "ws_xxx",
+      "path": "output/report.txt",
+      "name": "report.txt",
+      "mime_type": "text/plain",
+      "size_bytes": 128
+    }
+  ]
+}
+```
+
+`GET /api/artifacts/{artifact_id}`
+
+获取单个 artifact metadata。
+
+`GET /api/artifacts/{artifact_id}/download`
+
+下载 artifact 文件。当前只支持 `storage_backend=local` 的最小闭环；服务会按当前用户、run workspace、`output/` 相对路径和 symlink 解析结果做越界检查。
+
 `POST /api/runs/{run_id}/cancel`
 
 取消一个 run。
@@ -146,12 +174,23 @@ Agent Runtime 向 Control Plane 写入单条 `RunEvent`。当任一服务配置�
 
 `POST /internal/runs/{run_id}/complete`
 
-Agent Runtime 通知 Control Plane 写入最终 assistant 消息，并将 run 置为 `succeeded`。如果 run 已经是 `canceled`、`failed` 或 `succeeded`，Control Plane 不会覆盖终态。
+Agent Runtime 通知 Control Plane 写入最终 assistant 消息、登记 artifact，并将 run 置为 `succeeded`。如果 run 已经是 `canceled`、`failed` 或 `succeeded`，Control Plane 不会覆盖终态，也不会登记迟到 artifact。
 
 请求体：
 
 ```json
-{ "content": "最终回复内容" }
+{
+  "content": "最终回复内容",
+  "artifacts": [
+    {
+      "path": "output/report.txt",
+      "name": "report.txt",
+      "mime_type": "text/plain",
+      "size_bytes": 128,
+      "sha256": "..."
+    }
+  ]
+}
 ```
 
 `POST /internal/runs/{run_id}/fail`
@@ -174,6 +213,8 @@ Sandbox Executor 在策略约束下执行命令的入口，由 Agent Runtime 的
 
 请求体复用 `SandboxCommand`，响应体复用 `SandboxResult`。
 
+Sandbox Executor 支持 `EXECUTOR_MODE=local|container`。`container` 模式可通过 `SANDBOX_CONTAINER_IMAGE`、`SANDBOX_CONTAINER_CPUS`、`SANDBOX_CONTAINER_MEMORY`、`SANDBOX_CONTAINER_PIDS_LIMIT` 和 `SANDBOX_CONTAINER_*` 安全参数配置；Docker 不可用时可按 `SANDBOX_CONTAINER_LOCAL_FALLBACK` 回退到 local executor。`SANDBOX_WORKSPACE_ROOT` 应在 Control Plane 和 Sandbox Executor 间保持一致，便于 local artifact 下载闭环。
+
 当命令触发系统 CLI 策略拒绝时，`SandboxResult` 会包含：
 
 ```json
@@ -192,6 +233,10 @@ Skill 元数据以 `skills` 和 `skill_versions` 为权威，`skill_grants` 表�
 Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。当前主执行路径通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 运行 agentic loop；模型输出仍通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端折叠成 assistant 消息。
 
 OpenAI-compatible provider 通过 Eino `eino-ext` OpenAI ChatModel 使用 `/v1/chat/completions` 协议，并支持模型原生 tool calling；该能力不改变外部 Web API 和 `RunExecutionRequest`。
+
+Runtime 完成 run 时会在 `RunCompleteRequest.usage` 回写模型运营数据。Control Plane 会持久化到 run 级 usage，并在 `GET /api/runs/{run_id}` 的 `Run.usage` 中返回。真实 provider usage 优先；provider 缺失 usage 或 mock provider 会返回估算 token，并设置 `estimated=true`。字段包括 provider、model、input/output/reasoning/cached/total tokens、latency、retry_count、fallback_from/fallback_to、error_class、cost 和 currency。
+
+OpenAI-compatible/DeepSeek 错误分类约定：401=`auth_error`，402=`billing_error`，400/422=`request_error`，429=`rate_limited`，500/503/网关错误=`provider_unavailable`，超时/连接错误=`network_error`。API key、Authorization header、token、secret、password 和 cookie 不应出现在日志、event payload 或 run error 中。
 
 ## 事件约定
 

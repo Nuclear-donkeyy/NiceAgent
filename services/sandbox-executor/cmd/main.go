@@ -14,10 +14,10 @@ import (
 func main() {
 	cfg := config.FromEnv()
 	logger := platform.NewLogger("sandbox-executor")
-	localExecutor := executor.NewLocalExecutor()
-	handler := httpapi.NewHandler(localExecutor, cfg.InternalAPIToken)
+	sandboxExecutor := executor.NewConfiguredExecutor(cfg)
+	handler := httpapi.NewHandler(sandboxExecutor, cfg.InternalAPIToken)
 
-	logger.Info("starting sandbox executor", "addr", cfg.Addr, "policy", policy.SystemCLIMode)
+	logger.Info("starting sandbox executor", "addr", cfg.Addr, "policy", policy.SystemCLIMode, "executor_mode", cfg.ExecutorMode)
 	if err := http.ListenAndServe(cfg.Addr, handler); err != nil {
 		log.Fatal(err)
 	}

@@ -62,6 +62,8 @@ func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, 
 	if chatModel == nil {
 		chatModel = modelprovider.MockChatModel{}
 	}
+	usageReporter, _ := chatModel.(modelprovider.UsageReporter)
+	eventUsage := modelprovider.NewUsageTracker("", "")
 	if command, ok := parseCLICommand(userMessage); ok {
 		if !hasRuntimeTool(runtimeTools, "cli_exec") {
 			message := "当前用户未启用系统 CLI 工具，无法执行 /cli 请求。"
@@ -98,6 +100,7 @@ func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, 
 	iterator := runner.Query(ctx, userMessage)
 
 	var final strings.Builder
+	var artifacts []protocol.Artifact
 	for {
 		event, ok := iterator.Next()
 		if !ok {
@@ -115,6 +118,10 @@ func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, 
 			final.Reset()
 			final.WriteString(msg.Content)
 		}
+		if msg.Role == schema.Tool && msg.Content != "" {
+			artifacts = appendArtifactsFromObservation(artifacts, msg.Content)
+		}
+		eventUsage.ObserveMessage(msg)
 		if sink.IsCanceled(req.RunID) {
 			return protocol.RunResult{RunID: req.RunID, Status: protocol.RunCanceled}
 		}
@@ -132,17 +139,55 @@ func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, 
 			return protocol.RunResult{RunID: req.RunID, Status: protocol.RunCanceled}
 		}
 	}
-	if err := sink.Complete(req.RunID, content); err != nil {
+	usage := buildRunUsage(req, usageReporter, eventUsage, userMessage, content)
+	if err := completeWithUsage(sink, req.RunID, content, usage, artifacts...); err != nil {
 		return failed(req.RunID, err)
 	}
 	return protocol.RunResult{
-		RunID:  req.RunID,
-		Status: protocol.RunSucceeded,
-		TokenUsage: protocol.TokenUsage{
-			InputTokens:  estimateTokens(userMessage),
-			OutputTokens: estimateTokens(content),
-		},
+		RunID:      req.RunID,
+		Status:     protocol.RunSucceeded,
+		Artifacts:  artifacts,
+		TokenUsage: protocol.TokenUsageFromRunUsage(usage),
+		Usage:      usage,
 	}
+}
+
+type usageCompleter interface {
+	CompleteWithUsage(runID string, content string, usage protocol.RunUsage, artifacts ...protocol.Artifact) error
+}
+
+func completeWithUsage(sink tools.EventSink, runID string, content string, usage protocol.RunUsage, artifacts ...protocol.Artifact) error {
+	if completer, ok := sink.(usageCompleter); ok {
+		return completer.CompleteWithUsage(runID, content, usage, artifacts...)
+	}
+	return sink.Complete(runID, content, artifacts...)
+}
+
+func buildRunUsage(req protocol.RunRequest, reporter modelprovider.UsageReporter, eventUsage *modelprovider.UsageTracker, userMessage, content string) protocol.RunUsage {
+	var usage protocol.RunUsage
+	if reporter != nil {
+		usage = reporter.UsageSnapshot()
+	}
+	if !hasUsageTokens(usage) && eventUsage != nil {
+		observed := eventUsage.UsageSnapshot()
+		if hasUsageTokens(observed) {
+			observed.Provider = firstNonEmpty(observed.Provider, usage.Provider)
+			observed.Model = firstNonEmpty(observed.Model, usage.Model)
+			usage = observed
+		}
+	}
+	if !hasUsageTokens(usage) {
+		usage.InputTokens = estimateTokens(userMessage)
+		usage.OutputTokens = estimateTokens(content)
+		usage.Estimated = true
+	}
+	usage.Provider = firstNonEmpty(usage.Provider, req.ModelPolicy, "mock")
+	usage.Model = firstNonEmpty(usage.Model, req.ModelPolicy, "mock")
+	return protocol.NormalizeRunUsage(usage)
+}
+
+func hasUsageTokens(usage protocol.RunUsage) bool {
+	return usage.InputTokens > 0 || usage.OutputTokens > 0 || usage.TotalTokens > 0 || usage.ReasoningTokens > 0 || usage.CachedTokens > 0
 }
 
 type forcedToolCallModel struct {
@@ -303,6 +348,38 @@ func formatToolObservation(content string) string {
 		content = "能力调用完成，但没有返回可展示内容。"
 	}
 	return "我已经调用相关能力并获得结果：\n" + content
+}
+
+func appendArtifactsFromObservation(existing []protocol.Artifact, content string) []protocol.Artifact {
+	var sandbox protocol.SandboxResult
+	if err := json.Unmarshal([]byte(content), &sandbox); err != nil || len(sandbox.Artifacts) == 0 {
+		return existing
+	}
+	seen := map[string]struct{}{}
+	for _, artifact := range existing {
+		key := artifact.ID
+		if key == "" {
+			key = artifact.Path
+		}
+		if key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+	for _, artifact := range sandbox.Artifacts {
+		key := artifact.ID
+		if key == "" {
+			key = artifact.Path
+		}
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		existing = append(existing, artifact)
+	}
+	return existing
 }
 
 func mustJSON(value any) string {

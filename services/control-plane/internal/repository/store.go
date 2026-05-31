@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 	"sync"
@@ -9,6 +8,7 @@ import (
 
 	"niceagent/common/platform"
 	"niceagent/common/protocol"
+	"niceagent/common/skillmanifest"
 	"niceagent/control-plane/internal/app"
 )
 
@@ -18,12 +18,13 @@ type Store struct {
 	chats        map[string]protocol.ChatSession
 	messages     map[string][]protocol.Message
 	runs         map[string]protocol.Run
+	runUsage     map[string]protocol.RunUsage
 	events       map[string][]protocol.RunEvent
 	workspaces   map[string]protocol.Workspace
 	artifacts    map[string]protocol.Artifact
 	skills       map[string]protocol.Skill
 	skillGrants  map[string][]string
-	skillSecrets map[string]map[string]string
+	skillSecrets map[string]map[string]protocol.RuntimeSecret
 	subscribers  map[string]map[chan protocol.RunEvent]struct{}
 	seq          map[string]int64
 }
@@ -35,12 +36,13 @@ func NewStore() *Store {
 		chats:        map[string]protocol.ChatSession{},
 		messages:     map[string][]protocol.Message{},
 		runs:         map[string]protocol.Run{},
+		runUsage:     map[string]protocol.RunUsage{},
 		events:       map[string][]protocol.RunEvent{},
 		workspaces:   map[string]protocol.Workspace{},
 		artifacts:    map[string]protocol.Artifact{},
 		skills:       map[string]protocol.Skill{},
 		skillGrants:  map[string][]string{},
-		skillSecrets: map[string]map[string]string{},
+		skillSecrets: map[string]map[string]protocol.RuntimeSecret{},
 		subscribers:  map[string]map[chan protocol.RunEvent]struct{}{},
 		seq:          map[string]int64{},
 	}
@@ -240,6 +242,7 @@ func (s *Store) GetRun(runID string) (protocol.Run, error) {
 	if !ok {
 		return protocol.Run{}, app.ErrNotFound
 	}
+	run.Usage = s.runUsage[runID]
 	return run, nil
 }
 
@@ -265,6 +268,29 @@ func (s *Store) UpdateRunStatus(runID string, status protocol.RunStatus, errMess
 	run.UpdatedAt = now
 	s.runs[runID] = run
 	return run, nil
+}
+
+func (s *Store) SaveRunUsage(runID string, usage protocol.RunUsage) (protocol.RunUsage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runs[runID]
+	if !ok {
+		return protocol.RunUsage{}, app.ErrNotFound
+	}
+	usage = protocol.NormalizeRunUsage(usage)
+	s.runUsage[runID] = usage
+	run.Usage = usage
+	s.runs[runID] = run
+	return usage, nil
+}
+
+func (s *Store) GetRunUsage(runID string) (protocol.RunUsage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.runs[runID]; !ok {
+		return protocol.RunUsage{}, app.ErrNotFound
+	}
+	return s.runUsage[runID], nil
 }
 
 func (s *Store) AddEvent(runID string, typ protocol.RunEventType, message string, payload any) (protocol.RunEvent, error) {
@@ -419,10 +445,14 @@ func (s *Store) ListRuntimeSkillsForUser(userID, projectID string) []protocol.Ru
 			continue
 		}
 		secrets := map[string]string{}
-		for key, value := range s.skillSecrets[skill.ID] {
-			secrets[key] = value
+		secretMaterials := map[string]protocol.RuntimeSecret{}
+		for key, material := range s.skillSecrets[skill.ID] {
+			secretMaterials[key] = material
+			if material.EncryptedValue != "" {
+				secrets[key] = material.EncryptedValue
+			}
 		}
-		runtimeSkills = append(runtimeSkills, protocol.RuntimeSkill{Skill: skill, Secrets: secrets})
+		runtimeSkills = append(runtimeSkills, protocol.RuntimeSkill{Skill: skill, Secrets: secrets, SecretMaterials: secretMaterials})
 	}
 	return runtimeSkills
 }
@@ -455,15 +485,18 @@ func (s *Store) CreateHTTPSkill(userID, projectID string, input protocol.HTTPSki
 	now := time.Now().UTC()
 	skillID := platform.NewID("skill")
 	versionID := platform.NewID("skv")
-	skill, secret := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	skill, secret, hasSecret, err := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	if err != nil {
+		return protocol.Skill{}, err
+	}
 	skill.Enabled = true
 	skill.Status = protocol.SkillStatusEnabled
 	_ = now
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.skills[skill.ID] = skill
-	if secret != "" {
-		s.skillSecrets[skill.ID] = map[string]string{"bearer_token": secret}
+	if hasSecret {
+		s.skillSecrets[skill.ID] = map[string]protocol.RuntimeSecret{"bearer_token": secret}
 	}
 	key := skillGrantKey(userID, projectID)
 	s.skillGrants[key] = appendUnique(s.skillGrants[key], skill.ID)
@@ -477,13 +510,16 @@ func (s *Store) UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkill
 	if !ok || current.OwnerUserID != userID || current.Kind != protocol.SkillKindHTTP {
 		return protocol.Skill{}, app.ErrNotFound
 	}
-	updated, secret := httpSkillFromInput(skillID, platform.NewID("skv"), userID, current.ProjectID, current.Version, input)
+	updated, secret, hasSecret, err := httpSkillFromInput(skillID, platform.NewID("skv"), userID, current.ProjectID, current.Version, input)
+	if err != nil {
+		return protocol.Skill{}, err
+	}
 	updated.Enabled = current.Enabled
 	updated.Status = current.Status
 	s.skills[skillID] = updated
-	if secret != "" {
+	if hasSecret {
 		if s.skillSecrets[skillID] == nil {
-			s.skillSecrets[skillID] = map[string]string{}
+			s.skillSecrets[skillID] = map[string]protocol.RuntimeSecret{}
 		}
 		s.skillSecrets[skillID]["bearer_token"] = secret
 	}
@@ -520,32 +556,21 @@ func appendUnique(values []string, next string) []string {
 	return append(values, next)
 }
 
-func httpSkillFromInput(skillID, versionID, userID, projectID, version string, input protocol.HTTPSkillInput) (protocol.Skill, string) {
-	method := strings.ToUpper(strings.TrimSpace(input.Method))
-	if method == "" {
-		method = "POST"
+func httpSkillFromInput(skillID, versionID, userID, projectID, version string, input protocol.HTTPSkillInput) (protocol.Skill, protocol.RuntimeSecret, bool, error) {
+	if err := skillmanifest.ValidateHTTPSkillInput(input); err != nil {
+		return protocol.Skill{}, protocol.RuntimeSecret{}, false, err
 	}
-	timeout := input.TimeoutSeconds
-	if timeout <= 0 {
-		timeout = 15
+	config, err := skillmanifest.NewHTTPSkillRuntimeConfig(input)
+	if err != nil {
+		return protocol.Skill{}, protocol.RuntimeSecret{}, false, err
 	}
-	authType := strings.TrimSpace(input.AuthType)
-	if authType == "" {
-		authType = "none"
-	}
-	config := map[string]any{
-		"type":            "http",
-		"method":          method,
-		"url":             strings.TrimSpace(input.URL),
-		"timeout_seconds": timeout,
-		"auth_type":       authType,
-	}
-	configBytes, _ := json.Marshal(config)
 	annotations := `{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":false,"openWorldHint":true}`
 	inputSchema := strings.TrimSpace(input.InputSchema)
 	if inputSchema == "" {
 		inputSchema = `{"type":"object","additionalProperties":true}`
 	}
+	inputSchema, _ = skillmanifest.NormalizeJSON(inputSchema)
+	outputSchema, _ := skillmanifest.NormalizeJSON(input.OutputSchema)
 	description := strings.TrimSpace(input.Description)
 	if description == "" {
 		description = "User-provided HTTP skill."
@@ -565,12 +590,16 @@ func httpSkillFromInput(skillID, versionID, userID, projectID, version string, i
 		Risk:             protocol.SkillRiskMedium,
 		RequiresAuth:     false,
 		InputSchema:      inputSchema,
-		OutputSchema:     strings.TrimSpace(input.OutputSchema),
+		OutputSchema:     outputSchema,
 		Annotations:      annotations,
-		RuntimeConfig:    string(configBytes),
+		RuntimeConfig:    config.JSONString(),
 		Enabled:          true,
 	}
-	return skill, strings.TrimSpace(input.BearerToken)
+	secret := protocol.RuntimeSecret{EncryptedValue: strings.TrimSpace(input.BearerToken)}
+	if secret.EncryptedValue == "" {
+		secret.SecretRef = strings.TrimSpace(input.BearerTokenSecretRef)
+	}
+	return skill, secret, secret.EncryptedValue != "" || secret.SecretRef != "", nil
 }
 
 func redactSkill(skill protocol.Skill) protocol.Skill {

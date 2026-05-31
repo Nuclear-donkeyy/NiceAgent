@@ -25,12 +25,23 @@ memory 模式的权威状态在进程内存中，进程重启会丢失数据。P
 Agent Runtime 默认使用 `MODEL_PROVIDER=mock`，适合本地演示和 CI。切到真实 OpenAI-compatible provider 时，需要配置：
 
 - `MODEL_PROVIDER=openai-compatible`
-- `MODEL_BASE_URL`：兼容服务根地址，不包含 `/v1/chat/completions`。
+- `MODEL_BASE_URL`：兼容服务根地址，不包含 `/v1/chat/completions`、`/chat/completions` 或 `/completions`；启动时会做 URL 和 endpoint 校验。
 - `MODEL_API_KEY`：模型服务密钥，只能通过环境变量或 Kubernetes Secret 注入，不写入仓库。
 - `MODEL_NAME`：请求体中的 `model`。
 - `MODEL_TIMEOUT_SECONDS`：模型 HTTP 请求超时，默认 120 秒。
 
-Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，模型 HTTP 错误、tool calling 错误和网络超时都会让 runtime 通过 Control Plane 写入 `run.failed`。
+DeepSeek 接入不新增 provider 名，保持：
+
+```bash
+MODEL_PROVIDER=openai-compatible
+MODEL_BASE_URL=https://api.deepseek.com
+MODEL_API_KEY=sk-...
+MODEL_NAME=deepseek-v4-flash
+```
+
+Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，优先采集 provider response 中的真实 token usage；缺失 usage 时按 run 的输入/输出文本做估算并标记 `estimated=true`。
+
+模型错误会按运营类目归一化：401 为 `auth_error`，402 为 `billing_error`，400/422 为 `request_error`，429 为 `rate_limited`，500/503/网关错误为 `provider_unavailable`，超时和连接错误为 `network_error`。429、5xx 和网络瞬时错误会按指数退避重试并尊重 `Retry-After`；401、402、400、422 不重试。当前 fallback 只保留策略骨架和 run usage 字段，尚未配置多 provider 自动切换。provider 错误、日志和 run error 会经过 redactor，默认不输出 API key、Authorization、token、secret、password 或 cookie。
 
 ## Skill 与 Secret 排查
 

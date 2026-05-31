@@ -52,7 +52,21 @@ SANDBOX_EXECUTOR_URL=http://127.0.0.1:8082 \
 make run-runtime
 ```
 
-`MODEL_BASE_URL` 不需要包含 `/v1/chat/completions`，runtime 会通过 Eino `eino-ext` OpenAI ChatModel 调用 `{MODEL_BASE_URL}/v1/chat/completions`，并使用 Eino 原生 tool calling 能力。
+`MODEL_BASE_URL` 必须是 provider 根地址，不要包含 `/v1/chat/completions`、`/chat/completions` 或 `/completions`；runtime 启动时会校验 URL、API key 和模型名。Runtime 会通过 Eino `eino-ext` OpenAI ChatModel 调用 chat completions 协议，并使用 Eino 原生 tool calling 能力。
+
+DeepSeek 仍使用同一个 OpenAI-compatible provider，不新增 `MODEL_PROVIDER=deepseek`：
+
+```bash
+MODEL_PROVIDER=openai-compatible \
+MODEL_BASE_URL=https://api.deepseek.com \
+MODEL_API_KEY=replace-with-deepseek-key \
+MODEL_NAME=deepseek-v4-flash \
+MODEL_TIMEOUT_SECONDS=120 \
+SANDBOX_EXECUTOR_URL=http://127.0.0.1:8082 \
+make run-runtime
+```
+
+本地 API key 只放在未提交的 `.env` 或 shell 环境变量里。错误 key 应返回 `auth_error`，余额不足应返回 `billing_error`，日志和 run error 不应出现 `MODEL_API_KEY` 或 `Authorization` header。
 
 Postgres 持久化路径：
 

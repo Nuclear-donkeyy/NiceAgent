@@ -68,6 +68,16 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if len(replayed) != 1 || replayed[0].ID != second.ID {
 		t.Fatalf("replayed events = %#v, want only second event", replayed)
 	}
+	if _, err := store.SaveRunUsage(run.ID, protocol.RunUsage{
+		Provider:     "openai-compatible",
+		Model:        "deepseek-v4-flash",
+		InputTokens:  9,
+		OutputTokens: 4,
+		TotalTokens:  13,
+		Estimated:    false,
+	}); err != nil {
+		t.Fatalf("save run usage: %v", err)
+	}
 	if err := (app.RepositorySink{Repo: store}).Complete(run.ID, "persisted assistant"); err != nil {
 		t.Fatalf("complete run: %v", err)
 	}
@@ -86,6 +96,9 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	}
 	if gotRun.Status != protocol.RunSucceeded || gotRun.FinishedAt == nil {
 		t.Fatalf("reloaded run = %#v, want succeeded with finished_at", gotRun)
+	}
+	if gotRun.Usage.Provider != "openai-compatible" || gotRun.Usage.InputTokens != 9 || gotRun.Usage.OutputTokens != 4 {
+		t.Fatalf("reloaded run usage = %#v", gotRun.Usage)
 	}
 
 	_, canceledRun, err := reloaded.AddUserMessage(chat.ID, "demo-user", "cancel me")

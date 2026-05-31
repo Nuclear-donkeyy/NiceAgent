@@ -21,6 +21,7 @@ type Run struct {
 	AttemptID   string     `json:"attempt_id,omitempty"`
 	Status      RunStatus  `json:"status"`
 	Error       string     `json:"error,omitempty"`
+	Usage       RunUsage   `json:"usage,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
@@ -92,4 +93,36 @@ type RunUsage struct {
 	FallbackFrom    string  `json:"fallback_from,omitempty"`
 	FallbackTo      string  `json:"fallback_to,omitempty"`
 	ErrorClass      string  `json:"error_class,omitempty"`
+}
+
+func NormalizeRunUsage(usage RunUsage) RunUsage {
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	}
+	return usage
+}
+
+func TokenUsageFromRunUsage(usage RunUsage) TokenUsage {
+	return TokenUsage{
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+	}
+}
+
+func IsZeroRunUsage(usage RunUsage) bool {
+	return usage.Provider == "" &&
+		usage.Model == "" &&
+		usage.InputTokens == 0 &&
+		usage.OutputTokens == 0 &&
+		usage.ReasoningTokens == 0 &&
+		usage.CachedTokens == 0 &&
+		usage.TotalTokens == 0 &&
+		!usage.Estimated &&
+		usage.Cost == 0 &&
+		usage.Currency == "" &&
+		usage.LatencyMillis == 0 &&
+		usage.RetryCount == 0 &&
+		usage.FallbackFrom == "" &&
+		usage.FallbackTo == "" &&
+		usage.ErrorClass == ""
 }

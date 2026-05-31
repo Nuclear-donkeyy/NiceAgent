@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/schema"
+
 	"niceagent/agent-runtime/internal/modelprovider"
 	"niceagent/common/protocol"
 	"niceagent/common/sandbox"
@@ -64,6 +66,44 @@ func TestEngineRunsAllowedCLICommand(t *testing.T) {
 	}
 	if !strings.Contains(sink.completed, "hello") {
 		t.Fatalf("completed content = %q, want CLI stdout", sink.completed)
+	}
+}
+
+func TestEngineCompletesWithSandboxArtifacts(t *testing.T) {
+	sink := &recordingSink{}
+	artifact := protocol.Artifact{
+		ID:          "art-1",
+		RunID:       "run-art",
+		WorkspaceID: "ws-1",
+		Path:        "output/report.txt",
+		Name:        "report.txt",
+		MimeType:    "text/plain",
+		SizeBytes:   6,
+	}
+	engine := NewEngine(fakeSandbox{result: protocol.SandboxResult{
+		RunID:     "run-art",
+		ExitCode:  0,
+		Stdout:    "created report",
+		Artifacts: []protocol.Artifact{artifact},
+	}})
+
+	result := engine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-art",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		SkillIDs:    []string{"cli.exec"},
+		ModelPolicy: "mock",
+	}, "/cli echo hello", sink)
+
+	if result.Status != protocol.RunSucceeded {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].Path != "output/report.txt" {
+		t.Fatalf("result artifacts = %#v", result.Artifacts)
+	}
+	if len(sink.artifacts) != 1 || sink.artifacts[0].Path != "output/report.txt" {
+		t.Fatalf("sink artifacts = %#v", sink.artifacts)
 	}
 }
 
@@ -206,10 +246,58 @@ func TestEngineUsesConfiguredModelProvider(t *testing.T) {
 	}
 }
 
+func TestEnginePrefersRealModelUsageAndFallsBackToEstimate(t *testing.T) {
+	realUsageSink := &recordingSink{}
+	realUsageEngine := NewEngine(sandbox.NewExecutor())
+	realUsageEngine.Models = modelprovider.MockProvider{
+		Response: "usage aware response",
+		Usage: &schema.TokenUsage{
+			PromptTokens:     11,
+			CompletionTokens: 13,
+			TotalTokens:      24,
+		},
+	}
+
+	result := realUsageEngine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-real-usage",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		ModelPolicy: "mock-real",
+	}, "hello", realUsageSink)
+	if result.Status != protocol.RunSucceeded {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	if result.Usage.Estimated || result.Usage.InputTokens != 11 || result.Usage.OutputTokens != 13 {
+		t.Fatalf("usage = %#v, want real provider usage", result.Usage)
+	}
+	if realUsageSink.usage.InputTokens != 11 || realUsageSink.usage.OutputTokens != 13 {
+		t.Fatalf("sink usage = %#v, want real usage", realUsageSink.usage)
+	}
+
+	estimateSink := &recordingSink{}
+	estimateEngine := NewEngine(sandbox.NewExecutor())
+	result = estimateEngine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-estimate-usage",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		ModelPolicy: "mock-estimate",
+	}, "hello", estimateSink)
+	if result.Status != protocol.RunSucceeded {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	if !result.Usage.Estimated || result.Usage.InputTokens == 0 || result.Usage.OutputTokens == 0 {
+		t.Fatalf("usage = %#v, want estimated token fallback", result.Usage)
+	}
+}
+
 type recordingSink struct {
 	events            []protocol.RunEventType
 	payloads          []any
 	completed         string
+	artifacts         []protocol.Artifact
+	usage             protocol.RunUsage
 	failed            string
 	canceled          bool
 	tokenEvents       int
@@ -228,8 +316,16 @@ func (s *recordingSink) Emit(_ string, typ protocol.RunEventType, _ string, payl
 	return nil
 }
 
-func (s *recordingSink) Complete(_ string, content string) error {
+func (s *recordingSink) Complete(_ string, content string, artifacts ...protocol.Artifact) error {
 	s.completed = content
+	s.artifacts = artifacts
+	return nil
+}
+
+func (s *recordingSink) CompleteWithUsage(_ string, content string, usage protocol.RunUsage, artifacts ...protocol.Artifact) error {
+	s.completed = content
+	s.usage = usage
+	s.artifacts = artifacts
 	return nil
 }
 
@@ -258,4 +354,12 @@ func (s *recordingSink) lastPayload(typ protocol.RunEventType) any {
 		}
 	}
 	return nil
+}
+
+type fakeSandbox struct {
+	result protocol.SandboxResult
+}
+
+func (f fakeSandbox) Execute(context.Context, protocol.SandboxCommand) protocol.SandboxResult {
+	return f.result
 }

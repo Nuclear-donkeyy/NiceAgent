@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -252,6 +254,56 @@ func TestServerCreatesUserHTTPSkill(t *testing.T) {
 	}
 }
 
+func TestServerRejectsInvalidHTTPSkillSchemas(t *testing.T) {
+	_, handler := newTestHandler()
+	request := httptest.NewRequest(http.MethodPost, "/api/skills/http", jsonBody(t, protocol.HTTPSkillInput{
+		Name:        "Broken API",
+		Method:      "POST",
+		URL:         "https://example.com/weather",
+		InputSchema: `{"type":"object","properties":{"query":{"type":"definitely-not-a-json-type"}}}`,
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("create skill status = %d, body = %s; want 400", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "input_schema") {
+		t.Fatalf("response body = %s, want input_schema error", response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/skills/http", jsonBody(t, protocol.HTTPSkillInput{
+		Name:         "Broken Output API",
+		Method:       "POST",
+		URL:          "https://example.com/weather",
+		OutputSchema: `{"type":"object","properties":{"ok":{"type":"not-real"}}}`,
+	}))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("create skill status = %d, body = %s; want 400", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "output_schema") {
+		t.Fatalf("response body = %s, want output_schema error", response.Body.String())
+	}
+}
+
+func TestServerRejectsInvalidHTTPSkillRuntimeConfig(t *testing.T) {
+	_, handler := newTestHandler()
+	request := httptest.NewRequest(http.MethodPost, "/api/skills/http", jsonBody(t, protocol.HTTPSkillInput{
+		Name:   "Insecure API",
+		Method: "POST",
+		URL:    "http://127.0.0.1/hook",
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("create skill status = %d, body = %s; want 400", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "url scheme must be https") {
+		t.Fatalf("response body = %s, want https scheme error", response.Body.String())
+	}
+}
+
 func TestControlPlaneHTTPRuntimeContract(t *testing.T) {
 	store := repository.NewStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -375,6 +427,124 @@ func TestControlSinkDoesNotOverwriteCanceledRun(t *testing.T) {
 	}
 	if got.Status != protocol.RunCanceled || got.Error != "" {
 		t.Fatalf("run after late failure = status %q error %q, want canceled with empty error", got.Status, got.Error)
+	}
+}
+
+func TestServerPersistsListsAndDownloadsArtifacts(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	t.Setenv("SANDBOX_WORKSPACE_ROOT", workspaceRoot)
+	store, handler := newTestHandler()
+	chat := mustCreateChat(t, store, "demo-user", "artifacts")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "make artifact")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	outputDir := filepath.Join(workspaceRoot, run.WorkspaceID, "output")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "report.txt"), []byte("report"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	complete := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/complete", jsonBody(t, protocol.RunCompleteRequest{
+		Content: "done",
+		Artifacts: []protocol.Artifact{{
+			Path:           "output/report.txt",
+			Name:           "report.txt",
+			MimeType:       "text/plain",
+			SizeBytes:      6,
+			StorageBackend: "local",
+		}},
+	}))
+	completeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(completeResponse, complete)
+	if completeResponse.Code != http.StatusOK {
+		t.Fatalf("complete status = %d, body = %s", completeResponse.Code, completeResponse.Body.String())
+	}
+
+	list := httptest.NewRequest(http.MethodGet, "/api/runs/"+run.ID+"/artifacts", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("list artifacts status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+	var listed protocol.ArtifactListResponse
+	decodeJSON(t, listResponse.Body, &listed)
+	if len(listed.Artifacts) != 1 {
+		t.Fatalf("artifacts len = %d, want 1", len(listed.Artifacts))
+	}
+	artifact := listed.Artifacts[0]
+	if artifact.ID == "" || artifact.RunID != run.ID || artifact.WorkspaceID != run.WorkspaceID || artifact.UserID != "demo-user" {
+		t.Fatalf("artifact identity = %#v", artifact)
+	}
+
+	download := httptest.NewRequest(http.MethodGet, "/api/artifacts/"+artifact.ID+"/download", nil)
+	downloadResponse := httptest.NewRecorder()
+	handler.ServeHTTP(downloadResponse, download)
+	if downloadResponse.Code != http.StatusOK {
+		t.Fatalf("download status = %d, body = %s", downloadResponse.Code, downloadResponse.Body.String())
+	}
+	if downloadResponse.Body.String() != "report" {
+		t.Fatalf("download body = %q, want report", downloadResponse.Body.String())
+	}
+	if !strings.Contains(downloadResponse.Header().Get("Content-Disposition"), "report.txt") {
+		t.Fatalf("content-disposition = %q", downloadResponse.Header().Get("Content-Disposition"))
+	}
+	if !containsEvent(store.ListEvents(run.ID, 0), protocol.EventArtifactCreated) {
+		t.Fatalf("events = %#v, want artifact.created", store.ListEvents(run.ID, 0))
+	}
+}
+
+func TestArtifactDownloadRejectsTraversalAndSymlinkEscape(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	t.Setenv("SANDBOX_WORKSPACE_ROOT", workspaceRoot)
+	store, handler := newTestHandler()
+	chat := mustCreateChat(t, store, "demo-user", "artifact safety")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "unsafe artifact")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	outputDir := filepath.Join(workspaceRoot, run.WorkspaceID, "output")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	outside := filepath.Join(workspaceRoot, "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("write outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(outputDir, "link.txt")); err != nil {
+		t.Fatalf("symlink artifact: %v", err)
+	}
+
+	traversal, err := store.AddArtifact(protocol.Artifact{
+		RunID:     run.ID,
+		Path:      "../outside.txt",
+		Name:      "outside.txt",
+		MimeType:  "text/plain",
+		SizeBytes: 6,
+	})
+	if err != nil {
+		t.Fatalf("add traversal artifact: %v", err)
+	}
+	symlink, err := store.AddArtifact(protocol.Artifact{
+		RunID:     run.ID,
+		Path:      "output/link.txt",
+		Name:      "link.txt",
+		MimeType:  "text/plain",
+		SizeBytes: 6,
+	})
+	if err != nil {
+		t.Fatalf("add symlink artifact: %v", err)
+	}
+
+	for _, artifactID := range []string{traversal.ID, symlink.ID} {
+		request := httptest.NewRequest(http.MethodGet, "/api/artifacts/"+artifactID+"/download", nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("download %s status = %d, body = %s", artifactID, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -518,4 +688,13 @@ func eventually(timeout time.Duration, condition func() bool) bool {
 		time.Sleep(5 * time.Millisecond)
 	}
 	return condition()
+}
+
+func containsEvent(events []protocol.RunEvent, typ protocol.RunEventType) bool {
+	for _, event := range events {
+		if event.Type == typ {
+			return true
+		}
+	}
+	return false
 }

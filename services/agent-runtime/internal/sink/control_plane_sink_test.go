@@ -12,6 +12,7 @@ import (
 func TestControlPlaneSinkWritesEventsCompleteFailAndReadsCancel(t *testing.T) {
 	var sawEvent bool
 	var sawComplete bool
+	var sawCompleteUsage bool
 	var sawFail bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer secret" {
@@ -34,7 +35,20 @@ func TestControlPlaneSinkWritesEventsCompleteFailAndReadsCancel(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatalf("decode complete: %v", err)
 			}
-			if request.Content != "done" {
+			switch request.Content {
+			case "done":
+				if len(request.Artifacts) != 1 || request.Artifacts[0].Path != "output/report.txt" {
+					t.Fatalf("complete artifacts = %#v", request.Artifacts)
+				}
+			case "done with usage":
+				if request.Usage.Provider != "openai-compatible" || request.Usage.InputTokens != 12 || request.TokenUsage.OutputTokens != 7 {
+					t.Fatalf("complete usage request = %#v", request)
+				}
+				if len(request.Artifacts) != 1 || request.Artifacts[0].Path != "output/usage.txt" {
+					t.Fatalf("complete usage artifacts = %#v", request.Artifacts)
+				}
+				sawCompleteUsage = true
+			default:
 				t.Fatalf("complete content = %q", request.Content)
 			}
 			sawComplete = true
@@ -63,8 +77,16 @@ func TestControlPlaneSinkWritesEventsCompleteFailAndReadsCancel(t *testing.T) {
 	if err := sink.Emit("run-1", protocol.EventRunStarted, "started", nil); err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	if err := sink.Complete("run-1", "done"); err != nil {
+	if err := sink.Complete("run-1", "done", protocol.Artifact{Path: "output/report.txt"}); err != nil {
 		t.Fatalf("complete: %v", err)
+	}
+	if err := sink.CompleteWithUsage("run-1", "done with usage", protocol.RunUsage{
+		Provider:     "openai-compatible",
+		Model:        "deepseek-v4-flash",
+		InputTokens:  12,
+		OutputTokens: 7,
+	}, protocol.Artifact{Path: "output/usage.txt"}); err != nil {
+		t.Fatalf("complete with usage: %v", err)
 	}
 	if err := sink.Fail("run-1", "bad"); err != nil {
 		t.Fatalf("fail: %v", err)
@@ -72,8 +94,8 @@ func TestControlPlaneSinkWritesEventsCompleteFailAndReadsCancel(t *testing.T) {
 	if !sink.IsCanceled("run-1") {
 		t.Fatal("expected canceled status")
 	}
-	if !sawEvent || !sawComplete || !sawFail {
-		t.Fatalf("saw event=%v complete=%v fail=%v", sawEvent, sawComplete, sawFail)
+	if !sawEvent || !sawComplete || !sawCompleteUsage || !sawFail {
+		t.Fatalf("saw event=%v complete=%v complete_usage=%v fail=%v", sawEvent, sawComplete, sawCompleteUsage, sawFail)
 	}
 }
 

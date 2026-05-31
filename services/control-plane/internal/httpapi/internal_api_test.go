@@ -49,6 +49,15 @@ func TestInternalRunAPIsWriteEventsCompleteFailAndStatus(t *testing.T) {
 
 	completeRequest := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/complete", jsonBody(t, protocol.RunCompleteRequest{
 		Content: "done",
+		Usage: protocol.RunUsage{
+			Provider:      "openai-compatible",
+			Model:         "deepseek-v4-flash",
+			InputTokens:   9,
+			OutputTokens:  4,
+			TotalTokens:   13,
+			Estimated:     false,
+			LatencyMillis: 123,
+		},
 	}))
 	completeResponse := httptest.NewRecorder()
 	handler.ServeHTTP(completeResponse, completeRequest)
@@ -61,6 +70,14 @@ func TestInternalRunAPIsWriteEventsCompleteFailAndStatus(t *testing.T) {
 	}
 	if gotRun.Status != protocol.RunSucceeded {
 		t.Fatalf("completed status = %q, want succeeded", gotRun.Status)
+	}
+	if gotRun.Usage.Provider != "openai-compatible" || gotRun.Usage.Model != "deepseek-v4-flash" || gotRun.Usage.InputTokens != 9 || gotRun.Usage.OutputTokens != 4 {
+		t.Fatalf("completed usage = %#v", gotRun.Usage)
+	}
+	var completedResponse protocol.Run
+	decodeJSON(t, completeResponse.Body, &completedResponse)
+	if completedResponse.Usage.TotalTokens != 13 || completedResponse.Usage.LatencyMillis != 123 {
+		t.Fatalf("complete response usage = %#v", completedResponse.Usage)
 	}
 
 	_, failedRun, err := store.AddUserMessage(chat.ID, "demo-user", "fail")

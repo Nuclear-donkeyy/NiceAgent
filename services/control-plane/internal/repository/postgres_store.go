@@ -236,6 +236,11 @@ func (s *PostgresStore) GetRun(runID string) (protocol.Run, error) {
 	if finishedAt.Valid {
 		run.FinishedAt = &finishedAt.Time
 	}
+	usage, err := s.getRunUsage(runID)
+	if err != nil {
+		return protocol.Run{}, err
+	}
+	run.Usage = usage
 	return run, nil
 }
 
@@ -264,6 +269,75 @@ func (s *PostgresStore) UpdateRunStatus(runID string, status protocol.RunStatus,
 		return protocol.Run{}, err
 	}
 	return s.GetRun(runID)
+}
+
+func (s *PostgresStore) SaveRunUsage(runID string, usage protocol.RunUsage) (protocol.RunUsage, error) {
+	if _, err := s.GetRun(runID); err != nil {
+		return protocol.RunUsage{}, err
+	}
+	usage = protocol.NormalizeRunUsage(usage)
+	_, err := s.db.Exec(`
+		INSERT INTO run_usage (
+			run_id, provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
+			total_tokens, estimated, cost, currency, latency_millis, retry_count, fallback_from,
+			fallback_to, error_class, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())
+		ON CONFLICT (run_id) DO UPDATE SET
+			provider = EXCLUDED.provider,
+			model = EXCLUDED.model,
+			input_tokens = EXCLUDED.input_tokens,
+			output_tokens = EXCLUDED.output_tokens,
+			reasoning_tokens = EXCLUDED.reasoning_tokens,
+			cached_tokens = EXCLUDED.cached_tokens,
+			total_tokens = EXCLUDED.total_tokens,
+			estimated = EXCLUDED.estimated,
+			cost = EXCLUDED.cost,
+			currency = EXCLUDED.currency,
+			latency_millis = EXCLUDED.latency_millis,
+			retry_count = EXCLUDED.retry_count,
+			fallback_from = EXCLUDED.fallback_from,
+			fallback_to = EXCLUDED.fallback_to,
+			error_class = EXCLUDED.error_class,
+			updated_at = now()`,
+		runID, usage.Provider, usage.Model, usage.InputTokens, usage.OutputTokens, usage.ReasoningTokens, usage.CachedTokens,
+		usage.TotalTokens, usage.Estimated, usage.Cost, usage.Currency, usage.LatencyMillis, usage.RetryCount, usage.FallbackFrom,
+		usage.FallbackTo, usage.ErrorClass)
+	if err != nil {
+		return protocol.RunUsage{}, err
+	}
+	return usage, nil
+}
+
+func (s *PostgresStore) GetRunUsage(runID string) (protocol.RunUsage, error) {
+	var exists bool
+	if err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM runs WHERE id = $1)`, runID).Scan(&exists); err != nil {
+		return protocol.RunUsage{}, err
+	}
+	if !exists {
+		return protocol.RunUsage{}, app.ErrNotFound
+	}
+	return s.getRunUsage(runID)
+}
+
+func (s *PostgresStore) getRunUsage(runID string) (protocol.RunUsage, error) {
+	var usage protocol.RunUsage
+	if err := s.db.QueryRow(`
+		SELECT provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
+		       total_tokens, estimated, cost, currency, latency_millis, retry_count,
+		       fallback_from, fallback_to, error_class
+		FROM run_usage
+		WHERE run_id = $1`, runID).Scan(
+		&usage.Provider, &usage.Model, &usage.InputTokens, &usage.OutputTokens, &usage.ReasoningTokens, &usage.CachedTokens,
+		&usage.TotalTokens, &usage.Estimated, &usage.Cost, &usage.Currency, &usage.LatencyMillis, &usage.RetryCount,
+		&usage.FallbackFrom, &usage.FallbackTo, &usage.ErrorClass,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.RunUsage{}, nil
+		}
+		return protocol.RunUsage{}, err
+	}
+	return protocol.NormalizeRunUsage(usage), nil
 }
 
 func (s *PostgresStore) AddEvent(runID string, typ protocol.RunEventType, message string, payload any) (protocol.RunEvent, error) {
@@ -499,17 +573,24 @@ func (s *PostgresStore) ListRuntimeSkillsForUser(userID, projectID string) []pro
 	runtimeSkills := make([]protocol.RuntimeSkill, 0, len(skills))
 	for _, skill := range skills {
 		secrets := map[string]string{}
-		rows, err := s.db.Query(`SELECT secret_key, COALESCE(encrypted_value, '') FROM skill_secrets WHERE skill_id = $1`, skill.ID)
+		secretMaterials := map[string]protocol.RuntimeSecret{}
+		rows, err := s.db.Query(`SELECT secret_key, COALESCE(encrypted_value, ''), COALESCE(secret_ref, '') FROM skill_secrets WHERE skill_id = $1`, skill.ID)
 		if err == nil {
 			for rows.Next() {
-				var key, value string
-				if err := rows.Scan(&key, &value); err == nil && value != "" {
-					secrets[key] = value
+				var key, encryptedValue, secretRef string
+				if err := rows.Scan(&key, &encryptedValue, &secretRef); err == nil {
+					material := protocol.RuntimeSecret{EncryptedValue: encryptedValue, SecretRef: secretRef}
+					if material.EncryptedValue != "" || material.SecretRef != "" {
+						secretMaterials[key] = material
+					}
+					if encryptedValue != "" {
+						secrets[key] = encryptedValue
+					}
 				}
 			}
 			rows.Close()
 		}
-		runtimeSkills = append(runtimeSkills, protocol.RuntimeSkill{Skill: skill, Secrets: secrets})
+		runtimeSkills = append(runtimeSkills, protocol.RuntimeSkill{Skill: skill, Secrets: secrets, SecretMaterials: secretMaterials})
 	}
 	return runtimeSkills
 }
@@ -576,7 +657,10 @@ func (s *PostgresStore) listSkillsForUser(userID, projectID string, runtimeOnly 
 func (s *PostgresStore) CreateHTTPSkill(userID, projectID string, input protocol.HTTPSkillInput) (protocol.Skill, error) {
 	skillID := platform.NewID("skill")
 	versionID := platform.NewID("skv")
-	skill, secret := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	skill, secret, hasSecret, err := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	if err != nil {
+		return protocol.Skill{}, err
+	}
 	now := time.Now().UTC()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -601,11 +685,11 @@ func (s *PostgresStore) CreateHTTPSkill(userID, projectID string, input protocol
 		platform.NewID("grant"), userID, projectID, skill.ID, now); err != nil {
 		return protocol.Skill{}, err
 	}
-	if secret != "" {
+	if hasSecret {
 		if _, err := tx.Exec(`
-			INSERT INTO skill_secrets (id, skill_id, secret_key, encrypted_value, created_at, updated_at)
-			VALUES ($1, $2, 'bearer_token', $3, $4, $5)`,
-			platform.NewID("secret"), skill.ID, secret, now, now); err != nil {
+			INSERT INTO skill_secrets (id, skill_id, secret_key, secret_ref, encrypted_value, created_at, updated_at)
+			VALUES ($1, $2, 'bearer_token', NULLIF($3, ''), NULLIF($4, ''), $5, $6)`,
+			platform.NewID("secret"), skill.ID, secret.SecretRef, secret.EncryptedValue, now, now); err != nil {
 			return protocol.Skill{}, err
 		}
 	}
@@ -633,7 +717,10 @@ func (s *PostgresStore) UpdateHTTPSkill(userID, skillID string, input protocol.H
 		return protocol.Skill{}, app.ErrNotFound
 	}
 	versionID := platform.NewID("skv")
-	skill, secret := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	skill, secret, hasSecret, err := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	if err != nil {
+		return protocol.Skill{}, err
+	}
 	skill.Slug = current.Slug
 	skill.Scope = protocol.SkillScope(scope)
 	skill.Kind = protocol.SkillKind(kind)
@@ -654,13 +741,13 @@ func (s *PostgresStore) UpdateHTTPSkill(userID, skillID string, input protocol.H
 	if _, err := tx.Exec(`UPDATE skills SET current_version_id = $1, updated_at = $2 WHERE id = $3`, skill.CurrentVersionID, now, skill.ID); err != nil {
 		return protocol.Skill{}, err
 	}
-	if secret != "" {
+	if hasSecret {
 		if _, err := tx.Exec(`
-			INSERT INTO skill_secrets (id, skill_id, secret_key, encrypted_value, created_at, updated_at)
-			VALUES ($1, $2, 'bearer_token', $3, $4, $5)
+			INSERT INTO skill_secrets (id, skill_id, secret_key, secret_ref, encrypted_value, created_at, updated_at)
+			VALUES ($1, $2, 'bearer_token', NULLIF($3, ''), NULLIF($4, ''), $5, $6)
 			ON CONFLICT (skill_id, secret_key)
-			DO UPDATE SET encrypted_value = EXCLUDED.encrypted_value, updated_at = EXCLUDED.updated_at`,
-			platform.NewID("secret"), skill.ID, secret, now, now); err != nil {
+			DO UPDATE SET secret_ref = EXCLUDED.secret_ref, encrypted_value = EXCLUDED.encrypted_value, updated_at = EXCLUDED.updated_at`,
+			platform.NewID("secret"), skill.ID, secret.SecretRef, secret.EncryptedValue, now, now); err != nil {
 			return protocol.Skill{}, err
 		}
 	}

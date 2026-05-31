@@ -54,8 +54,24 @@ type Skill struct {
 }
 
 type RuntimeSkill struct {
-	Skill   Skill             `json:"skill"`
-	Secrets map[string]string `json:"secrets,omitempty"`
+	Skill           Skill                    `json:"skill"`
+	Secrets         map[string]string        `json:"secrets,omitempty"`
+	SecretMaterials map[string]RuntimeSecret `json:"secret_materials,omitempty"`
+}
+
+type RuntimeSecret struct {
+	EncryptedValue string `json:"encrypted_value,omitempty"`
+	SecretRef      string `json:"secret_ref,omitempty"`
+}
+
+func (s RuntimeSkill) SecretMaterial(key string) RuntimeSecret {
+	if material, ok := s.SecretMaterials[key]; ok {
+		return material
+	}
+	if value := s.Secrets[key]; value != "" {
+		return RuntimeSecret{EncryptedValue: value}
+	}
+	return RuntimeSecret{}
 }
 
 type SkillGroups struct {
@@ -69,15 +85,16 @@ type SkillsResponse struct {
 }
 
 type HTTPSkillInput struct {
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	Method         string `json:"method"`
-	URL            string `json:"url"`
-	InputSchema    string `json:"input_schema,omitempty"`
-	OutputSchema   string `json:"output_schema,omitempty"`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
-	AuthType       string `json:"auth_type,omitempty"`
-	BearerToken    string `json:"bearer_token,omitempty"`
+	Name                 string `json:"name"`
+	Description          string `json:"description"`
+	Method               string `json:"method"`
+	URL                  string `json:"url"`
+	InputSchema          string `json:"input_schema,omitempty"`
+	OutputSchema         string `json:"output_schema,omitempty"`
+	TimeoutSeconds       int    `json:"timeout_seconds,omitempty"`
+	AuthType             string `json:"auth_type,omitempty"`
+	BearerToken          string `json:"bearer_token,omitempty"`
+	BearerTokenSecretRef string `json:"bearer_token_secret_ref,omitempty"`
 }
 
 type SkillInvocation struct {
