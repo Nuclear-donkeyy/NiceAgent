@@ -160,6 +160,28 @@ func TestEngineHonorsCancellationBeforeExecution(t *testing.T) {
 	}
 }
 
+func TestEngineUsesConfiguredModelProvider(t *testing.T) {
+	sink := &recordingSink{}
+	engine := NewEngine(sandbox.NewExecutor())
+	engine.Models = MockProvider{Response: "来自配置模型的回复"}
+
+	result := engine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-7",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		SkillIDs:    []string{"cli.exec"},
+		ModelPolicy: "configured",
+	}, "hello", sink)
+
+	if result.Status != protocol.RunSucceeded {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	if !strings.Contains(sink.completed, "来自配置模型的回复") {
+		t.Fatalf("completed content = %q, want configured provider response", sink.completed)
+	}
+}
+
 type recordingSink struct {
 	events            []protocol.RunEventType
 	payloads          []any

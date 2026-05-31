@@ -9,4 +9,8 @@ data:
   CONTROL_PLANE_PUBLIC_URL: "http://niceagent-control-plane:8080"
   CONTROL_PLANE_URL: "http://niceagent-control-plane:8080"
   SANDBOX_EXECUTOR_URL: "http://niceagent-sandbox-executor:8082"
+  MODEL_PROVIDER: "mock"
+  MODEL_BASE_URL: ""
+  MODEL_NAME: ""
+  MODEL_TIMEOUT_SECONDS: "120"
   REDIS_ADDR: "niceagent-redis:6379"

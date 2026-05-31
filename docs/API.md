@@ -113,6 +113,12 @@ Sandbox Executor 在策略约束下执行命令的入口，由 Agent Runtime 的
 
 请求体复用 `SandboxCommand`，响应体复用 `SandboxResult`。
 
+## 模型输出
+
+Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。无论 provider 类型如何，模型流式内容都通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端 SSE 展示。
+
+OpenAI-compatible provider 使用 `/v1/chat/completions` 的 streaming 协议；该能力不改变外部 Web API 和 `RunExecutionRequest`。
+
 ## 事件约定
 
 `RunEvent` 是前端展示、审计和恢复的统一事件协议。事件需要保持递增 `seq`，并允许前端通过 `after` 参数补齐断线期间的事件。

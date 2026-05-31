@@ -41,10 +41,10 @@
 - SSE `after` replay 使用数据库事件序号。
 - memory 模式和 Postgres 模式都有清晰启动方式。
 
-## Phase 3：Agent Runtime 能力
+## Phase 3：Agent Runtime 能力（Phase 3A 当前落地）
 
-- 接入 Eino adapter 边界。
-- 落地 OpenAI-compatible provider。
+- Phase 3A：落地 OpenAI-compatible provider，并保留 mock provider 作为默认本地路径。
+- 后续接入 Eino adapter 边界。
 - 通过 `ToolBridge` 将平台 `Skill` 映射为 runtime tools。
 - 支持最大步数、超时、取消、工具失败和事件审计。
 - 定义 checkpoint/resume 的最小协议，先不要求完整长任务恢复。
