@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/schema"
+
+	"niceagent/agent-runtime/internal/modelprovider"
 	"niceagent/agent-runtime/internal/tools"
 	"niceagent/common/protocol"
 	"niceagent/common/sandbox"
@@ -55,6 +58,14 @@ func TestEinoAgentEngineRunsCLIToolLoop(t *testing.T) {
 func TestEinoAgentEngineUsesUserHTTPSkill(t *testing.T) {
 	sink := &recordingSink{}
 	engine := NewEinoAgentEngine(nil)
+	engine.Models = modelprovider.MockChatModel{ToolCalls: []schema.ToolCall{{
+		ID:   "call_skill_weather",
+		Type: "function",
+		Function: schema.FunctionCall{
+			Name:      "skill_weather",
+			Arguments: `{"query":"weather"}`,
+		},
+	}}}
 	engine.Tools = tools.NewDefaultToolBridge(nil)
 	engine.Tools.Client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Header.Get("Authorization") != "Bearer secret-token" {
@@ -97,5 +108,47 @@ func TestEinoAgentEngineUsesUserHTTPSkill(t *testing.T) {
 	}
 	if !strings.Contains(sink.completed, `"ok":true`) {
 		t.Fatalf("completed content = %q, want http response", sink.completed)
+	}
+}
+
+func TestEinoAgentEngineRejectsUnavailableModelToolCall(t *testing.T) {
+	sink := &recordingSink{}
+	engine := NewEinoAgentEngine(nil)
+	engine.Models = modelprovider.MockChatModel{ToolCalls: []schema.ToolCall{{
+		ID:   "call_unknown",
+		Type: "function",
+		Function: schema.FunctionCall{
+			Name:      "unknown_tool",
+			Arguments: `{}`,
+		},
+	}}}
+
+	result := engine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-eino-unknown-tool",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		SkillIDs:    []string{"cli.exec"},
+		Skills: []protocol.RuntimeSkill{{
+			Skill: protocol.Skill{
+				ID:          "cli.exec",
+				Name:        "System CLI",
+				Description: "Fetch external information",
+				Scope:       protocol.SkillScopeSystem,
+				Kind:        protocol.SkillKindBuiltin,
+				Enabled:     true,
+			},
+		}},
+		ModelPolicy: "mock",
+	}, "please call a tool", sink)
+
+	if result.Status != protocol.RunFailed {
+		t.Fatalf("status = %q, want failed", result.Status)
+	}
+	if !strings.Contains(result.Error, "unknown_tool") {
+		t.Fatalf("error = %q, want unavailable tool name", result.Error)
+	}
+	if sink.completed != "" {
+		t.Fatalf("completed content = %q, want no completion", sink.completed)
 	}
 }

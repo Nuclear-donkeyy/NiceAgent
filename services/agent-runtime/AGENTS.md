@@ -18,7 +18,7 @@ internal/engine
   AgentEngine、Eino agentic loop、循环限制、模型和工具编排。
 
 internal/modelprovider
-  mock provider 与 OpenAI-compatible provider。
+  Eino ToolCallingChatModel factory，提供 mock provider 与 OpenAI-compatible provider。
 
 internal/tools
   ToolBridge、builtin skill、HTTP skill、SandboxExecutor 端口和工具事件输出。

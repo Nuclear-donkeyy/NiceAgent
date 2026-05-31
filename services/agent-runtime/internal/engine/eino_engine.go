@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -19,7 +20,7 @@ import (
 
 type EinoAgentEngine struct {
 	Sandbox tools.SandboxExecutor
-	Models  ModelProvider
+	Models  model.ToolCallingChatModel
 	Tools   *tools.DefaultToolBridge
 	Limits  LoopLimits
 }
@@ -27,7 +28,7 @@ type EinoAgentEngine struct {
 func NewEinoAgentEngine(executor tools.SandboxExecutor) *EinoAgentEngine {
 	return &EinoAgentEngine{
 		Sandbox: executor,
-		Models:  modelprovider.MockProvider{},
+		Models:  modelprovider.MockChatModel{},
 		Tools:   tools.NewDefaultToolBridge(executor),
 		Limits:  LoopLimits{MaxSteps: 8, Timeout: 2 * time.Minute},
 	}
@@ -40,9 +41,10 @@ func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, 
 		defer cancel()
 	}
 	if err := sink.Emit(req.RunID, protocol.EventRunStarted, "Eino agent runtime accepted the run.", map[string]any{
-		"workspace_id": req.WorkspaceID,
-		"model_policy": req.ModelPolicy,
-		"skill_ids":    req.SkillIDs,
+		"workspace_id":  req.WorkspaceID,
+		"model_policy":  req.ModelPolicy,
+		"skill_ids":     req.SkillIDs,
+		"model_runtime": "eino_chat_model",
 	}); err != nil {
 		return failed(req.RunID, err)
 	}
@@ -55,14 +57,37 @@ func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, 
 	if bridge == nil {
 		bridge = tools.NewDefaultToolBridge(e.Sandbox)
 	}
-	tools := bridge.BuildTools(req, sink)
-	chatModel := newEinoModelBridge(e.Models, req, tools)
+	runtimeTools := bridge.BuildTools(req, sink)
+	chatModel := e.Models
+	if chatModel == nil {
+		chatModel = modelprovider.MockChatModel{}
+	}
+	if command, ok := parseCLICommand(userMessage); ok {
+		if !hasRuntimeTool(runtimeTools, "cli_exec") {
+			message := "当前用户未启用系统 CLI 工具，无法执行 /cli 请求。"
+			_ = sink.Fail(req.RunID, message)
+			return protocol.RunResult{RunID: req.RunID, Status: protocol.RunFailed, Error: message}
+		}
+		chatModel = forcedToolCallModel{
+			inner: chatModel,
+			call: schema.ToolCall{
+				ID:   "call_cli_exec",
+				Type: "function",
+				Function: schema.FunctionCall{
+					Name:      "cli_exec",
+					Arguments: mustJSON(map[string]any{"command": command}),
+				},
+			},
+		}
+	}
+	chatModel = newGuardedToolModel(chatModel, runtimeTools)
+
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:          "niceagent_runtime",
 		Description:   "NiceAgent remote agent runtime.",
 		Instruction:   "你是 NiceAgent 的远端 agent。根据用户目标自主选择可用工具，工具结果只能作为观察信息，最终用简洁中文回复用户。",
 		Model:         chatModel,
-		ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools, ExecuteSequentially: true}},
+		ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: runtimeTools, ExecuteSequentially: true}},
 		MaxIterations: e.Limits.MaxSteps,
 	})
 	if err != nil {
@@ -77,6 +102,10 @@ func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, 
 		event, ok := iterator.Next()
 		if !ok {
 			break
+		}
+		if event != nil && event.Err != nil {
+			_ = sink.Fail(req.RunID, event.Err.Error())
+			return protocol.RunResult{RunID: req.RunID, Status: protocol.RunFailed, Error: event.Err.Error()}
 		}
 		msg, _, err := adk.GetMessage(event)
 		if err != nil || msg == nil {
@@ -99,6 +128,9 @@ func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, 
 	}
 	for _, token := range chunkText(content, 72) {
 		_ = sink.Emit(req.RunID, protocol.EventModelToken, token, nil)
+		if sink.IsCanceled(req.RunID) {
+			return protocol.RunResult{RunID: req.RunID, Status: protocol.RunCanceled}
+		}
 	}
 	if err := sink.Complete(req.RunID, content); err != nil {
 		return failed(req.RunID, err)
@@ -113,129 +145,111 @@ func (e *EinoAgentEngine) Execute(ctx context.Context, req protocol.RunRequest, 
 	}
 }
 
-type einoModelBridge struct {
-	provider ModelProvider
-	req      protocol.RunRequest
-	tools    []*schema.ToolInfo
+type forcedToolCallModel struct {
+	inner model.ToolCallingChatModel
+	call  schema.ToolCall
 }
 
-func newEinoModelBridge(provider ModelProvider, req protocol.RunRequest, tools []tool.BaseTool) *einoModelBridge {
-	if provider == nil {
-		provider = modelprovider.MockProvider{}
-	}
-	infos := make([]*schema.ToolInfo, 0, len(tools))
-	for _, baseTool := range tools {
-		info, err := baseTool.Info(context.Background())
-		if err == nil {
-			infos = append(infos, info)
-		}
-	}
-	return &einoModelBridge{provider: provider, req: req, tools: infos}
-}
-
-func (m *einoModelBridge) Generate(ctx context.Context, input []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+func (m forcedToolCallModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
 	if content, ok := latestToolObservation(input); ok {
 		return schema.AssistantMessage(formatToolObservation(content), nil), nil
 	}
-	userMessage := latestUserContent(input)
-	if call, ok := m.chooseToolCall(userMessage); ok {
-		return schema.AssistantMessage("", []schema.ToolCall{call}), nil
+	if !hasAssistantToolCall(input) {
+		return schema.AssistantMessage("", []schema.ToolCall{m.call}), nil
 	}
-	content, err := m.generateWithProvider(ctx, userMessage)
-	if err != nil {
-		return nil, err
-	}
-	return schema.AssistantMessage(content, nil), nil
+	return m.inner.Generate(ctx, input, opts...)
 }
 
-func (m *einoModelBridge) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+func (m forcedToolCallModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	msg, err := m.Generate(ctx, input, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return schema.StreamReaderFromArray([]*schema.Message{msg}), nil
+	return modelprovider.StreamSingle(ctx, msg)
 }
 
-func (m *einoModelBridge) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	next := *m
-	next.tools = append([]*schema.ToolInfo(nil), tools...)
-	return &next, nil
-}
-
-func (m *einoModelBridge) chooseToolCall(userMessage string) (schema.ToolCall, bool) {
-	if len(m.tools) == 0 {
-		return schema.ToolCall{}, false
-	}
-	if command, ok := parseCLICommand(userMessage); ok && m.hasTool("cli_exec") {
-		return schema.ToolCall{
-			ID:   "call_cli_exec",
-			Type: "function",
-			Function: schema.FunctionCall{
-				Name:      "cli_exec",
-				Arguments: mustJSON(map[string]any{"command": command}),
-			},
-		}, true
-	}
-	lower := strings.ToLower(userMessage)
-	for _, info := range m.tools {
-		if info.Name == "cli_exec" && (strings.Contains(lower, "curl ") || strings.Contains(lower, "外部信息")) {
-			return schema.ToolCall{
-				ID:   "call_cli_exec",
-				Type: "function",
-				Function: schema.FunctionCall{
-					Name:      "cli_exec",
-					Arguments: mustJSON(map[string]any{"command": []string{"date"}}),
-				},
-			}, true
-		}
-		if info.Name != "cli_exec" && (strings.Contains(userMessage, info.Name) || strings.Contains(userMessage, "调用") || strings.Contains(lower, "skill")) {
-			return schema.ToolCall{
-				ID:   "call_" + info.Name,
-				Type: "function",
-				Function: schema.FunctionCall{
-					Name:      info.Name,
-					Arguments: mustJSON(map[string]any{"query": userMessage}),
-				},
-			}, true
-		}
-	}
-	return schema.ToolCall{}, false
-}
-
-func (m *einoModelBridge) hasTool(name string) bool {
-	for _, info := range m.tools {
-		if info.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *einoModelBridge) generateWithProvider(ctx context.Context, userMessage string) (string, error) {
-	chunks, err := m.provider.Stream(ctx, modelprovider.Request{
-		RunID:       m.req.RunID,
-		ModelPolicy: m.req.ModelPolicy,
-		Messages: []protocol.Message{{
-			ChatID:  m.req.ChatID,
-			RunID:   m.req.RunID,
-			Role:    protocol.RoleUser,
-			Content: userMessage,
-		}},
-	})
+func (m forcedToolCallModel) WithTools(toolInfos []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	nextInner, err := m.inner.WithTools(toolInfos)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	var out strings.Builder
-	for chunk := range chunks {
-		if chunk.Error != nil {
-			return "", chunk.Error
-		}
-		out.WriteString(chunk.Text)
-		if chunk.Done {
-			break
+	next := m
+	next.inner = nextInner
+	return next, nil
+}
+
+type guardedToolModel struct {
+	inner   model.ToolCallingChatModel
+	allowed map[string]struct{}
+}
+
+func newGuardedToolModel(inner model.ToolCallingChatModel, runtimeTools []tool.BaseTool) model.ToolCallingChatModel {
+	return guardedToolModel{inner: inner, allowed: allowedToolNames(runtimeTools)}
+}
+
+func (m guardedToolModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	msg, err := m.inner.Generate(ctx, input, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.validateToolCalls(msg); err != nil {
+		return nil, err
+	}
+	return msg, nil
+}
+
+func (m guardedToolModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	msg, err := m.Generate(ctx, input, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return modelprovider.StreamSingle(ctx, msg)
+}
+
+func (m guardedToolModel) WithTools(toolInfos []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	nextInner, err := m.inner.WithTools(toolInfos)
+	if err != nil {
+		return nil, err
+	}
+	return guardedToolModel{inner: nextInner, allowed: allowedToolInfoNames(toolInfos)}, nil
+}
+
+func (m guardedToolModel) validateToolCalls(msg *schema.Message) error {
+	if msg == nil {
+		return nil
+	}
+	for _, call := range msg.ToolCalls {
+		if _, ok := m.allowed[call.Function.Name]; !ok {
+			return fmt.Errorf("model requested unavailable tool %q", call.Function.Name)
 		}
 	}
-	return out.String(), nil
+	return nil
+}
+
+func allowedToolNames(runtimeTools []tool.BaseTool) map[string]struct{} {
+	names := map[string]struct{}{}
+	for _, runtimeTool := range runtimeTools {
+		info, err := runtimeTool.Info(context.Background())
+		if err == nil && info != nil && info.Name != "" {
+			names[info.Name] = struct{}{}
+		}
+	}
+	return names
+}
+
+func allowedToolInfoNames(toolInfos []*schema.ToolInfo) map[string]struct{} {
+	names := map[string]struct{}{}
+	for _, info := range toolInfos {
+		if info != nil && info.Name != "" {
+			names[info.Name] = struct{}{}
+		}
+	}
+	return names
+}
+
+func hasRuntimeTool(runtimeTools []tool.BaseTool, name string) bool {
+	_, ok := allowedToolNames(runtimeTools)[name]
+	return ok
 }
 
 func latestToolObservation(messages []*schema.Message) (string, bool) {
@@ -245,6 +259,15 @@ func latestToolObservation(messages []*schema.Message) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func hasAssistantToolCall(messages []*schema.Message) bool {
+	for _, msg := range messages {
+		if msg != nil && msg.Role == schema.Assistant && len(msg.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func formatToolObservation(content string) string {
@@ -270,7 +293,7 @@ func formatToolObservation(content string) string {
 		if reason == "" {
 			reason = "该命令没有通过系统 CLI 策略。"
 		}
-		return "系统 CLI 没有执行这个请求：\n" + reason
+		return "系统 CLI 策略拒绝或执行错误：\n" + reason
 	}
 	content = strings.TrimSpace(content)
 	if len(content) > 2000 {
@@ -280,15 +303,6 @@ func formatToolObservation(content string) string {
 		content = "能力调用完成，但没有返回可展示内容。"
 	}
 	return "我已经调用相关能力并获得结果：\n" + content
-}
-
-func latestUserContent(messages []*schema.Message) string {
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i] != nil && messages[i].Role == schema.User {
-			return messages[i].Content
-		}
-	}
-	return ""
 }
 
 func mustJSON(value any) string {
@@ -314,4 +328,5 @@ func chunkText(value string, size int) []string {
 	return chunks
 }
 
-var _ model.ToolCallingChatModel = (*einoModelBridge)(nil)
+var _ model.ToolCallingChatModel = forcedToolCallModel{}
+var _ model.ToolCallingChatModel = guardedToolModel{}

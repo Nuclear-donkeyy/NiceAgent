@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/cloudwego/eino/components/model"
 
 	"niceagent/agent-runtime/internal/config"
 	"niceagent/agent-runtime/internal/engine"
@@ -42,13 +45,13 @@ func newSandboxExecutor(cfg config.Config, logger *slog.Logger) tools.SandboxExe
 	return sandbox.NewExecutor()
 }
 
-func modelProviderFromEnv(cfg config.Config, logger *slog.Logger) (modelprovider.Provider, error) {
+func modelProviderFromEnv(cfg config.Config, logger *slog.Logger) (model.ToolCallingChatModel, error) {
 	switch cfg.ModelProvider {
 	case "", "mock":
 		logger.Info("using mock model provider")
-		return modelprovider.MockProvider{}, nil
+		return modelprovider.MockChatModel{}, nil
 	case "openai-compatible":
-		modelProvider, err := modelprovider.NewOpenAICompatibleProvider(modelprovider.OpenAICompatibleProviderConfig{
+		modelProvider, err := modelprovider.NewOpenAICompatibleChatModel(context.Background(), modelprovider.OpenAICompatibleProviderConfig{
 			BaseURL: cfg.ModelBaseURL,
 			APIKey:  cfg.ModelAPIKey,
 			Model:   cfg.ModelName,

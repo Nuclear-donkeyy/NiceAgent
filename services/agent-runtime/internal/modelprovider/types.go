@@ -2,31 +2,23 @@ package modelprovider
 
 import (
 	"context"
+	"time"
 
-	"niceagent/common/protocol"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 )
 
-type Provider interface {
-	Stream(ctx context.Context, request Request) (<-chan Chunk, error)
+type Provider = model.ToolCallingChatModel
+
+type OpenAICompatibleProviderConfig struct {
+	ID      string
+	BaseURL string
+	APIKey  string
+	Model   string
+	Timeout time.Duration
 }
 
-type Request struct {
-	RunID       string
-	ModelPolicy string
-	Messages    []protocol.Message
-	Tools       []ToolDefinition
-}
-
-type ToolDefinition struct {
-	ID          string
-	Name        string
-	Description string
-	InputSchema string
-	Risk        protocol.SkillRisk
-}
-
-type Chunk struct {
-	Text  string
-	Error error
-	Done  bool
+func StreamSingle(ctx context.Context, message *schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	_ = ctx
+	return schema.StreamReaderFromArray([]*schema.Message{message}), nil
 }

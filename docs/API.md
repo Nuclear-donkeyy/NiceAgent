@@ -189,9 +189,9 @@ Sandbox Executor 在策略约束下执行命令的入口，由 Agent Runtime 的
 
 Skill 元数据以 `skills` 和 `skill_versions` 为权威，`skill_grants` 表示用户/项目可用性，`skill_secrets` 只保存 secret 引用或本地开发密文。`input_schema`、`output_schema`、`annotations` 和 `runtime_config` 使用 JSON/JSONB；`annotations` 采用 MCP 风格字段，例如 `readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`。
 
-Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。当前主执行路径通过 Eino ADK `ChatModelAgent + Runner` 运行 agentic loop；模型输出仍通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端折叠成 assistant 消息。
+Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。当前主执行路径通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 运行 agentic loop；模型输出仍通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端折叠成 assistant 消息。
 
-OpenAI-compatible provider 使用 `/v1/chat/completions` 的 streaming 协议；该能力不改变外部 Web API 和 `RunExecutionRequest`。
+OpenAI-compatible provider 通过 Eino `eino-ext` OpenAI ChatModel 使用 `/v1/chat/completions` 协议，并支持模型原生 tool calling；该能力不改变外部 Web API 和 `RunExecutionRequest`。
 
 ## 事件约定
 
