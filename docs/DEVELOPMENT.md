@@ -52,7 +52,21 @@ SANDBOX_EXECUTOR_URL=http://127.0.0.1:8082 \
 make run-runtime
 ```
 
-`MODEL_BASE_URL` 不需要包含 `/v1/chat/completions`，runtime 会通过 Eino `eino-ext` OpenAI ChatModel 调用 `{MODEL_BASE_URL}/v1/chat/completions`，并使用 Eino 原生 tool calling 能力。
+`MODEL_BASE_URL` 必须是 provider 根地址，不要包含 `/v1/chat/completions`、`/chat/completions` 或 `/completions`；runtime 启动时会校验 URL、API key 和模型名。Runtime 会通过 Eino `eino-ext` OpenAI ChatModel 调用 chat completions 协议，并使用 Eino 原生 tool calling 能力。
+
+DeepSeek 仍使用同一个 OpenAI-compatible provider，不新增 `MODEL_PROVIDER=deepseek`：
+
+```bash
+MODEL_PROVIDER=openai-compatible \
+MODEL_BASE_URL=https://api.deepseek.com \
+MODEL_API_KEY=replace-with-deepseek-key \
+MODEL_NAME=deepseek-v4-flash \
+MODEL_TIMEOUT_SECONDS=120 \
+SANDBOX_EXECUTOR_URL=http://127.0.0.1:8082 \
+make run-runtime
+```
+
+本地 API key 只放在未提交的 `.env` 或 shell 环境变量里。错误 key 应返回 `auth_error`，余额不足应返回 `billing_error`，日志和 run error 不应出现 `MODEL_API_KEY` 或 `Authorization` header。
 
 Postgres 持久化路径：
 
@@ -63,6 +77,14 @@ docker compose -f deployments/docker-compose.yml up
 Compose 会启动 Postgres、Redis、Control Plane、Agent Runtime 和 Sandbox Executor。Control Plane 在该拓扑中使用 `STORE_DRIVER=postgres`，数据库连接来自 `DATABASE_URL`。重启 Control Plane 后，会话、消息、run 和 run events 应继续保留。
 
 Skill manifest 会写入 `skills`、`skill_versions`、`skill_grants` 和 `skill_secrets`。如果本地 schema 已经旧了，可以用 `docker compose -f deployments/docker-compose.yml down -v` 清理 volume 后重新启动。
+
+如需验证 Redis Streams 入队路径，可以把 Control Plane 切到：
+
+```bash
+DISPATCH_MODE=redis REDIS_ADDR=localhost:6379 RUN_QUEUE_STREAM=niceagent:runs make run-control
+```
+
+该模式目前只负责 Control Plane 入队和基础 consumer group adapter；Agent Runtime 的 Redis worker loop 尚未接入，完整端到端执行仍使用默认 `DISPATCH_MODE=http`。
 
 如果只想本机直接连接已有 Postgres：
 
@@ -184,7 +206,7 @@ GOCACHE=/private/tmp/niceagent-go-cache make test
 如果不想在本机装 Go，可以用 Docker：
 
 ```bash
-docker run --rm -v "$PWD":/workspace -w /workspace golang:1.22 \
+docker run --rm -v "$PWD":/workspace -w /workspace golang:1.23 \
   go test ./packages/common/... ./services/control-plane/... ./services/agent-runtime/... ./services/sandbox-executor/...
 ```
 

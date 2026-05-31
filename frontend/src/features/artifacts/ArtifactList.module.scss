@@ -1,0 +1,88 @@
+.artifacts {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 14px;
+  width: min(780px, 100%);
+}
+
+.header,
+.item,
+.actions {
+  align-items: center;
+  display: flex;
+}
+
+.header,
+.item {
+  justify-content: space-between;
+}
+
+.overline,
+.loading,
+.meta span,
+.actions span,
+.error {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.overline {
+  text-transform: uppercase;
+}
+
+.header h3 {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.list {
+  display: grid;
+  gap: 8px;
+}
+
+.item {
+  background: var(--white);
+  border: 1px solid var(--line);
+  gap: 12px;
+  min-height: 54px;
+  padding: 10px 12px;
+}
+
+.meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.meta strong,
+.meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.actions a {
+  border: 1px solid var(--black);
+  color: var(--black);
+  padding: 6px 10px;
+  text-decoration: none;
+}
+
+.error {
+  border-left: 2px solid var(--black);
+  padding-left: 10px;
+}
+
+@media (max-width: 640px) {
+  .item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

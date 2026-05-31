@@ -69,3 +69,12 @@ func estimateTokens(s string) int {
 func failed(runID string, err error) protocol.RunResult {
 	return protocol.RunResult{RunID: runID, Status: protocol.RunFailed, Error: fmt.Sprint(err)}
 }
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}

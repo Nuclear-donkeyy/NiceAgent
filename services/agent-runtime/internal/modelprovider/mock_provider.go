@@ -11,6 +11,7 @@ import (
 type MockChatModel struct {
 	Response  string
 	ToolCalls []schema.ToolCall
+	Usage     *schema.TokenUsage
 	tools     []*schema.ToolInfo
 }
 
@@ -21,16 +22,16 @@ func (m MockChatModel) Generate(ctx context.Context, input []*schema.Message, _ 
 		return nil, ctx.Err()
 	}
 	if content, ok := latestToolObservation(input); ok {
-		return schema.AssistantMessage(formatToolObservation(content), nil), nil
+		return m.withUsage(schema.AssistantMessage(formatToolObservation(content), nil)), nil
 	}
 	if len(m.ToolCalls) > 0 && !hasAssistantToolCall(input) {
-		return schema.AssistantMessage("", append([]schema.ToolCall(nil), m.ToolCalls...)), nil
+		return m.withUsage(schema.AssistantMessage("", append([]schema.ToolCall(nil), m.ToolCalls...))), nil
 	}
 	response := m.Response
 	if response == "" {
 		response = "我已经接收到任务，并会以远端 agent 的方式处理。\n\n当前实现会把会话状态保存在 Control Plane，由独立 Runtime 执行本次请求，并在回复中实时更新当前状态。"
 	}
-	return schema.AssistantMessage(response, nil), nil
+	return m.withUsage(schema.AssistantMessage(response, nil)), nil
 }
 
 func (m MockChatModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
@@ -45,6 +46,13 @@ func (m MockChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingCha
 	next := m
 	next.tools = append([]*schema.ToolInfo(nil), tools...)
 	return next, nil
+}
+
+func (m MockChatModel) withUsage(msg *schema.Message) *schema.Message {
+	if msg != nil && m.Usage != nil {
+		msg.ResponseMeta = &schema.ResponseMeta{Usage: m.Usage}
+	}
+	return msg
 }
 
 func latestToolObservation(messages []*schema.Message) (string, bool) {

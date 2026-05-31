@@ -1,6 +1,7 @@
 import { ChatList } from "../features/chats/ChatList";
 import { Composer } from "../features/conversation/Composer";
 import { MessageList } from "../features/conversation/MessageList";
+import { ArtifactList } from "../features/artifacts/ArtifactList";
 import { SkillPanel } from "../features/skills/SkillPanel";
 import { statusText } from "../domain/labels";
 import { useNiceAgentWorkspace } from "./useNiceAgentWorkspace";
@@ -90,6 +91,11 @@ export default function App() {
 
         <section className={conversationStyles.conversation}>
           <MessageList loading={workspace.messageLoading} messages={workspace.visibleMessages} />
+          <ArtifactList
+            artifacts={workspace.artifacts}
+            error={workspace.artifactError}
+            loading={workspace.artifactLoading}
+          />
         </section>
 
         <Composer

@@ -1,4 +1,4 @@
-go 1.22
+go 1.23.0
 
 use (
 	./packages/common
@@ -6,4 +6,3 @@ use (
 	./services/control-plane
 	./services/sandbox-executor
 )
-

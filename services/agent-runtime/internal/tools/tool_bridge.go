@@ -1,13 +1,10 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -15,12 +12,13 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/eino-contrib/jsonschema"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 )
 
 type EventSink interface {
 	Emit(runID string, typ protocol.RunEventType, message string, payload any) error
-	Complete(runID string, content string) error
+	Complete(runID string, content string, artifacts ...protocol.Artifact) error
 	Fail(runID string, message string) error
 	IsCanceled(runID string) bool
 }
@@ -38,14 +36,16 @@ type Definition struct {
 }
 
 type DefaultToolBridge struct {
-	Sandbox SandboxExecutor
-	Client  *http.Client
+	Sandbox        SandboxExecutor
+	Client         *http.Client
+	SecretResolver SecretResolver
 }
 
 func NewDefaultToolBridge(executor SandboxExecutor) *DefaultToolBridge {
 	return &DefaultToolBridge{
-		Sandbox: executor,
-		Client:  &http.Client{Timeout: 15 * time.Second},
+		Sandbox:        executor,
+		Client:         &http.Client{Timeout: 15 * time.Second},
+		SecretResolver: LocalSecretResolver{},
 	}
 }
 
@@ -118,17 +118,20 @@ func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, 
 		"input":    summarizeToolInput(argumentsInJSON),
 	})
 	var output string
+	ok := true
 	var err error
 	switch skill.Kind {
 	case protocol.SkillKindHTTP:
-		output, err = t.invokeHTTP(ctx, argumentsInJSON)
+		output, ok, err = t.invokeHTTP(ctx, argumentsInJSON)
 	default:
 		output, err = t.invokeBuiltin(ctx, argumentsInJSON)
+		ok = err == nil
 	}
 	payload := map[string]any{
 		"skill_id": skill.ID,
 		"tool":     toolName,
 		"output":   output,
+		"ok":       ok && err == nil,
 	}
 	if err != nil {
 		payload["error"] = err.Error()
@@ -137,7 +140,7 @@ func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, 
 	_ = t.sink.Emit(t.runID, protocol.EventToolFinished, "Finished skill invocation.", map[string]any{
 		"skill_id": skill.ID,
 		"tool":     toolName,
-		"ok":       err == nil,
+		"ok":       ok && err == nil,
 	})
 	return output, err
 }
@@ -163,65 +166,6 @@ func (t *runtimeTool) invokeBuiltin(ctx context.Context, argumentsInJSON string)
 	default:
 		return "", fmt.Errorf("unknown builtin skill %s", t.runtimeSkill.Skill.ID)
 	}
-}
-
-func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (string, error) {
-	var cfg struct {
-		Method         string `json:"method"`
-		URL            string `json:"url"`
-		TimeoutSeconds int    `json:"timeout_seconds"`
-		AuthType       string `json:"auth_type"`
-	}
-	_ = json.Unmarshal([]byte(t.runtimeSkill.Skill.RuntimeConfig), &cfg)
-	if strings.TrimSpace(cfg.URL) == "" {
-		return "", fmt.Errorf("http skill url is not configured")
-	}
-	method := strings.ToUpper(strings.TrimSpace(cfg.Method))
-	if method == "" {
-		method = http.MethodPost
-	}
-	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 15 * time.Second
-	}
-	client := t.bridge.Client
-	if client == nil {
-		client = &http.Client{Timeout: timeout}
-	}
-	var body io.Reader
-	targetURL := cfg.URL
-	if method == http.MethodGet {
-		if strings.Contains(targetURL, "?") {
-			targetURL += "&"
-		} else {
-			targetURL += "?"
-		}
-		targetURL += "input=" + url.QueryEscape(argumentsInJSON)
-	} else {
-		body = bytes.NewBufferString(argumentsInJSON)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, targetURL, body)
-	if err != nil {
-		return "", err
-	}
-	if method != http.MethodGet {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if cfg.AuthType == "bearer" {
-		if token := t.runtimeSkill.Secrets["bearer_token"]; token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return string(data), fmt.Errorf("http skill returned %s", resp.Status)
-	}
-	return string(data), nil
 }
 
 func toolInfoForSkill(skill protocol.Skill) (*schema.ToolInfo, error) {
@@ -277,6 +221,7 @@ func skillIDForToolName(name string, skills []protocol.RuntimeSkill) string {
 }
 
 func summarizeToolInput(value string) string {
+	value = platform.RedactJSON(value)
 	if len(value) <= 512 {
 		return value
 	}

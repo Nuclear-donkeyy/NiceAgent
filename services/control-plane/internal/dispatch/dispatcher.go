@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 	"niceagent/common/sandbox"
 	"niceagent/control-plane/internal/app"
@@ -29,6 +30,7 @@ func (d *LocalDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMe
 			"mode": "local-demo",
 		})
 		content := "我已经接收到任务。当前是 Control Plane 的本地演示 dispatcher；生产部署时应改由 Redis/HTTP 调度到独立 Agent Runtime 服务。"
+		var artifacts []protocol.Artifact
 		_ = sink.Emit(run.ID, protocol.EventModelToken, content, nil)
 		time.Sleep(30 * time.Millisecond)
 		if command, ok := parseLocalCLI(userMessage); ok {
@@ -47,6 +49,7 @@ func (d *LocalDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMe
 				TimeoutSeconds: 10,
 				Network:        true,
 			})
+			artifacts = append(artifacts, result.Artifacts...)
 			_ = sink.Emit(run.ID, protocol.EventToolOutput, "CLI command completed.", result)
 			_ = sink.Emit(run.ID, protocol.EventToolFinished, "Finished cli.exec skill.", map[string]any{"exit_code": result.ExitCode})
 			content += "\n\nCLI 获取结果：\n" + result.Stdout
@@ -57,7 +60,7 @@ func (d *LocalDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMe
 				content += "系统 CLI 策略拒绝或执行错误: " + result.Error
 			}
 		}
-		if err := sink.Complete(run.ID, content); err != nil {
+		if err := sink.Complete(run.ID, content, artifacts...); err != nil {
 			d.log.Warn("local run failed", "run_id", run.ID, "error", err)
 		}
 	}()
@@ -90,7 +93,15 @@ func (d *QueueDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMe
 		UserID:      run.UserID,
 		WorkspaceID: run.WorkspaceID,
 		UserMessage: userMessage,
+		AttemptID:   firstNonEmpty(run.AttemptID, platform.NewID("attempt")),
 		SkillIDs:    app.SkillIDsFromRuntimeSkills(runtimeSkills),
 		ModelPolicy: "mock-default",
 	})
+}
+
+func firstNonEmpty(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }

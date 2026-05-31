@@ -17,7 +17,7 @@ services:
       - "6379:6379"
 
   control-plane:
-    image: golang:1.22-alpine
+    image: golang:1.23-alpine
     working_dir: /workspace/services/control-plane
     command: go run ./cmd
     environment:
@@ -29,6 +29,7 @@ services:
       DATABASE_URL: postgres://niceagent:niceagent@postgres:5432/niceagent?sslmode=disable
       REDIS_ADDR: redis:6379
       WEB_DIST_DIR: /workspace/frontend/dist
+      SANDBOX_WORKSPACE_ROOT: /workspace/workspaces
     ports:
       - "8080:8080"
     volumes:
@@ -38,7 +39,7 @@ services:
       - redis
 
   agent-runtime:
-    image: golang:1.22-alpine
+    image: golang:1.23-alpine
     working_dir: /workspace/services/agent-runtime
     command: go run ./cmd
     environment:
@@ -48,6 +49,7 @@ services:
       MODEL_PROVIDER: mock
       MODEL_TIMEOUT_SECONDS: "120"
       REDIS_ADDR: redis:6379
+      SANDBOX_WORKSPACE_ROOT: /workspace/workspaces
     ports:
       - "8081:8081"
     volumes:
@@ -57,11 +59,13 @@ services:
       - sandbox-executor
 
   sandbox-executor:
-    image: golang:1.22-alpine
+    image: golang:1.23-alpine
     working_dir: /workspace/services/sandbox-executor
     command: go run ./cmd
     environment:
       SANDBOX_EXECUTOR_ADDR: ":8082"
+      EXECUTOR_MODE: local
+      SANDBOX_WORKSPACE_ROOT: /workspace/workspaces
     ports:
       - "8082:8082"
     volumes:

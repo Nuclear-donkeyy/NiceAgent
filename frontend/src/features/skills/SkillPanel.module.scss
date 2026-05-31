@@ -64,11 +64,28 @@
   color: var(--black);
 }
 
+.miniButton:disabled,
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .form {
   border-top: 1px solid var(--line);
   display: grid;
   gap: 8px;
   padding: 10px 0;
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+}
+
+.field span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .form input,
@@ -82,6 +99,13 @@
   padding: 9px 10px;
 }
 
+.form input:disabled,
+.form textarea:disabled,
+.form select:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .form textarea {
   min-height: 58px;
   resize: vertical;
@@ -91,6 +115,26 @@
 .form textarea:focus,
 .form select:focus {
   border-color: var(--black);
+}
+
+.form input[aria-invalid="true"],
+.form textarea[aria-invalid="true"] {
+  border-color: var(--black);
+  box-shadow: inset 3px 0 0 var(--black);
+}
+
+.field small,
+.formError {
+  color: var(--black);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.formError {
+  background: var(--white);
+  border-left: 2px solid var(--black);
+  margin: 0;
+  padding: 8px 10px;
 }
 
 .formRow {

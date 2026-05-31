@@ -11,13 +11,26 @@ func (s RepositorySink) Emit(runID string, typ protocol.RunEventType, message st
 	return err
 }
 
-func (s RepositorySink) Complete(runID string, content string) error {
+func (s RepositorySink) Complete(runID string, content string, artifacts ...protocol.Artifact) error {
 	run, err := s.Repo.GetRun(runID)
 	if err != nil {
 		return err
 	}
 	if IsTerminalRunStatus(run.Status) {
 		return nil
+	}
+	for _, artifact := range artifacts {
+		artifact.RunID = nonEmpty(artifact.RunID, run.ID)
+		artifact.ChatID = nonEmpty(artifact.ChatID, run.ChatID)
+		artifact.UserID = nonEmpty(artifact.UserID, run.UserID)
+		artifact.WorkspaceID = nonEmpty(artifact.WorkspaceID, run.WorkspaceID)
+		saved, err := s.Repo.AddArtifact(artifact)
+		if err != nil {
+			return err
+		}
+		if _, err := s.Repo.AddEvent(runID, protocol.EventArtifactCreated, "Artifact created.", saved); err != nil {
+			return err
+		}
 	}
 	if _, err := s.Repo.AddAssistantMessage(run.ChatID, runID, content); err != nil {
 		return err
@@ -27,6 +40,20 @@ func (s RepositorySink) Complete(runID string, content string) error {
 	}
 	_, err = s.Repo.AddEvent(runID, protocol.EventRunSucceeded, "Run completed.", nil)
 	return err
+}
+
+func (s RepositorySink) CompleteWithUsage(runID string, content string, usage protocol.RunUsage, artifacts ...protocol.Artifact) error {
+	run, err := s.Repo.GetRun(runID)
+	if err != nil {
+		return err
+	}
+	if IsTerminalRunStatus(run.Status) {
+		return nil
+	}
+	if _, err := s.Repo.SaveRunUsage(runID, usage); err != nil {
+		return err
+	}
+	return s.Complete(runID, content, artifacts...)
 }
 
 func (s RepositorySink) Fail(runID string, message string) error {
@@ -80,4 +107,11 @@ func ContainsSkillID(skillIDs []string, id string) bool {
 		}
 	}
 	return false
+}
+
+func nonEmpty(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }

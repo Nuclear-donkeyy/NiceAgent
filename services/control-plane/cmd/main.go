@@ -22,9 +22,9 @@ func main() {
 	store, closeStore := newStore(cfg, logger)
 	defer closeStore()
 	dispatcher := newDispatcher(cfg, store, logger)
-	server := httpapi.NewServer(store, dispatcher, logger)
+	server := httpapi.NewServerWithOptions(store, dispatcher, logger, httpapi.ServerOptions{AuthMode: cfg.AuthMode})
 
-	logger.Info("starting control plane", "addr", cfg.Addr)
+	logger.Info("starting control plane", "addr", cfg.Addr, "auth_mode", cfg.AuthMode)
 	if err := http.ListenAndServe(cfg.Addr, server.Handler()); err != nil {
 		log.Fatal(err)
 	}
@@ -57,6 +57,20 @@ func newDispatcher(cfg config.Config, store app.Repository, logger *slog.Logger)
 	if cfg.DispatchMode == "local" {
 		logger.Info("using local dispatcher", "mode", cfg.DispatchMode)
 		return dispatch.NewLocalDispatcher(store, logger)
+	}
+	if cfg.DispatchMode == "redis" {
+		if cfg.RedisAddr == "" {
+			log.Fatal("REDIS_ADDR is required when DISPATCH_MODE=redis")
+		}
+		logger.Info(
+			"using redis streams dispatcher",
+			"addr", cfg.RedisAddr,
+			"stream", cfg.RunQueueStream,
+			"group", cfg.RunQueueGroup,
+			"consumer", cfg.RunQueueConsumer,
+		)
+		queue := dispatch.NewRedisStreamsRunQueue(cfg.RedisAddr, cfg.RunQueueStream, cfg.RunQueueGroup, cfg.RunQueueConsumer)
+		return dispatch.NewQueueDispatcher(store, queue)
 	}
 	if cfg.AgentRuntimeURL == "" {
 		logger.Warn("AGENT_RUNTIME_URL is empty; falling back to local dispatcher", "mode", cfg.DispatchMode)

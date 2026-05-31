@@ -40,16 +40,51 @@ func TestStoreCreatesChatMessageRunAndEvents(t *testing.T) {
 	}
 }
 
+func TestStoreRegistersWorkspaceAndArtifactsForRun(t *testing.T) {
+	store := NewStore()
+	chat := mustCreateChat(t, store, "demo-user", "artifact store")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "make file")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+
+	workspace, err := store.GetWorkspace(run.WorkspaceID)
+	if err != nil {
+		t.Fatalf("get workspace: %v", err)
+	}
+	if workspace.RunID != run.ID || workspace.ChatID != chat.ID || workspace.UserID != "demo-user" || workspace.ProjectID != chat.ProjectID {
+		t.Fatalf("workspace = %#v", workspace)
+	}
+
+	artifact, err := store.AddArtifact(protocol.Artifact{
+		RunID:     run.ID,
+		Path:      "output/report.txt",
+		Name:      "report.txt",
+		MimeType:  "text/plain",
+		SizeBytes: 12,
+	})
+	if err != nil {
+		t.Fatalf("add artifact: %v", err)
+	}
+	if artifact.ID == "" || artifact.ChatID != chat.ID || artifact.UserID != "demo-user" || artifact.WorkspaceID != run.WorkspaceID || artifact.ProjectID != chat.ProjectID {
+		t.Fatalf("artifact = %#v", artifact)
+	}
+	listed := store.ListArtifacts(run.ID)
+	if len(listed) != 1 || listed[0].ID != artifact.ID {
+		t.Fatalf("listed artifacts = %#v, want %s", listed, artifact.ID)
+	}
+}
+
 func TestStoreListsSearchesArchivesAndRestoresChats(t *testing.T) {
 	store := NewStore()
 	alpha := mustCreateChat(t, store, "demo-user", "Alpha project")
 	beta := mustCreateChat(t, store, "demo-user", "Beta project")
 
-	list := store.ListChats("demo-user", app.ChatListOptions{})
+	list := store.ListChats("demo-user", app.DemoProjectID, app.ChatListOptions{})
 	if len(list) != 2 {
 		t.Fatalf("active chats len = %d, want 2", len(list))
 	}
-	matches := store.ListChats("demo-user", app.ChatListOptions{Query: "alpha"})
+	matches := store.ListChats("demo-user", app.DemoProjectID, app.ChatListOptions{Query: "alpha"})
 	if len(matches) != 1 || matches[0].ID != alpha.ID {
 		t.Fatalf("search matches = %#v, want alpha chat", matches)
 	}
@@ -61,11 +96,11 @@ func TestStoreListsSearchesArchivesAndRestoresChats(t *testing.T) {
 	if !archived.Archived {
 		t.Fatal("expected archived chat")
 	}
-	list = store.ListChats("demo-user", app.ChatListOptions{})
+	list = store.ListChats("demo-user", app.DemoProjectID, app.ChatListOptions{})
 	if len(list) != 1 || list[0].ID != alpha.ID {
 		t.Fatalf("active chats after archive = %#v, want alpha only", list)
 	}
-	list = store.ListChats("demo-user", app.ChatListOptions{IncludeArchived: true})
+	list = store.ListChats("demo-user", app.DemoProjectID, app.ChatListOptions{IncludeArchived: true})
 	if len(list) != 2 {
 		t.Fatalf("all chats after archive = %d, want 2", len(list))
 	}
@@ -139,6 +174,36 @@ func TestStoreCreatesUserHTTPSkillWithoutExposingSecret(t *testing.T) {
 	if !found {
 		t.Fatalf("runtime skills = %#v, want created skill", runtimeSkills)
 	}
+}
+
+func TestStoreMaterializesHTTPSkillSecretRef(t *testing.T) {
+	store := NewStore()
+	skill, err := store.CreateHTTPSkill("demo-user", "demo-project", protocol.HTTPSkillInput{
+		Name:                 "Secret Ref API",
+		Method:               "POST",
+		URL:                  "https://example.com/hook",
+		AuthType:             "bearer",
+		BearerTokenSecretRef: "vault://niceagent/weather",
+	})
+	if err != nil {
+		t.Fatalf("create http skill: %v", err)
+	}
+
+	runtimeSkills := store.ListRuntimeSkillsForUser("demo-user", "demo-project")
+	for _, runtimeSkill := range runtimeSkills {
+		if runtimeSkill.Skill.ID != skill.ID {
+			continue
+		}
+		if runtimeSkill.Secrets["bearer_token"] != "" {
+			t.Fatalf("legacy runtime secret = %#v, want empty for secret_ref", runtimeSkill.Secrets)
+		}
+		material := runtimeSkill.SecretMaterial("bearer_token")
+		if material.SecretRef != "vault://niceagent/weather" {
+			t.Fatalf("secret material = %#v, want secret_ref", material)
+		}
+		return
+	}
+	t.Fatalf("runtime skills = %#v, want created skill", runtimeSkills)
 }
 
 func TestStoreUpdatesRunStatus(t *testing.T) {
@@ -251,7 +316,7 @@ func TestStoreSubscribeReceivesNewEvents(t *testing.T) {
 
 func mustCreateChat(t *testing.T, repo app.Repository, userID, title string) protocol.ChatSession {
 	t.Helper()
-	chat, err := repo.CreateChat(userID, title)
+	chat, err := repo.CreateChat(userID, app.DemoProjectID, title)
 	if err != nil {
 		t.Fatalf("create chat: %v", err)
 	}

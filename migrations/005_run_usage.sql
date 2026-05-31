@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS run_usage (
+  run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_tokens INTEGER NOT NULL DEFAULT 0,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated BOOLEAN NOT NULL DEFAULT false,
+  cost NUMERIC(18, 8) NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT '',
+  latency_millis BIGINT NOT NULL DEFAULT 0,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  fallback_from TEXT NOT NULL DEFAULT '',
+  fallback_to TEXT NOT NULL DEFAULT '',
+  error_class TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

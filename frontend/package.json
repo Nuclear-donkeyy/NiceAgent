@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "rspack serve --host 0.0.0.0 --port 3000",
+    "dev:e2e": "rspack serve --host 127.0.0.1 --port 3001",
     "build": "rspack build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "npm run typecheck && npm run lint && npm run format:check"
+    "check": "npm run typecheck && npm run lint && npm run format:check",
+    "smoke:e2e": "playwright test --config=playwright.config.ts"
   },
   "dependencies": {
     "@rspack/cli": "^1.1.8",
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.60.0",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "eslint": "^10.4.1",

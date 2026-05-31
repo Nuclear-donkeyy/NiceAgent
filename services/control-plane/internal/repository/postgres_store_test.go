@@ -30,7 +30,7 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	applyTestMigration(t, db)
 
 	store := NewPostgresStore(db)
-	chat, err := store.CreateChat("demo-user", "postgres")
+	chat, err := store.CreateChat("demo-user", app.DemoProjectID, "postgres")
 	if err != nil {
 		t.Fatalf("create chat: %v", err)
 	}
@@ -68,6 +68,16 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if len(replayed) != 1 || replayed[0].ID != second.ID {
 		t.Fatalf("replayed events = %#v, want only second event", replayed)
 	}
+	if _, err := store.SaveRunUsage(run.ID, protocol.RunUsage{
+		Provider:     "openai-compatible",
+		Model:        "deepseek-v4-flash",
+		InputTokens:  9,
+		OutputTokens: 4,
+		TotalTokens:  13,
+		Estimated:    false,
+	}); err != nil {
+		t.Fatalf("save run usage: %v", err)
+	}
 	if err := (app.RepositorySink{Repo: store}).Complete(run.ID, "persisted assistant"); err != nil {
 		t.Fatalf("complete run: %v", err)
 	}
@@ -86,6 +96,9 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	}
 	if gotRun.Status != protocol.RunSucceeded || gotRun.FinishedAt == nil {
 		t.Fatalf("reloaded run = %#v, want succeeded with finished_at", gotRun)
+	}
+	if gotRun.Usage.Provider != "openai-compatible" || gotRun.Usage.InputTokens != 9 || gotRun.Usage.OutputTokens != 4 {
+		t.Fatalf("reloaded run usage = %#v", gotRun.Usage)
 	}
 
 	_, canceledRun, err := reloaded.AddUserMessage(chat.ID, "demo-user", "cancel me")
@@ -124,11 +137,11 @@ func TestPostgresStoreSearchesArchivesAndRestoresChatsWhenConfigured(t *testing.
 
 	store := NewPostgresStore(db)
 	title := "searchable chat " + time.Now().Format("20060102150405.000000000")
-	chat, err := store.CreateChat("demo-user", title)
+	chat, err := store.CreateChat("demo-user", app.DemoProjectID, title)
 	if err != nil {
 		t.Fatalf("create chat: %v", err)
 	}
-	matches := store.ListChats("demo-user", app.ChatListOptions{Query: title})
+	matches := store.ListChats("demo-user", app.DemoProjectID, app.ChatListOptions{Query: title})
 	if len(matches) != 1 || matches[0].ID != chat.ID {
 		t.Fatalf("search matches = %#v, want created chat", matches)
 	}
@@ -140,11 +153,11 @@ func TestPostgresStoreSearchesArchivesAndRestoresChatsWhenConfigured(t *testing.
 	if !archived.Archived {
 		t.Fatalf("archived chat = %#v, want archived", archived)
 	}
-	matches = store.ListChats("demo-user", app.ChatListOptions{Query: title})
+	matches = store.ListChats("demo-user", app.DemoProjectID, app.ChatListOptions{Query: title})
 	if len(matches) != 0 {
 		t.Fatalf("active search matches after archive = %#v, want none", matches)
 	}
-	matches = store.ListChats("demo-user", app.ChatListOptions{Query: title, IncludeArchived: true})
+	matches = store.ListChats("demo-user", app.DemoProjectID, app.ChatListOptions{Query: title, IncludeArchived: true})
 	if len(matches) != 1 || !matches[0].Archived {
 		t.Fatalf("archived search matches = %#v, want archived chat", matches)
 	}

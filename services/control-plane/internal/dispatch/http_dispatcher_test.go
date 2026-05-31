@@ -46,6 +46,9 @@ func TestHTTPDispatcherCallsRuntime(t *testing.T) {
 		if request.Request.RunID != run.ID {
 			t.Fatalf("run id = %q, want %q", request.Request.RunID, run.ID)
 		}
+		if request.Request.AttemptID == "" {
+			t.Fatal("attempt id is empty")
+		}
 		if !containsString(request.Request.SkillIDs, "cli.exec") || !containsString(request.Request.SkillIDs, "workspace.read") {
 			t.Fatalf("skill ids = %#v, want user skills", request.Request.SkillIDs)
 		}
@@ -105,7 +108,7 @@ func containsString(values []string, want string) bool {
 
 func mustCreateChat(t *testing.T, repo app.Repository, userID, title string) protocol.ChatSession {
 	t.Helper()
-	chat, err := repo.CreateChat(userID, title)
+	chat, err := repo.CreateChat(userID, app.DemoProjectID, title)
 	if err != nil {
 		t.Fatalf("create chat: %v", err)
 	}

@@ -25,7 +25,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	}
 }
 
-func (s *PostgresStore) ListChats(userID string, opts app.ChatListOptions) []protocol.ChatSession {
+func (s *PostgresStore) ListChats(userID, projectID string, opts app.ChatListOptions) []protocol.ChatSession {
 	query := "%" + strings.ToLower(strings.TrimSpace(opts.Query)) + "%"
 	rows, err := s.db.Query(`
 		SELECT c.id, c.user_id, c.project_id, c.title, c.archived, COALESCE(c.last_run_id, ''),
@@ -33,10 +33,11 @@ func (s *PostgresStore) ListChats(userID string, opts app.ChatListOptions) []pro
 		FROM chat_sessions c
 		LEFT JOIN messages m ON m.chat_id = c.id
 		WHERE c.user_id = $1
-		  AND ($2 OR c.archived = false)
-		  AND ($3 = '%%' OR LOWER(c.title) LIKE $3)
+		  AND c.project_id = $2
+		  AND ($3 OR c.archived = false)
+		  AND ($4 = '%%' OR LOWER(c.title) LIKE $4)
 		GROUP BY c.id
-		ORDER BY c.updated_at DESC`, userID, opts.IncludeArchived, query)
+		ORDER BY c.updated_at DESC`, userID, projectID, opts.IncludeArchived, query)
 	if err != nil {
 		return nil
 	}
@@ -51,7 +52,7 @@ func (s *PostgresStore) ListChats(userID string, opts app.ChatListOptions) []pro
 	return chats
 }
 
-func (s *PostgresStore) CreateChat(userID, title string) (protocol.ChatSession, error) {
+func (s *PostgresStore) CreateChat(userID, projectID, title string) (protocol.ChatSession, error) {
 	now := time.Now().UTC()
 	if title == "" {
 		title = "New chat"
@@ -59,7 +60,7 @@ func (s *PostgresStore) CreateChat(userID, title string) (protocol.ChatSession, 
 	chat := protocol.ChatSession{
 		ID:        platform.NewID("chat"),
 		UserID:    userID,
-		ProjectID: "demo-project",
+		ProjectID: projectID,
 		Title:     title,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -165,6 +166,10 @@ func (s *PostgresStore) AddUserMessage(chatID, userID, content string) (protocol
 		run.ID, run.ChatID, run.UserID, run.WorkspaceID, run.Status, run.CreatedAt, run.UpdatedAt); err != nil {
 		return protocol.Message{}, protocol.Run{}, err
 	}
+	if _, err := tx.Exec(`INSERT INTO workspaces (id, user_id, project_id, chat_id, run_id, root_path, created_at) VALUES ($1, $2, (SELECT project_id FROM chat_sessions WHERE id = $3), $3, $4, $5, $6)`,
+		run.WorkspaceID, run.UserID, run.ChatID, run.ID, run.WorkspaceID, now); err != nil {
+		return protocol.Message{}, protocol.Run{}, err
+	}
 	if _, err := tx.Exec(`INSERT INTO messages (id, chat_id, run_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 		msg.ID, msg.ChatID, msg.RunID, msg.Role, msg.Content, msg.CreatedAt); err != nil {
 		return protocol.Message{}, protocol.Run{}, err
@@ -232,6 +237,11 @@ func (s *PostgresStore) GetRun(runID string) (protocol.Run, error) {
 	if finishedAt.Valid {
 		run.FinishedAt = &finishedAt.Time
 	}
+	usage, err := s.getRunUsage(runID)
+	if err != nil {
+		return protocol.Run{}, err
+	}
+	run.Usage = usage
 	return run, nil
 }
 
@@ -260,6 +270,75 @@ func (s *PostgresStore) UpdateRunStatus(runID string, status protocol.RunStatus,
 		return protocol.Run{}, err
 	}
 	return s.GetRun(runID)
+}
+
+func (s *PostgresStore) SaveRunUsage(runID string, usage protocol.RunUsage) (protocol.RunUsage, error) {
+	if _, err := s.GetRun(runID); err != nil {
+		return protocol.RunUsage{}, err
+	}
+	usage = protocol.NormalizeRunUsage(usage)
+	_, err := s.db.Exec(`
+		INSERT INTO run_usage (
+			run_id, provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
+			total_tokens, estimated, cost, currency, latency_millis, retry_count, fallback_from,
+			fallback_to, error_class, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())
+		ON CONFLICT (run_id) DO UPDATE SET
+			provider = EXCLUDED.provider,
+			model = EXCLUDED.model,
+			input_tokens = EXCLUDED.input_tokens,
+			output_tokens = EXCLUDED.output_tokens,
+			reasoning_tokens = EXCLUDED.reasoning_tokens,
+			cached_tokens = EXCLUDED.cached_tokens,
+			total_tokens = EXCLUDED.total_tokens,
+			estimated = EXCLUDED.estimated,
+			cost = EXCLUDED.cost,
+			currency = EXCLUDED.currency,
+			latency_millis = EXCLUDED.latency_millis,
+			retry_count = EXCLUDED.retry_count,
+			fallback_from = EXCLUDED.fallback_from,
+			fallback_to = EXCLUDED.fallback_to,
+			error_class = EXCLUDED.error_class,
+			updated_at = now()`,
+		runID, usage.Provider, usage.Model, usage.InputTokens, usage.OutputTokens, usage.ReasoningTokens, usage.CachedTokens,
+		usage.TotalTokens, usage.Estimated, usage.Cost, usage.Currency, usage.LatencyMillis, usage.RetryCount, usage.FallbackFrom,
+		usage.FallbackTo, usage.ErrorClass)
+	if err != nil {
+		return protocol.RunUsage{}, err
+	}
+	return usage, nil
+}
+
+func (s *PostgresStore) GetRunUsage(runID string) (protocol.RunUsage, error) {
+	var exists bool
+	if err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM runs WHERE id = $1)`, runID).Scan(&exists); err != nil {
+		return protocol.RunUsage{}, err
+	}
+	if !exists {
+		return protocol.RunUsage{}, app.ErrNotFound
+	}
+	return s.getRunUsage(runID)
+}
+
+func (s *PostgresStore) getRunUsage(runID string) (protocol.RunUsage, error) {
+	var usage protocol.RunUsage
+	if err := s.db.QueryRow(`
+		SELECT provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
+		       total_tokens, estimated, cost, currency, latency_millis, retry_count,
+		       fallback_from, fallback_to, error_class
+		FROM run_usage
+		WHERE run_id = $1`, runID).Scan(
+		&usage.Provider, &usage.Model, &usage.InputTokens, &usage.OutputTokens, &usage.ReasoningTokens, &usage.CachedTokens,
+		&usage.TotalTokens, &usage.Estimated, &usage.Cost, &usage.Currency, &usage.LatencyMillis, &usage.RetryCount,
+		&usage.FallbackFrom, &usage.FallbackTo, &usage.ErrorClass,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.RunUsage{}, nil
+		}
+		return protocol.RunUsage{}, err
+	}
+	return protocol.NormalizeRunUsage(usage), nil
 }
 
 func (s *PostgresStore) AddEvent(runID string, typ protocol.RunEventType, message string, payload any) (protocol.RunEvent, error) {
@@ -355,6 +434,133 @@ func (s *PostgresStore) Subscribe(runID string) (<-chan protocol.RunEvent, func(
 	return ch, cancel
 }
 
+func (s *PostgresStore) AddWorkspace(workspace protocol.Workspace) (protocol.Workspace, error) {
+	if workspace.ID == "" {
+		workspace.ID = platform.NewID("ws")
+	}
+	if workspace.CreatedAt.IsZero() {
+		workspace.CreatedAt = time.Now().UTC()
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO workspaces (id, user_id, project_id, chat_id, run_id, root_path, created_at)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7)
+		ON CONFLICT (id)
+		DO UPDATE SET user_id = EXCLUDED.user_id,
+		              project_id = EXCLUDED.project_id,
+		              chat_id = EXCLUDED.chat_id,
+		              run_id = EXCLUDED.run_id,
+		              root_path = EXCLUDED.root_path`,
+		workspace.ID, workspace.UserID, workspace.ProjectID, workspace.ChatID, workspace.RunID, workspace.RootPath, workspace.CreatedAt)
+	if err != nil {
+		return protocol.Workspace{}, err
+	}
+	return workspace, nil
+}
+
+func (s *PostgresStore) GetWorkspace(workspaceID string) (protocol.Workspace, error) {
+	var workspace protocol.Workspace
+	if err := s.db.QueryRow(`
+		SELECT id, user_id, COALESCE(project_id, ''), COALESCE(chat_id, ''), COALESCE(run_id, ''), root_path, created_at
+		FROM workspaces
+		WHERE id = $1`, workspaceID).Scan(
+		&workspace.ID, &workspace.UserID, &workspace.ProjectID, &workspace.ChatID, &workspace.RunID, &workspace.RootPath, &workspace.CreatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.Workspace{}, app.ErrNotFound
+		}
+		return protocol.Workspace{}, err
+	}
+	return workspace, nil
+}
+
+func (s *PostgresStore) AddArtifact(artifact protocol.Artifact) (protocol.Artifact, error) {
+	if artifact.ID == "" {
+		artifact.ID = platform.NewID("art")
+	}
+	if artifact.CreatedAt.IsZero() {
+		artifact.CreatedAt = time.Now().UTC()
+	}
+	if artifact.RunID != "" && (artifact.ChatID == "" || artifact.UserID == "" || artifact.WorkspaceID == "" || artifact.ProjectID == "") {
+		run, err := s.GetRun(artifact.RunID)
+		if err == nil {
+			artifact.ChatID = firstNonEmpty(artifact.ChatID, run.ChatID)
+			artifact.UserID = firstNonEmpty(artifact.UserID, run.UserID)
+			artifact.WorkspaceID = firstNonEmpty(artifact.WorkspaceID, run.WorkspaceID)
+			if chat, _, err := s.GetChat(run.ChatID); err == nil {
+				artifact.ProjectID = firstNonEmpty(artifact.ProjectID, chat.ProjectID)
+			}
+		}
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO artifacts (id, run_id, chat_id, user_id, project_id, workspace_id, path, name, mime_type, size_bytes, sha256, storage_backend, storage_key, created_at, deleted_at)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, NULLIF($8, ''), $9, $10, NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), $14, $15)
+		ON CONFLICT (id)
+		DO UPDATE SET path = EXCLUDED.path,
+		              name = EXCLUDED.name,
+		              mime_type = EXCLUDED.mime_type,
+		              size_bytes = EXCLUDED.size_bytes,
+		              sha256 = EXCLUDED.sha256,
+		              storage_backend = EXCLUDED.storage_backend,
+		              storage_key = EXCLUDED.storage_key,
+		              deleted_at = EXCLUDED.deleted_at`,
+		artifact.ID, artifact.RunID, artifact.ChatID, artifact.UserID, artifact.ProjectID, artifact.WorkspaceID,
+		artifact.Path, artifact.Name, artifact.MimeType, artifact.SizeBytes, artifact.SHA256, artifact.StorageBackend, artifact.StorageKey, artifact.CreatedAt, artifact.DeletedAt)
+	if err != nil {
+		return protocol.Artifact{}, err
+	}
+	return artifact, nil
+}
+
+func (s *PostgresStore) ListArtifacts(runID string) []protocol.Artifact {
+	rows, err := s.db.Query(`
+		SELECT id, run_id, COALESCE(chat_id, ''), COALESCE(user_id, ''), COALESCE(project_id, ''), COALESCE(workspace_id, ''),
+		       path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, deleted_at
+		FROM artifacts
+		WHERE run_id = $1 AND deleted_at IS NULL
+		ORDER BY created_at`, runID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var artifacts []protocol.Artifact
+	for rows.Next() {
+		var artifact protocol.Artifact
+		var deletedAt sql.NullTime
+		if err := rows.Scan(
+			&artifact.ID, &artifact.RunID, &artifact.ChatID, &artifact.UserID, &artifact.ProjectID, &artifact.WorkspaceID,
+			&artifact.Path, &artifact.Name, &artifact.MimeType, &artifact.SizeBytes, &artifact.SHA256, &artifact.StorageBackend, &artifact.StorageKey, &artifact.CreatedAt, &deletedAt,
+		); err == nil {
+			if deletedAt.Valid {
+				artifact.DeletedAt = &deletedAt.Time
+			}
+			artifacts = append(artifacts, artifact)
+		}
+	}
+	return artifacts
+}
+
+func (s *PostgresStore) GetArtifact(artifactID string) (protocol.Artifact, error) {
+	var artifact protocol.Artifact
+	var deletedAt sql.NullTime
+	if err := s.db.QueryRow(`
+		SELECT id, run_id, COALESCE(chat_id, ''), COALESCE(user_id, ''), COALESCE(project_id, ''), COALESCE(workspace_id, ''),
+		       path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, deleted_at
+		FROM artifacts
+		WHERE id = $1 AND deleted_at IS NULL`, artifactID).Scan(
+		&artifact.ID, &artifact.RunID, &artifact.ChatID, &artifact.UserID, &artifact.ProjectID, &artifact.WorkspaceID,
+		&artifact.Path, &artifact.Name, &artifact.MimeType, &artifact.SizeBytes, &artifact.SHA256, &artifact.StorageBackend, &artifact.StorageKey, &artifact.CreatedAt, &deletedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.Artifact{}, app.ErrNotFound
+		}
+		return protocol.Artifact{}, err
+	}
+	if deletedAt.Valid {
+		artifact.DeletedAt = &deletedAt.Time
+	}
+	return artifact, nil
+}
+
 func (s *PostgresStore) ListSkillsForUser(userID, projectID string) []protocol.Skill {
 	skills := s.listSkillsForUser(userID, projectID, false)
 	for i := range skills {
@@ -368,17 +574,24 @@ func (s *PostgresStore) ListRuntimeSkillsForUser(userID, projectID string) []pro
 	runtimeSkills := make([]protocol.RuntimeSkill, 0, len(skills))
 	for _, skill := range skills {
 		secrets := map[string]string{}
-		rows, err := s.db.Query(`SELECT secret_key, COALESCE(encrypted_value, '') FROM skill_secrets WHERE skill_id = $1`, skill.ID)
+		secretMaterials := map[string]protocol.RuntimeSecret{}
+		rows, err := s.db.Query(`SELECT secret_key, COALESCE(encrypted_value, ''), COALESCE(secret_ref, '') FROM skill_secrets WHERE skill_id = $1`, skill.ID)
 		if err == nil {
 			for rows.Next() {
-				var key, value string
-				if err := rows.Scan(&key, &value); err == nil && value != "" {
-					secrets[key] = value
+				var key, encryptedValue, secretRef string
+				if err := rows.Scan(&key, &encryptedValue, &secretRef); err == nil {
+					material := protocol.RuntimeSecret{EncryptedValue: encryptedValue, SecretRef: secretRef}
+					if material.EncryptedValue != "" || material.SecretRef != "" {
+						secretMaterials[key] = material
+					}
+					if encryptedValue != "" {
+						secrets[key] = encryptedValue
+					}
 				}
 			}
 			rows.Close()
 		}
-		runtimeSkills = append(runtimeSkills, protocol.RuntimeSkill{Skill: skill, Secrets: secrets})
+		runtimeSkills = append(runtimeSkills, protocol.RuntimeSkill{Skill: skill, Secrets: secrets, SecretMaterials: secretMaterials})
 	}
 	return runtimeSkills
 }
@@ -445,7 +658,10 @@ func (s *PostgresStore) listSkillsForUser(userID, projectID string, runtimeOnly 
 func (s *PostgresStore) CreateHTTPSkill(userID, projectID string, input protocol.HTTPSkillInput) (protocol.Skill, error) {
 	skillID := platform.NewID("skill")
 	versionID := platform.NewID("skv")
-	skill, secret := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	skill, secret, hasSecret, err := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	if err != nil {
+		return protocol.Skill{}, err
+	}
 	now := time.Now().UTC()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -470,11 +686,11 @@ func (s *PostgresStore) CreateHTTPSkill(userID, projectID string, input protocol
 		platform.NewID("grant"), userID, projectID, skill.ID, now); err != nil {
 		return protocol.Skill{}, err
 	}
-	if secret != "" {
+	if hasSecret {
 		if _, err := tx.Exec(`
-			INSERT INTO skill_secrets (id, skill_id, secret_key, encrypted_value, created_at, updated_at)
-			VALUES ($1, $2, 'bearer_token', $3, $4, $5)`,
-			platform.NewID("secret"), skill.ID, secret, now, now); err != nil {
+			INSERT INTO skill_secrets (id, skill_id, secret_key, secret_ref, encrypted_value, created_at, updated_at)
+			VALUES ($1, $2, 'bearer_token', NULLIF($3, ''), NULLIF($4, ''), $5, $6)`,
+			platform.NewID("secret"), skill.ID, secret.SecretRef, secret.EncryptedValue, now, now); err != nil {
 			return protocol.Skill{}, err
 		}
 	}
@@ -502,7 +718,10 @@ func (s *PostgresStore) UpdateHTTPSkill(userID, skillID string, input protocol.H
 		return protocol.Skill{}, app.ErrNotFound
 	}
 	versionID := platform.NewID("skv")
-	skill, secret := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	skill, secret, hasSecret, err := httpSkillFromInput(skillID, versionID, userID, projectID, "1.0.0", input)
+	if err != nil {
+		return protocol.Skill{}, err
+	}
 	skill.Slug = current.Slug
 	skill.Scope = protocol.SkillScope(scope)
 	skill.Kind = protocol.SkillKind(kind)
@@ -523,13 +742,13 @@ func (s *PostgresStore) UpdateHTTPSkill(userID, skillID string, input protocol.H
 	if _, err := tx.Exec(`UPDATE skills SET current_version_id = $1, updated_at = $2 WHERE id = $3`, skill.CurrentVersionID, now, skill.ID); err != nil {
 		return protocol.Skill{}, err
 	}
-	if secret != "" {
+	if hasSecret {
 		if _, err := tx.Exec(`
-			INSERT INTO skill_secrets (id, skill_id, secret_key, encrypted_value, created_at, updated_at)
-			VALUES ($1, $2, 'bearer_token', $3, $4, $5)
+			INSERT INTO skill_secrets (id, skill_id, secret_key, secret_ref, encrypted_value, created_at, updated_at)
+			VALUES ($1, $2, 'bearer_token', NULLIF($3, ''), NULLIF($4, ''), $5, $6)
 			ON CONFLICT (skill_id, secret_key)
-			DO UPDATE SET encrypted_value = EXCLUDED.encrypted_value, updated_at = EXCLUDED.updated_at`,
-			platform.NewID("secret"), skill.ID, secret, now, now); err != nil {
+			DO UPDATE SET secret_ref = EXCLUDED.secret_ref, encrypted_value = EXCLUDED.encrypted_value, updated_at = EXCLUDED.updated_at`,
+			platform.NewID("secret"), skill.ID, secret.SecretRef, secret.EncryptedValue, now, now); err != nil {
 			return protocol.Skill{}, err
 		}
 	}
@@ -560,6 +779,79 @@ func (s *PostgresStore) SetSkillEnabled(userID, skillID string, enabled bool) (p
 		return protocol.Skill{}, app.ErrNotFound
 	}
 	return s.getOwnedHTTPSkill(userID, skillID)
+}
+
+func (s *PostgresStore) AddAuditEvent(input protocol.AuditEventInput) (protocol.AuditEvent, error) {
+	event := auditEventFromInput(input)
+	metadataJSON, err := json.Marshal(event.Metadata)
+	if err != nil {
+		return protocol.AuditEvent{}, err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO audit_events (
+			id, actor_user_id, actor_project_id, actor_org_id, action, resource_type,
+			resource_id, decision, reason, request_id, trace_id, run_id, ip, user_agent,
+			metadata, created_at
+		)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6,
+		        NULLIF($7, ''), $8, NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''),
+		        NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''), $15::jsonb, $16)`,
+		event.ID, event.ActorUserID, event.ActorProjectID, event.ActorOrgID, event.Action, event.ResourceType,
+		event.ResourceID, event.Decision, event.Reason, event.RequestID, event.TraceID, event.RunID, event.IP,
+		event.UserAgent, string(metadataJSON), event.CreatedAt)
+	if err != nil {
+		return protocol.AuditEvent{}, err
+	}
+	return event, nil
+}
+
+func (s *PostgresStore) ListAuditEvents(actor app.ActorContext, opts app.AuditEventListOptions) []protocol.AuditEvent {
+	limit := opts.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	rows, err := s.db.Query(`
+		SELECT id, COALESCE(actor_user_id, ''), COALESCE(actor_project_id, ''), COALESCE(actor_org_id, ''),
+		       action, resource_type, COALESCE(resource_id, ''), decision, COALESCE(reason, ''),
+		       COALESCE(request_id, ''), COALESCE(trace_id, ''), COALESCE(run_id, ''),
+		       COALESCE(ip, ''), COALESCE(user_agent, ''), metadata, created_at
+		FROM audit_events
+		WHERE actor_user_id = $1
+		  AND actor_project_id = $2
+		  AND ($3 = '' OR request_id = $3)
+		  AND ($4 = '' OR run_id = $4)
+		  AND ($5 = '' OR action = $5)
+		  AND ($6 = '' OR resource_id = $6)
+		ORDER BY created_at DESC
+		LIMIT $7`,
+		actor.UserID, actor.ProjectID, opts.RequestID, opts.RunID, opts.Action, opts.ResourceID, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	events := make([]protocol.AuditEvent, 0)
+	for rows.Next() {
+		var event protocol.AuditEvent
+		var decision string
+		var rawMetadata []byte
+		if err := rows.Scan(
+			&event.ID, &event.ActorUserID, &event.ActorProjectID, &event.ActorOrgID,
+			&event.Action, &event.ResourceType, &event.ResourceID, &decision, &event.Reason,
+			&event.RequestID, &event.TraceID, &event.RunID, &event.IP, &event.UserAgent,
+			&rawMetadata, &event.CreatedAt,
+		); err != nil {
+			return events
+		}
+		event.Decision = protocol.AuditDecision(decision)
+		if len(rawMetadata) > 0 && string(rawMetadata) != "null" {
+			var metadata map[string]any
+			if err := json.Unmarshal(rawMetadata, &metadata); err == nil {
+				event.Metadata = metadata
+			}
+		}
+		events = append(events, event)
+	}
+	return events
 }
 
 func (s *PostgresStore) getOwnedHTTPSkill(userID, skillID string) (protocol.Skill, error) {

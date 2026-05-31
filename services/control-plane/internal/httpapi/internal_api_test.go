@@ -49,6 +49,15 @@ func TestInternalRunAPIsWriteEventsCompleteFailAndStatus(t *testing.T) {
 
 	completeRequest := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/complete", jsonBody(t, protocol.RunCompleteRequest{
 		Content: "done",
+		Usage: protocol.RunUsage{
+			Provider:      "openai-compatible",
+			Model:         "deepseek-v4-flash",
+			InputTokens:   9,
+			OutputTokens:  4,
+			TotalTokens:   13,
+			Estimated:     false,
+			LatencyMillis: 123,
+		},
 	}))
 	completeResponse := httptest.NewRecorder()
 	handler.ServeHTTP(completeResponse, completeRequest)
@@ -61,6 +70,51 @@ func TestInternalRunAPIsWriteEventsCompleteFailAndStatus(t *testing.T) {
 	}
 	if gotRun.Status != protocol.RunSucceeded {
 		t.Fatalf("completed status = %q, want succeeded", gotRun.Status)
+	}
+	if gotRun.Usage.Provider != "openai-compatible" || gotRun.Usage.Model != "deepseek-v4-flash" || gotRun.Usage.InputTokens != 9 || gotRun.Usage.OutputTokens != 4 {
+		t.Fatalf("completed usage = %#v", gotRun.Usage)
+	}
+	var completedResponse protocol.Run
+	decodeJSON(t, completeResponse.Body, &completedResponse)
+	if completedResponse.Usage.TotalTokens != 13 || completedResponse.Usage.LatencyMillis != 123 {
+		t.Fatalf("complete response usage = %#v", completedResponse.Usage)
+	}
+
+	duplicateComplete := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/complete", jsonBody(t, protocol.RunCompleteRequest{
+		Content: "duplicate completion",
+	}))
+	duplicateCompleteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(duplicateCompleteResponse, duplicateComplete)
+	if duplicateCompleteResponse.Code != http.StatusOK {
+		t.Fatalf("duplicate complete status = %d, body = %s", duplicateCompleteResponse.Code, duplicateCompleteResponse.Body.String())
+	}
+	lateFail := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/fail", jsonBody(t, protocol.RunFailRequest{
+		Error: "late failure",
+	}))
+	lateFailResponse := httptest.NewRecorder()
+	handler.ServeHTTP(lateFailResponse, lateFail)
+	if lateFailResponse.Code != http.StatusOK {
+		t.Fatalf("late fail status = %d, body = %s", lateFailResponse.Code, lateFailResponse.Body.String())
+	}
+	_, messages, err := store.GetChat(chat.ID)
+	if err != nil {
+		t.Fatalf("get chat after duplicate terminal callbacks: %v", err)
+	}
+	var assistantMessages int
+	for _, message := range messages {
+		if message.RunID == run.ID && message.Role == protocol.RoleAssistant {
+			assistantMessages++
+			if message.Content != "done" {
+				t.Fatalf("assistant message content = %q, want original completion", message.Content)
+			}
+		}
+	}
+	if assistantMessages != 1 {
+		t.Fatalf("assistant messages for run = %d, want 1", assistantMessages)
+	}
+	terminalEvents := terminalEventCounts(store.ListEvents(run.ID, 0))
+	if terminalEvents[protocol.EventRunSucceeded] != 1 || terminalEvents[protocol.EventRunFailed] != 0 {
+		t.Fatalf("terminal events = %#v, want one succeeded and no late failed event", terminalEvents)
 	}
 
 	_, failedRun, err := store.AddUserMessage(chat.ID, "demo-user", "fail")
@@ -157,4 +211,14 @@ func TestInternalRunAPIApprovalNeededSetsWaitingStatus(t *testing.T) {
 	if gotRun.Status != protocol.RunCanceled {
 		t.Fatalf("late complete overwrote status to %q", gotRun.Status)
 	}
+}
+
+func terminalEventCounts(events []protocol.RunEvent) map[protocol.RunEventType]int {
+	counts := map[protocol.RunEventType]int{}
+	for _, event := range events {
+		if event.Type == protocol.EventRunSucceeded || event.Type == protocol.EventRunFailed || event.Type == protocol.EventRunCanceled {
+			counts[event.Type]++
+		}
+	}
+	return counts
 }

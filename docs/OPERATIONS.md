@@ -18,19 +18,30 @@ memory 模式的权威状态在进程内存中，进程重启会丢失数据。P
 - runs、run events、artifacts。
 - skills、skill_versions、用户/项目 skill_grants、skill_secrets、配额、审计记录。
 
-当前 Postgres 模式支持单 Control Plane 进程内 SSE fanout 和基于数据库的 `RunEvent` replay。Redis Streams 后续用于多实例 run dispatch 和 event fanout，但不应替代 Postgres 的权威持久化。
+当前 Postgres 模式支持单 Control Plane 进程内 SSE fanout 和基于数据库的 `RunEvent` replay。Redis Streams 已有基础 run queue adapter：`DISPATCH_MODE=redis` 时 Control Plane 会把 run 写入 `RUN_QUEUE_STREAM`，供后续 Runtime worker 通过 consumer group 消费；现阶段 Runtime consumer loop 和跨副本 event fanout 仍是后续工作，Redis 不替代 Postgres 的权威持久化。
 
 ## 模型 Provider
 
 Agent Runtime 默认使用 `MODEL_PROVIDER=mock`，适合本地演示和 CI。切到真实 OpenAI-compatible provider 时，需要配置：
 
 - `MODEL_PROVIDER=openai-compatible`
-- `MODEL_BASE_URL`：兼容服务根地址，不包含 `/v1/chat/completions`。
+- `MODEL_BASE_URL`：兼容服务根地址，不包含 `/v1/chat/completions`、`/chat/completions` 或 `/completions`；启动时会做 URL 和 endpoint 校验。
 - `MODEL_API_KEY`：模型服务密钥，只能通过环境变量或 Kubernetes Secret 注入，不写入仓库。
 - `MODEL_NAME`：请求体中的 `model`。
 - `MODEL_TIMEOUT_SECONDS`：模型 HTTP 请求超时，默认 120 秒。
 
-Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，模型 HTTP 错误、tool calling 错误和网络超时都会让 runtime 通过 Control Plane 写入 `run.failed`。
+DeepSeek 接入不新增 provider 名，保持：
+
+```bash
+MODEL_PROVIDER=openai-compatible
+MODEL_BASE_URL=https://api.deepseek.com
+MODEL_API_KEY=sk-...
+MODEL_NAME=deepseek-v4-flash
+```
+
+Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，优先采集 provider response 中的真实 token usage；缺失 usage 时按 run 的输入/输出文本做估算并标记 `estimated=true`。
+
+模型错误会按运营类目归一化：401 为 `auth_error`，402 为 `billing_error`，400/422 为 `request_error`，429 为 `rate_limited`，500/503/网关错误为 `provider_unavailable`，超时和连接错误为 `network_error`。429、5xx 和网络瞬时错误会按指数退避重试并尊重 `Retry-After`；401、402、400、422 不重试。当前 fallback 只保留策略骨架和 run usage 字段，尚未配置多 provider 自动切换。provider 错误、日志和 run error 会经过 redactor，默认不输出 API key、Authorization、token、secret、password 或 cookie。
 
 ## Skill 与 Secret 排查
 
@@ -58,6 +69,18 @@ docker compose -f deployments/docker-compose.yml restart control-plane
 ```
 
 重启后访问 `GET /api/chats` 和 `GET /api/runs/{run_id}/events?after=0`，确认会话、消息、run 和 events 仍可恢复。
+
+Redis run queue 基础配置：
+
+```bash
+DISPATCH_MODE=redis
+REDIS_ADDR=redis:6379
+RUN_QUEUE_STREAM=niceagent:runs
+RUN_QUEUE_GROUP=agent-runtimes
+RUN_QUEUE_CONSUMER=control-plane-1
+```
+
+该模式需要 Control Plane module 的 `github.com/redis/go-redis/v9` 依赖。当前 adapter 提供 `XADD`、`XGROUP CREATE MKSTREAM`、`XREADGROUP` 和成功处理后的 `XACK`；处理失败时不 ack，消息保留在 pending entries 中等待后续 retry/claim 策略。
 
 清理本地持久化数据：
 

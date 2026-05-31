@@ -1,8 +1,10 @@
+import type { Artifact } from "../domain/artifact";
 import type { RunEvent, RunStatus } from "../domain/run";
 
 export interface FoldedRunState {
   assistantToken?: string;
   agentStatus?: string;
+  artifact?: Artifact;
   runStatus?: RunStatus;
   terminal?: boolean;
 }
@@ -37,6 +39,14 @@ export function foldRunEvent(event: RunEvent): FoldedRunState {
   if (event.type === "tool.finished") {
     return { agentStatus: "工具调用完成，Agent 正在整理回复" };
   }
+  if (event.type === "artifact.created") {
+    const artifact = artifactFromPayload(payload);
+    const name = artifact?.name || artifact?.path;
+    return {
+      agentStatus: name ? `已生成产物：${name}` : "已生成新的文件产物",
+      artifact: artifact || undefined,
+    };
+  }
   if (event.type === "approval.needed") {
     return { agentStatus: "有能力需要用户确认", runStatus: "waiting_for_approval" };
   }
@@ -55,6 +65,41 @@ export function foldRunEvent(event: RunEvent): FoldedRunState {
     return { agentStatus: "Agent 已完成回复", runStatus: "succeeded", terminal: true };
   }
   return {};
+}
+
+function artifactFromPayload(payload: Record<string, unknown>): Artifact | null {
+  const id = stringValue(payload.id);
+  const path = stringValue(payload.path);
+  if (!id && !path) return null;
+  return {
+    id,
+    run_id: stringValue(payload.run_id),
+    chat_id: optionalStringValue(payload.chat_id),
+    user_id: optionalStringValue(payload.user_id),
+    project_id: optionalStringValue(payload.project_id),
+    workspace_id: optionalStringValue(payload.workspace_id),
+    path,
+    name: optionalStringValue(payload.name),
+    mime_type: stringValue(payload.mime_type),
+    size_bytes: numberValue(payload.size_bytes),
+    sha256: optionalStringValue(payload.sha256),
+    storage_backend: optionalStringValue(payload.storage_backend),
+    storage_key: optionalStringValue(payload.storage_key),
+    created_at: optionalStringValue(payload.created_at),
+    deleted_at: optionalStringValue(payload.deleted_at),
+  };
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function optionalStringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export function statusFromRunEventType(type: RunEvent["type"]): RunStatus | null {

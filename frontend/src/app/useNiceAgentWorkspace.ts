@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
+import * as artifactApi from "../api/artifacts";
 import * as chatApi from "../api/chats";
 import * as runApi from "../api/runs";
 import * as skillApi from "../api/skills";
+import type { Artifact } from "../domain/artifact";
 import type { ChatSession, Message } from "../domain/chat";
 import type { HTTPSkillInput, SkillGroups } from "../domain/skill";
 import type { RunEvent, RunStatus } from "../domain/run";
@@ -22,6 +24,9 @@ export function useNiceAgentWorkspace() {
   const [runStatus, setRunStatus] = useState<RunStatus>("idle");
   const [assistantDraft, setAssistantDraft] = useState("");
   const [agentStatus, setAgentStatus] = useState("");
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [artifactLoading, setArtifactLoading] = useState(false);
+  const [artifactError, setArtifactError] = useState("");
   const [input, setInput] = useState("");
   const [notice, setNotice] = useState("准备就绪");
   const [chatQuery, setChatQuery] = useState("");
@@ -31,6 +36,7 @@ export function useNiceAgentWorkspace() {
   const [messageLoading, setMessageLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
+  const lastSeqByRunRef = useRef<Map<string, number>>(new Map());
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runStatusRef = useRef<RunStatus>("idle");
 
@@ -102,7 +108,9 @@ export function useNiceAgentWorkspace() {
       setNotice("HTTP Skill 已添加");
       await loadSkills();
     } catch (error) {
-      setNotice(`添加 Skill 失败：${errorMessage(error)}`);
+      const message = errorMessage(error);
+      setNotice(`添加 Skill 失败：${message}`);
+      throw new Error(message, { cause: error });
     }
   }
 
@@ -112,7 +120,9 @@ export function useNiceAgentWorkspace() {
       setNotice(enabled ? "Skill 已启用" : "Skill 已停用");
       await loadSkills();
     } catch (error) {
-      setNotice(`更新 Skill 失败：${errorMessage(error)}`);
+      const message = errorMessage(error);
+      setNotice(`更新 Skill 失败：${message}`);
+      throw new Error(message, { cause: error });
     }
   }
 
@@ -151,11 +161,26 @@ export function useNiceAgentWorkspace() {
     setRunId(run.id);
     setRunStatus(run.status || "idle");
     setNotice(run.error ? `最近 Run 失败：${run.error}` : `正在查看 Run：${run.id}`);
+    await loadArtifacts(run.id);
     if (!terminalRunStatuses.has(run.status || "idle")) {
       openEvents(run.id, chatIdForRefresh, true);
     } else {
       setAssistantDraft("");
       setAgentStatus("");
+    }
+  }
+
+  async function loadArtifacts(id: string) {
+    setArtifactLoading(true);
+    setArtifactError("");
+    try {
+      setArtifacts(await artifactApi.listRunArtifacts(id));
+    } catch (error) {
+      const message = errorMessage(error);
+      setArtifactError(message);
+      setNotice(`产物加载失败：${message}`);
+    } finally {
+      setArtifactLoading(false);
     }
   }
 
@@ -212,7 +237,9 @@ export function useNiceAgentWorkspace() {
   function openEvents(id: string, chatIdForRefresh = activeChatId, refreshOnTerminal = false) {
     closeEvents();
     setAgentStatus("正在连接 Agent Runtime");
-    const source = new EventSource(`/api/runs/${encodeURIComponent(id)}/events`);
+    const afterSeq = lastSeqByRunRef.current.get(id) || 0;
+    const params = afterSeq > 0 ? `?after=${encodeURIComponent(String(afterSeq))}` : "";
+    const source = new EventSource(`/api/runs/${encodeURIComponent(id)}/events${params}`);
     sourceRef.current = source;
     source.onopen = () => setAgentStatus("Agent Runtime 已连接");
     source.onerror = () => {
@@ -222,6 +249,7 @@ export function useNiceAgentWorkspace() {
     runEventTypes.forEach((type) => {
       source.addEventListener(type, (raw) => {
         const event = JSON.parse((raw as MessageEvent<string>).data) as RunEvent;
+        if (!markRunEventSeen(id, event)) return;
         applyRunEvent(event);
         const next = statusFromRunEventType(type);
         if (next) {
@@ -238,10 +266,21 @@ export function useNiceAgentWorkspace() {
     });
   }
 
+  function markRunEventSeen(expectedRunID: string, event: RunEvent): boolean {
+    if (event.run_id && event.run_id !== expectedRunID) return false;
+    const seq = Number(event.seq);
+    if (!Number.isFinite(seq) || seq <= 0) return true;
+    const lastSeq = lastSeqByRunRef.current.get(expectedRunID) || 0;
+    if (seq <= lastSeq) return false;
+    lastSeqByRunRef.current.set(expectedRunID, seq);
+    return true;
+  }
+
   function applyRunEvent(event: RunEvent) {
     const next = foldRunEvent(event);
     if (next.agentStatus) setAgentStatus(next.agentStatus);
     if (next.runStatus) setRunStatus(next.runStatus);
+    if (next.artifact) setArtifacts((prev) => upsertArtifact(prev, next.artifact as Artifact));
     if (next.assistantToken) {
       setAssistantDraft((prev) => {
         if (event.type === "run.failed" && prev) return prev;
@@ -265,6 +304,9 @@ export function useNiceAgentWorkspace() {
     setRunStatus("idle");
     setAssistantDraft("");
     setAgentStatus("");
+    setArtifacts([]);
+    setArtifactError("");
+    setArtifactLoading(false);
     setNotice("等待新的 Run");
   }
 
@@ -279,6 +321,9 @@ export function useNiceAgentWorkspace() {
     activeChat,
     activeChatId,
     agentStatus,
+    artifactError,
+    artifactLoading,
+    artifacts,
     canCancel,
     cancelRun,
     chatError,
@@ -308,4 +353,16 @@ export function useNiceAgentWorkspace() {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function upsertArtifact(existing: Artifact[], next: Artifact): Artifact[] {
+  const nextKey = artifactKey(next);
+  if (!nextKey) return existing;
+  const index = existing.findIndex((artifact) => artifactKey(artifact) === nextKey);
+  if (index === -1) return [...existing, next];
+  return existing.map((artifact, currentIndex) => (currentIndex === index ? next : artifact));
+}
+
+function artifactKey(artifact: Artifact): string {
+  return artifact.id || artifact.path;
 }

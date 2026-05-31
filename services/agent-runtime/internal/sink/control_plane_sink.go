@@ -35,9 +35,20 @@ func (s *ControlPlaneSink) Emit(runID string, typ protocol.RunEventType, message
 	}, nil)
 }
 
-func (s *ControlPlaneSink) Complete(runID string, content string) error {
+func (s *ControlPlaneSink) Complete(runID string, content string, artifacts ...protocol.Artifact) error {
 	return s.post(context.Background(), "/internal/runs/"+runID+"/complete", protocol.RunCompleteRequest{
-		Content: content,
+		Content:   content,
+		Artifacts: artifacts,
+	}, nil)
+}
+
+func (s *ControlPlaneSink) CompleteWithUsage(runID string, content string, usage protocol.RunUsage, artifacts ...protocol.Artifact) error {
+	usage = protocol.NormalizeRunUsage(usage)
+	return s.post(context.Background(), "/internal/runs/"+runID+"/complete", protocol.RunCompleteRequest{
+		Content:    content,
+		TokenUsage: protocol.TokenUsageFromRunUsage(usage),
+		Usage:      usage,
+		Artifacts:  artifacts,
 	}, nil)
 }
 
