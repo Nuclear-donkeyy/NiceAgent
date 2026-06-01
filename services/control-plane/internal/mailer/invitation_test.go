@@ -1,7 +1,12 @@
 package mailer
 
 import (
+	"context"
+	"errors"
+	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +40,94 @@ func TestSMTPInvitationMailerBuildsAcceptLink(t *testing.T) {
 			t.Fatalf("message missing %q:\n%s", want, message)
 		}
 	}
+}
+
+func TestQueuedInvitationMailerEnqueuesAndRetries(t *testing.T) {
+	inner := &flakyInvitationSender{failures: 1}
+	mailer := NewQueuedInvitationMailer(inner, QueueConfig{
+		Size:              2,
+		Workers:           1,
+		RetryAttempts:     2,
+		RetryInitialDelay: time.Millisecond,
+	}, slog.New(slog.NewTextHandler(testWriter{t: t}, nil)))
+	defer mailer.Close()
+
+	if err := mailer.SendInvitation(context.Background(), protocol.Invitation{
+		ID:             "invitation-a",
+		Email:          "invited@example.test",
+		Token:          "token",
+		OrganizationID: "org-a",
+		Role:           "viewer",
+	}); err != nil {
+		t.Fatalf("enqueue invitation: %v", err)
+	}
+
+	deadline := time.After(time.Second)
+	for {
+		if inner.calls.Load() == 2 && inner.delivered.Load() == 1 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected retry delivery, calls=%d delivered=%d", inner.calls.Load(), inner.delivered.Load())
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func TestQueuedInvitationMailerReturnsQueueFull(t *testing.T) {
+	inner := &blockingInvitationSender{ready: make(chan struct{}), release: make(chan struct{})}
+	mailer := NewQueuedInvitationMailer(inner, QueueConfig{Size: 1, Workers: 1, RetryAttempts: 1}, slog.New(slog.NewTextHandler(testWriter{t: t}, nil)))
+	defer mailer.Close()
+
+	if err := mailer.SendInvitation(context.Background(), protocol.Invitation{ID: "a", Email: "invited@example.test", Token: "token"}); err != nil {
+		t.Fatalf("enqueue first invitation: %v", err)
+	}
+	<-inner.ready
+	if err := mailer.SendInvitation(context.Background(), protocol.Invitation{ID: "b", Email: "invited@example.test", Token: "token"}); err != nil {
+		t.Fatalf("enqueue second invitation: %v", err)
+	}
+	if err := mailer.SendInvitation(context.Background(), protocol.Invitation{ID: "c", Email: "invited@example.test", Token: "token"}); !errors.Is(err, ErrInvitationQueueFull) {
+		t.Fatalf("expected queue full, got %v", err)
+	}
+	close(inner.release)
+}
+
+type flakyInvitationSender struct {
+	failures  int
+	calls     atomic.Int32
+	delivered atomic.Int32
+}
+
+func (s *flakyInvitationSender) SendInvitation(context.Context, protocol.Invitation) error {
+	call := int(s.calls.Add(1))
+	if call <= s.failures {
+		return errors.New("temporary smtp failure")
+	}
+	s.delivered.Add(1)
+	return nil
+}
+
+type blockingInvitationSender struct {
+	once    sync.Once
+	ready   chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingInvitationSender) SendInvitation(context.Context, protocol.Invitation) error {
+	s.once.Do(func() { close(s.ready) })
+	<-s.release
+	return nil
+}
+
+type testWriter struct {
+	t *testing.T
+}
+
+func (w testWriter) Write(p []byte) (int, error) {
+	w.t.Log(strings.TrimSpace(string(p)))
+	return len(p), nil
 }
 
 func TestSMTPInvitationMailerUsesCustomTemplates(t *testing.T) {

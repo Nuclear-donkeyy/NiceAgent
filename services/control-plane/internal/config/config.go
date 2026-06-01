@@ -47,6 +47,11 @@ type Config struct {
 	SMTPFrom                         string
 	InvitationEmailSubjectTemplate   string
 	InvitationEmailBodyTemplate      string
+	InvitationEmailQueueMode         string
+	InvitationEmailQueueSize         int
+	InvitationEmailQueueWorkers      int
+	InvitationEmailRetryAttempts     int
+	InvitationEmailRetryInitialDelay int
 	InternalAPIToken                 string
 	InternalTokenRequired            bool
 	MaxConcurrentRuns                int
@@ -100,6 +105,11 @@ func FromEnv() Config {
 		SMTPFrom:                         strings.TrimSpace(os.Getenv("SMTP_FROM")),
 		InvitationEmailSubjectTemplate:   strings.TrimSpace(os.Getenv("INVITATION_EMAIL_SUBJECT_TEMPLATE")),
 		InvitationEmailBodyTemplate:      os.Getenv("INVITATION_EMAIL_BODY_TEMPLATE"),
+		InvitationEmailQueueMode:         env("INVITATION_EMAIL_QUEUE_MODE", "inline"),
+		InvitationEmailQueueSize:         intEnv("INVITATION_EMAIL_QUEUE_SIZE", 100),
+		InvitationEmailQueueWorkers:      intEnv("INVITATION_EMAIL_QUEUE_WORKERS", 1),
+		InvitationEmailRetryAttempts:     intEnv("INVITATION_EMAIL_RETRY_ATTEMPTS", 1),
+		InvitationEmailRetryInitialDelay: intEnv("INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS", 250),
 		InternalAPIToken:                 strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN")),
 		InternalTokenRequired:            boolEnv("INTERNAL_API_TOKEN_REQUIRED", isNonLocalEnvironment(environment)),
 		MaxConcurrentRuns:                intEnv("QUOTA_MAX_CONCURRENT_RUNS", 0),
@@ -147,6 +157,22 @@ func (c Config) Validate() error {
 		}
 		if err := mailer.ValidateTemplates(c.InvitationEmailSubjectTemplate, c.InvitationEmailBodyTemplate); err != nil {
 			return err
+		}
+		switch strings.ToLower(strings.TrimSpace(c.InvitationEmailQueueMode)) {
+		case "", "inline", "memory":
+		default:
+			return fmt.Errorf("INVITATION_EMAIL_QUEUE_MODE must be inline or memory")
+		}
+		if strings.EqualFold(strings.TrimSpace(c.InvitationEmailQueueMode), "memory") {
+			if c.InvitationEmailQueueSize <= 0 {
+				return fmt.Errorf("INVITATION_EMAIL_QUEUE_SIZE must be greater than 0 when INVITATION_EMAIL_QUEUE_MODE=memory")
+			}
+			if c.InvitationEmailQueueWorkers <= 0 {
+				return fmt.Errorf("INVITATION_EMAIL_QUEUE_WORKERS must be greater than 0 when INVITATION_EMAIL_QUEUE_MODE=memory")
+			}
+			if c.InvitationEmailRetryAttempts <= 0 {
+				return fmt.Errorf("INVITATION_EMAIL_RETRY_ATTEMPTS must be greater than 0 when INVITATION_EMAIL_QUEUE_MODE=memory")
+			}
 		}
 	}
 	return nil
