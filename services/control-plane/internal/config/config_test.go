@@ -85,6 +85,8 @@ func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	t.Setenv("SMTP_USERNAME", "mailer")
 	t.Setenv("SMTP_PASSWORD", "secret")
 	t.Setenv("SMTP_FROM", "NiceAgent <noreply@example.test>")
+	t.Setenv("INVITATION_EMAIL_SUBJECT_TEMPLATE", "Join {{.OrganizationID}}")
+	t.Setenv("INVITATION_EMAIL_BODY_TEMPLATE", "Accept {{.AcceptURL}} as {{.Role}}")
 
 	cfg := FromEnv()
 
@@ -93,6 +95,9 @@ func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	}
 	if cfg.SMTPHost != "smtp.example.test" || cfg.SMTPPort != 2525 || cfg.SMTPUsername != "mailer" || cfg.SMTPPassword != "secret" || cfg.SMTPFrom != "NiceAgent <noreply@example.test>" {
 		t.Fatalf("smtp config = %#v", cfg)
+	}
+	if cfg.InvitationEmailSubjectTemplate != "Join {{.OrganizationID}}" || cfg.InvitationEmailBodyTemplate != "Accept {{.AcceptURL}} as {{.Role}}" {
+		t.Fatalf("invitation templates = subject:%q body:%q", cfg.InvitationEmailSubjectTemplate, cfg.InvitationEmailBodyTemplate)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected smtp config to validate: %v", err)
@@ -108,5 +113,18 @@ func TestValidateRequiresSMTPFieldsWhenInvitationEmailEnabled(t *testing.T) {
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected missing smtp fields to fail validation")
+	}
+}
+
+func TestValidateRejectsInvalidInvitationEmailTemplates(t *testing.T) {
+	t.Setenv("INVITATION_EMAIL_MODE", "smtp")
+	t.Setenv("SMTP_HOST", "smtp.example.test")
+	t.Setenv("SMTP_FROM", "noreply@example.test")
+	t.Setenv("INVITATION_EMAIL_BODY_TEMPLATE", "Unknown {{.Missing}}")
+
+	cfg := FromEnv()
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid invitation email template to fail validation")
 	}
 }

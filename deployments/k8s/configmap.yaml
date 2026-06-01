@@ -31,6 +31,8 @@ data:
   CONTROL_PLANE_URL: "http://niceagent-control-plane:8080"
   INVITATION_EMAIL_MODE: "disabled"
   INVITATION_PUBLIC_BASE_URL: "http://niceagent-control-plane:8080"
+  INVITATION_EMAIL_SUBJECT_TEMPLATE: "NiceAgent invitation"
+  INVITATION_EMAIL_BODY_TEMPLATE: ""
   SMTP_HOST: ""
   SMTP_PORT: "587"
   SMTP_USERNAME: ""
