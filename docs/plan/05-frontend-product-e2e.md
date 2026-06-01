@@ -24,7 +24,7 @@ Locator 策略建议优先使用 `getByRole`、`getByLabel`、`getByText`，必�
 
 ## 当前仓库现状
 
-前端已经迁移到 React + Rspack + TypeScript + SCSS Modules，目录分为 `app`、`api`、`domain`、`features`、`components` 和 `styles`。`package.json` 有 `dev`、`build`、`typecheck`、`lint`、`format`、`check` 和 `smoke:e2e`。仓库已引入 Playwright，并新增 `frontend/e2e/smoke.spec.ts` 与 `frontend/playwright.config.ts`；当前 E2E 是 mock backend smoke，不是三服务真实集成 smoke。
+前端已经迁移到 React + Rspack + TypeScript + SCSS Modules，目录分为 `app`、`api`、`domain`、`features`、`components` 和 `styles`。`package.json` 有 `dev`、`build`、`typecheck`、`lint`、`format`、`check` 和 `smoke:e2e`。仓库已引入 Playwright，并新增 `frontend/e2e/smoke.spec.ts` 与 `frontend/playwright.config.ts`；当前已有 mock backend smoke。仓库也新增了 `make smoke-three-services-ui`，可构建前端、启动三服务真实进程，由 Control Plane 托管静态产物后跑真实浏览器 smoke。
 
 Rspack dev server 已代理 `/api`、`/healthz` 到 Control Plane，本地 E2E 可以复用 dev server 和 8080 后端。
 
@@ -42,6 +42,20 @@ Rspack dev server 已代理 `/api`、`/healthz` 到 Control Plane，本地 E2E �
 协议类型已包含 `artifact.created`，前端已有 artifact domain、API、状态存储、列表组件和下载入口。`foldRunEvent` 会把 `artifact.created` 折叠成 agent status 和 artifact metadata。
 
 HTTP Skill 表单已有字段级错误、URL 客户端校验、Bearer token 条件校验、保存中禁用和服务端错误展示。前端 URL 策略已与后端对齐：默认只允许 `https`，并拒绝带 credentials 的 URL。
+
+已落地能力：
+
+- React/Rspack/TypeScript/SCSS Modules 工程化结构、Prettier/ESLint/typecheck/build 检查。
+- 聊天优先界面、会话搜索/归档/恢复、assistant 流式文本、run 状态、取消和刷新恢复。
+- 系统能力/我的能力、HTTP Skill 表单字段校验、保存状态、启停和服务端错误展示。
+- artifact domain/API/list/download、`artifact.created` 折叠、图片最小缩略预览和刷新后恢复。
+- SSE `after`/seq 去重、断线/恢复状态折叠到 agent status，不展示底层事件调试台。
+- Playwright mock smoke 与三服务真实 UI smoke 已覆盖核心聊天、CLI 状态、artifact list API 和刷新恢复。
+
+仍待落地能力：
+
+- 真实 HTTP Skill 后端流、复杂 SSE 断线重连、失败重试和更大样本的浏览器 E2E。
+- 更复杂 artifact 预览、skill 导入向导和面向多用户/项目的导航体验。
 
 ## 扩展点
 
@@ -84,7 +98,7 @@ Skill 表单建议本地维护 `errors`：
 - `auth_type=bearer` 时 `bearer_token` 必填。
 - 服务端 400/500 错误展示在表单顶部，并保留输入。
 
-E2E 第一版可以通过 fake backend 或网络 mock 先验证前端行为，后续再加三服务集成 E2E。
+E2E 当前分两层：`frontend/e2e/smoke.spec.ts` 通过 fake backend 或网络 mock 验证前端行为；`make smoke-three-services-ui` 构建前端并启动三服务真实进程，验证 Control Plane 托管静态产物后的核心链路。后续再补真实 HTTP Skill 后端流和复杂 SSE 断线重连。
 
 ## 技术方案
 

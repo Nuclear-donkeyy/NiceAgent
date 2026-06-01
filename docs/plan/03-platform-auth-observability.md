@@ -37,6 +37,20 @@ Repository 仍保留偏底层的数据访问接口，权限主要在 HTTP handle
 
 日志层已有 `slog` JSON request log 和 `X-Request-ID` 生成/透传。仓库已新增 `audit_events` 表、memory/Postgres repository、`GET /api/audit/events` 查询 API，并在 chat/run/skill/artifact/auth deny/quota deny 等关键路径写入 audit event。三服务已新增轻量 `X-Trace-ID` context 和标准 `traceparent` 传播：入口请求可传 `X-Trace-ID` 或 `Traceparent`，Control Plane -> Agent Runtime -> Control Plane callback -> Sandbox Executor 会透传同一个 trace id，Control Plane request log 和 audit event 会记录它。三服务也已提供 `/metrics`，以 Prometheus text exposition 风格暴露 HTTP 请求总数/耗时和最小领域计数。当前已支持 `OTEL_TRACES_EXPORTER=otlp`：启动时会初始化 OpenTelemetry tracer provider，用 OTLP HTTP exporter 上报入站 HTTP server spans；默认 `none`，不影响本地和 CI。内部 spans 已覆盖 Control Plane HTTP dispatcher、Redis run queue enqueue/process/fetch execution context、Runtime run execute、模型调用、tool invoke、HTTP Skill 请求、Runtime 调 Sandbox Executor、Sandbox Executor 命令执行、Runtime 回写 Control Plane、Redis Streams / PubSub / quota counter 低层命令，以及 Postgres repository `db.command`。run quota 已有最小边界：`QUOTA_MAX_CONCURRENT_RUNS`、`QUOTA_RUNS_PER_HOUR`、`QUOTA_MODEL_TOKENS_PER_DAY`、`QUOTA_TOOL_CALLS_PER_DAY`、`QUOTA_SANDBOX_SECONDS_PER_DAY` 作为 env fallback；项目级持久 quota policy 已通过 `project_quota_policies`、`GET/PATCH /api/projects/{id}/quota` 落地。`QUOTA_COUNTER_MODE=redis` 已能对并发 run 和每小时 run 数做 Redis 预占，并在 run 进入终态后释放并发占用；模型 token 预扣支持 fixed 和 dynamic 两种模式，dynamic 按用户消息长度估算 input tokens，并可叠加输出缓冲，run 完成后按真实 `RunUsage.total_tokens` 结算差额。`RunUsage` 已追加 tool/sandbox/artifact 聚合字段，能按 run 记录工具调用数、错误数、sandbox 命令耗时/输出/资源和 artifact 数量/大小；tool calls 和 sandbox seconds 已进入项目级 quota，并且 Runtime 每次 tool 调用前会做最小实时预占；`GET /api/projects/{id}/usage` 已支持按 provider/model/currency/估算来源做项目 usage 聚合。真实 tokenizer 和强一致账单级 quota 仍待补齐。
 
+已落地能力：
+
+- `AUTH_MODE=demo|trusted-header|oidc`、`ActorContext`、可信 header 模式和 OIDC bearer JWT/JWKS 资源服务器校验。
+- user/project/org 基础数据模型，`organization_members`、`project_members`、`invitations`、`user_identities`、最小成员管理 API 和邀请接受闭环。
+- 会话、消息、run、event、artifact、skill、audit 外部 API 的基础 user/project 隔离，以及 trusted-header/JWT roles 和持久 membership fallback。
+- 内部服务 token 强制策略、`X-Request-ID`、`X-Trace-ID`、`traceparent`、JSON request log、audit events、`/metrics`、Prometheus 告警规则和 OTLP HTTP exporter。
+- 项目级 quota policy、Redis 并发/小时预占、模型 token 预扣/结算、tool/sandbox 实时预占、run_usage 聚合和项目 usage 查询。
+
+仍待落地能力：
+
+- NiceAgent 内置浏览器 OIDC login callback、session cookie、refresh token 和登出流程。
+- 邮件投递模板、退信处理、队列化发送和更细 action-level policy。
+- 真实 tokenizer、按模型动态估算、强一致账单级 quota、外部告警路由、值班系统和容量看板。
+
 ## 扩展点
 
 - Control Plane 增加 `internal/auth`：解析 session/JWT，产出 `ActorContext`。

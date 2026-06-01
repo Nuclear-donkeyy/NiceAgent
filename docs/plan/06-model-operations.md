@@ -52,13 +52,27 @@ Runtime engine 已使用 `model.ToolCallingChatModel`，按 run 下发 skills �
 
 K8s 部署已经把 `MODEL_API_KEY` 从 `niceagent-model-provider` Secret 注入，`.env.example` 只放空值，方向正确。
 
+已落地能力：
+
+- Eino 原生 `model.ToolCallingChatModel` 主路径，OpenAI-compatible 通过 `eino-ext` OpenAI adapter 创建。
+- `MODEL_PROVIDER_PROFILE=deepseek` 配置预设、API key Secret 注入、mock provider 和 fake DeepSeek/OpenAI-compatible 回归测试。
+- provider 错误分类、retry transport、单一 fallback、usage tracker、pricing/cost、redactor、health snapshot、metrics 和可选主动探针。
+- Runtime 进程内模型请求速率限制和并发保护。
+- `run_usage` 持久化模型 token/cost、估算标记、token estimator、latency 和 tool/sandbox/artifact 聚合用量。
+
+仍待落地能力：
+
+- 真实 DeepSeek API key smoke 记录和不泄露密钥的运维验收流程。
+- 真实 tokenizer、跨 Runtime/provider 账号级容量协调、复杂多 provider 路由和外部 SLO 告警系统。
+- 覆盖所有 run event、audit、tool raw output 的集中 redaction 策略开关。
+
 ## 扩展点
 
 - `modelprovider` 已有 provider wrapper：统一 retry、fallback、usage callback、pricing/cost、health probe、错误分类、redaction、Runtime 进程内请求限流和并发保护。后续继续补跨 Runtime 的 provider 容量协调、供应商账号级限流联动和多 provider 路由。
 - `RunCompleteRequest` 和 Control Plane repository 落地 token usage 持久化。
 - `run_usage` 表已记录 provider、model、input/output/reasoning/cached tokens、`estimated`、`token_estimator`、latency、cost、currency，以及 run 级 tool/sandbox/artifact 聚合用量。
 - 当前先通过环境变量提供轻量 pricing policy；后续如需多模型、多租户成本核算，再增加 `model_pricing` 配置或表，按生效日期维护不同 provider/model 价格。
-- 日志和 event 增加统一 `Redactor`，覆盖 prompt、completion、tool output、headers、secret key。
+- 日志和 event 已有局部 `Redactor`，后续继续统一覆盖 prompt、completion、tool raw output、headers、secret key 和 audit payload。
 - provider health、错误分类、fallback 记录、主动探针和基础指标已有最小闭环；后续补外部 SLO 告警系统、多 provider 路由指标和真实生产 key 下的 smoke 记录。
 
 ## 技术架构

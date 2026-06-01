@@ -40,6 +40,21 @@ Agent Runtime 的 `ToolBridge` 已能把 `RuntimeSkill` 转成 Eino tool。built
 
 HTTP dispatcher 已经把完整 `RuntimeSkill` 下发给 Runtime。Redis queue 路径已经收敛为最小 `run_id/attempt_id` payload，并由 Agent Runtime worker 通过 Control Plane execution context API 拉取当前授权后的完整 `RuntimeSkill`，因此 HTTP Skill 执行材料不再依赖 queue payload。
 
+已落地能力：
+
+- Postgres/memory skill registry、版本、grant 和 secret 引用/本地密文结构。
+- 系统 skill 与用户 HTTP Skill 分组查询、创建、更新、启停 API。
+- HTTP Skill manifest、runtime_config、JSON Schema、URL 和 auth 配置校验。
+- Runtime `ToolBridge` materialize 授权后的 `RuntimeSkill`，支持 builtin、HTTP Skill、secret redaction、入参/出参 schema validation、结构化 observation、SSRF 基础拦截、retry 和进程内 per-skill rate limit。
+- Redis queue worker 可通过 execution context 拉取完整 skill manifest，不依赖 queue payload 携带 secret 或大对象。
+- OpenAPI JSON/YAML preview dry-run API 已能生成候选 HTTP Skill，不创建 skill、不保存 secret。
+
+仍待落地能力：
+
+- Vault、KMS、External Secrets 等生产 secret resolver。
+- OpenAPI 完整保存向导、MCP manifest 导入和前端导入体验。
+- 跨 Runtime 副本强一致 skill rate limit、独立 skill invocation 审计表和更细粒度风险策略。
+
 ## 扩展点
 
 - 增加 `SkillManifest` 领域模型，保留现有 JSON 字段兼容，同时内部用 typed config 解析。
@@ -114,7 +129,7 @@ OpenAPI/MCP 导入放在下一层：
 - HTTP Skill SSRF 打到内网、metadata service 或本机服务。
 - 第三方 API 返回 prompt injection 或超大响应。
 - annotations 被误当成强安全策略。
-- Redis queue worker 拉取 execution context 失败时会保留 pending entry；后续需要避免长期 pending 堆积并补 DLQ/claim 策略。
+- Redis queue worker 拉取 execution context 失败时会保留 pending entry；当前已有 heartbeat、idle pending reclaim 和 DLQ，后续风险在于生产容量、外部告警和跨副本强一致限流。
 
 验收：
 
