@@ -19,6 +19,8 @@ type Config struct {
 	InternalTokenRequired        bool
 	SandboxExecutorURL           string
 	RedisAddr                    string
+	SkillRateLimitMode           string
+	SkillRateLimitPrefix         string
 	RunQueueStream               string
 	RunQueueGroup                string
 	RunQueueConsumer             string
@@ -73,6 +75,8 @@ func FromEnv() Config {
 		InternalTokenRequired:        boolFromEnv("INTERNAL_API_TOKEN_REQUIRED", isNonLocalEnvironment(environment)),
 		SandboxExecutorURL:           os.Getenv("SANDBOX_EXECUTOR_URL"),
 		RedisAddr:                    os.Getenv("REDIS_ADDR"),
+		SkillRateLimitMode:           strings.TrimSpace(env("SKILL_RATE_LIMIT_MODE", "local")),
+		SkillRateLimitPrefix:         strings.TrimSpace(env("SKILL_RATE_LIMIT_PREFIX", "niceagent:skill-rate")),
 		RunQueueStream:               env("RUN_QUEUE_STREAM", "niceagent:runs"),
 		RunQueueGroup:                env("RUN_QUEUE_GROUP", "agent-runtimes"),
 		RunQueueConsumer:             runtimeConsumer(),
@@ -134,6 +138,14 @@ func (c Config) Validate() error {
 	}
 	if c.ModelMaxConcurrentRequests < 0 {
 		return fmt.Errorf("MODEL_MAX_CONCURRENT_REQUESTS must be greater than or equal to 0")
+	}
+	switch c.SkillRateLimitMode {
+	case "", "local", "redis":
+	default:
+		return fmt.Errorf("unsupported SKILL_RATE_LIMIT_MODE %q", c.SkillRateLimitMode)
+	}
+	if c.SkillRateLimitMode == "redis" && strings.TrimSpace(c.RedisAddr) == "" {
+		return fmt.Errorf("REDIS_ADDR is required when SKILL_RATE_LIMIT_MODE=redis")
 	}
 	return nil
 }

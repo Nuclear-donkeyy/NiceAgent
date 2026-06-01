@@ -158,6 +158,16 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: REDIS_ADDR
+            - name: SKILL_RATE_LIMIT_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SKILL_RATE_LIMIT_MODE
+            - name: SKILL_RATE_LIMIT_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SKILL_RATE_LIMIT_PREFIX
             - name: RUN_QUEUE_STREAM
               valueFrom:
                 configMapKeyRef:

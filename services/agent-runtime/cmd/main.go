@@ -33,6 +33,7 @@ func main() {
 	}
 	defer shutdownTelemetryWithTimeout(shutdownTelemetry)
 	agentEngine := engine.NewEinoAgentEngine(newSandboxExecutor(cfg, logger))
+	configureSkillRateLimiter(cfg, agentEngine, logger)
 	metrics := platform.NewMetrics("agent_runtime")
 	modelProvider, err := modelProviderFromEnv(cfg, logger)
 	if err != nil {
@@ -55,6 +56,19 @@ func main() {
 	logger.Info("starting agent runtime", "addr", cfg.Addr)
 	if err := http.ListenAndServe(cfg.Addr, handler); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func configureSkillRateLimiter(cfg config.Config, agentEngine *engine.EinoAgentEngine, logger *slog.Logger) {
+	if agentEngine == nil || agentEngine.Tools == nil {
+		return
+	}
+	switch cfg.SkillRateLimitMode {
+	case "", "local":
+		logger.Info("using local skill rate limiter")
+	case "redis":
+		logger.Info("using redis skill rate limiter", "addr", cfg.RedisAddr, "prefix", cfg.SkillRateLimitPrefix)
+		agentEngine.Tools.RateLimiter = tools.NewRedisSkillRateLimiter(cfg.RedisAddr, cfg.SkillRateLimitPrefix)
 	}
 }
 

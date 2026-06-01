@@ -58,7 +58,7 @@ type DefaultToolBridge struct {
 	Sandbox        SandboxExecutor
 	Client         *http.Client
 	Resolver       HostResolver
-	RateLimiter    *SkillRateLimiter
+	RateLimiter    SkillRateLimiter
 	SecretResolver SecretResolver
 }
 
@@ -72,7 +72,11 @@ func NewDefaultToolBridge(executor SandboxExecutor) *DefaultToolBridge {
 	}
 }
 
-type SkillRateLimiter struct {
+type SkillRateLimiter interface {
+	Allow(ctx context.Context, key string, limitPerMinute int) bool
+}
+
+type LocalSkillRateLimiter struct {
 	mu      sync.Mutex
 	windows map[string]skillRateWindow
 	now     func() time.Time
@@ -83,14 +87,14 @@ type skillRateWindow struct {
 	count int
 }
 
-func NewSkillRateLimiter() *SkillRateLimiter {
-	return &SkillRateLimiter{
+func NewSkillRateLimiter() *LocalSkillRateLimiter {
+	return &LocalSkillRateLimiter{
 		windows: map[string]skillRateWindow{},
 		now:     time.Now,
 	}
 }
 
-func (l *SkillRateLimiter) Allow(key string, limitPerMinute int) bool {
+func (l *LocalSkillRateLimiter) Allow(_ context.Context, key string, limitPerMinute int) bool {
 	if l == nil || limitPerMinute <= 0 {
 		return true
 	}

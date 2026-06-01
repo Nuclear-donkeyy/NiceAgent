@@ -124,6 +124,8 @@ services:
       MODEL_HEALTH_PROBE_TIMEOUT_SECONDS: "10"
       MODEL_HEALTH_PROBE_INITIAL_DELAY_SECONDS: "0"
       REDIS_ADDR: redis:6379
+      SKILL_RATE_LIMIT_MODE: local
+      SKILL_RATE_LIMIT_PREFIX: niceagent:skill-rate
       RUN_QUEUE_STREAM: niceagent:runs
       RUN_QUEUE_GROUP: agent-runtimes
       RUN_QUEUE_CONSUMER: agent-runtime-compose
