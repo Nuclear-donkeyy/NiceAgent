@@ -1260,6 +1260,8 @@ func (s *Server) internalRunSubroutes(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case action == "artifacts" && r.Method == http.MethodGet:
 		s.internalListRunArtifacts(w, r, runID)
+	case action == "artifacts" && r.Method == http.MethodPost:
+		s.internalRegisterRunArtifacts(w, r, runID)
 	case action == "events" && r.Method == http.MethodPost:
 		s.internalWriteRunEvent(w, r, runID)
 	case action == "complete" && r.Method == http.MethodPost:
@@ -1290,6 +1292,29 @@ func (s *Server) internalListRunArtifacts(w http.ResponseWriter, r *http.Request
 		return
 	}
 	platform.WriteJSON(w, http.StatusOK, protocol.ArtifactListResponse{Artifacts: s.repo.ListArtifacts(runID)})
+}
+
+func (s *Server) internalRegisterRunArtifacts(w http.ResponseWriter, r *http.Request, runID string) {
+	var input protocol.ArtifactWriteRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	run, err := s.repo.CheckRunAttempt(runID, firstNonEmpty(input.AttemptID, r.URL.Query().Get("attempt_id")))
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if app.IsTerminalRunStatus(run.Status) {
+		platform.WriteJSON(w, http.StatusOK, protocol.ArtifactListResponse{Artifacts: nil})
+		return
+	}
+	artifacts, err := (app.RepositorySink{Repo: s.repo}).RegisterArtifacts(runID, input.Artifacts...)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	platform.WriteJSON(w, http.StatusCreated, protocol.ArtifactListResponse{Artifacts: artifacts})
 }
 
 func (s *Server) internalArtifactSubroutes(w http.ResponseWriter, r *http.Request) {

@@ -163,6 +163,46 @@ func TestToolBridgeStopsExecutionWhenQuotaDenied(t *testing.T) {
 	}
 }
 
+func TestToolBridgeRegistersSandboxArtifactsIncrementally(t *testing.T) {
+	executor := &recordingSandboxExecutor{
+		result: protocol.SandboxResult{
+			RunID:    "run_1",
+			ExitCode: 0,
+			Stdout:   "created",
+			Artifacts: []protocol.Artifact{{
+				Path:      "output/report.txt",
+				Name:      "report.txt",
+				MimeType:  "text/plain",
+				SizeBytes: 7,
+			}},
+		},
+	}
+	bridge := NewDefaultToolBridge(executor)
+	sink := &artifactRecordingSink{}
+	runtimeTools := bridge.BuildTools(protocol.RunRequest{
+		RunID:       "run_1",
+		WorkspaceID: "ws_1",
+		Skills: []protocol.RuntimeSkill{{
+			Skill: protocol.Skill{ID: "cli.exec", Kind: protocol.SkillKindBuiltin, Scope: protocol.SkillScopeSystem, Enabled: true},
+		}},
+	}, sink)
+
+	output, err := runtimeTools[0].(einotool.InvokableTool).InvokableRun(context.Background(), `{"command":["sh","-c","echo created > output/report.txt"]}`)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if len(sink.registered) != 1 || sink.registered[0].Path != "output/report.txt" {
+		t.Fatalf("registered artifacts = %#v", sink.registered)
+	}
+	var result protocol.SandboxResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].ID != "art_live" {
+		t.Fatalf("output artifacts = %#v", result.Artifacts)
+	}
+}
+
 type fakeWorkspaceReader struct {
 	artifacts    []protocol.Artifact
 	text         protocol.ArtifactTextResponse
@@ -202,11 +242,31 @@ func (s *quotaRecordingSink) ReserveToolQuota(_ context.Context, _ string, input
 	return s.response, s.err
 }
 
+type artifactRecordingSink struct {
+	recordingSink
+	registered []protocol.Artifact
+}
+
+func (s *artifactRecordingSink) RegisterArtifacts(_ context.Context, _ string, artifacts []protocol.Artifact) ([]protocol.Artifact, error) {
+	s.registered = append([]protocol.Artifact(nil), artifacts...)
+	saved := make([]protocol.Artifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		artifact.ID = "art_live"
+		artifact.RunID = "run_1"
+		saved = append(saved, artifact)
+	}
+	return saved, nil
+}
+
 type recordingSandboxExecutor struct {
 	called bool
+	result protocol.SandboxResult
 }
 
 func (e *recordingSandboxExecutor) Execute(context.Context, protocol.SandboxCommand) protocol.SandboxResult {
 	e.called = true
+	if e.result.RunID != "" || len(e.result.Command) > 0 || len(e.result.Artifacts) > 0 {
+		return e.result
+	}
 	return protocol.SandboxResult{RunID: "run_1", ExitCode: 0, Stdout: "hello"}
 }

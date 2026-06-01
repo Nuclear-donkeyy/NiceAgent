@@ -16,6 +16,7 @@ import (
 func TestControlPlaneSinkWritesEventsCompleteFailAndReadsCancel(t *testing.T) {
 	var sawEvent bool
 	var sawClaim bool
+	var sawRegisterArtifacts bool
 	var sawListArtifacts bool
 	var sawReadArtifact bool
 	var sawComplete bool
@@ -102,11 +103,27 @@ func TestControlPlaneSinkWritesEventsCompleteFailAndReadsCancel(t *testing.T) {
 			sawQuotaReserve = true
 			_ = json.NewEncoder(w).Encode(protocol.ToolQuotaReserveResponse{Allowed: true})
 		case "/internal/runs/run-1/artifacts":
-			if r.URL.Query().Get("attempt_id") != "attempt-1" {
-				t.Fatalf("artifact list query = %q", r.URL.RawQuery)
+			switch r.Method {
+			case http.MethodPost:
+				var request protocol.ArtifactWriteRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatalf("decode artifact write: %v", err)
+				}
+				if request.AttemptID != "attempt-1" || len(request.Artifacts) != 1 || request.Artifacts[0].Path != "output/live.txt" {
+					t.Fatalf("artifact write request = %#v", request)
+				}
+				sawRegisterArtifacts = true
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(protocol.ArtifactListResponse{Artifacts: []protocol.Artifact{{ID: "art-live", RunID: "run-1", Path: "output/live.txt"}}})
+			case http.MethodGet:
+				if r.URL.Query().Get("attempt_id") != "attempt-1" {
+					t.Fatalf("artifact list query = %q", r.URL.RawQuery)
+				}
+				sawListArtifacts = true
+				_ = json.NewEncoder(w).Encode(protocol.ArtifactListResponse{Artifacts: []protocol.Artifact{{ID: "art-1", RunID: "run-1", Path: "output/report.txt"}}})
+			default:
+				http.NotFound(w, r)
 			}
-			sawListArtifacts = true
-			_ = json.NewEncoder(w).Encode(protocol.ArtifactListResponse{Artifacts: []protocol.Artifact{{ID: "art-1", RunID: "run-1", Path: "output/report.txt"}}})
 		case "/internal/artifacts/art-1/content":
 			if r.URL.Query().Get("run_id") != "run-1" || r.URL.Query().Get("attempt_id") != "attempt-1" || r.URL.Query().Get("max_bytes") != "32" {
 				t.Fatalf("artifact content query = %q", r.URL.RawQuery)
@@ -146,6 +163,13 @@ func TestControlPlaneSinkWritesEventsCompleteFailAndReadsCancel(t *testing.T) {
 	if response, err := sink.ReserveToolQuota(context.Background(), "run-1", protocol.ToolQuotaReserveRequest{SkillID: "cli.exec", ToolCalls: 1, SandboxSeconds: 10}); err != nil || !response.Allowed {
 		t.Fatalf("reserve tool quota = %#v err=%v", response, err)
 	}
+	registered, err := sink.RegisterArtifacts(context.Background(), "run-1", []protocol.Artifact{{Path: "output/live.txt"}})
+	if err != nil {
+		t.Fatalf("register artifacts: %v", err)
+	}
+	if len(registered) != 1 || registered[0].ID != "art-live" {
+		t.Fatalf("registered artifacts = %#v", registered)
+	}
 	artifacts, err := sink.ListArtifacts(context.Background(), "run-1")
 	if err != nil {
 		t.Fatalf("list artifacts: %v", err)
@@ -160,8 +184,8 @@ func TestControlPlaneSinkWritesEventsCompleteFailAndReadsCancel(t *testing.T) {
 	if text.Content != "report" {
 		t.Fatalf("artifact text = %#v", text)
 	}
-	if !sawClaim || !sawEvent || !sawListArtifacts || !sawReadArtifact || !sawComplete || !sawCompleteUsage || !sawFail || !sawQuotaReserve {
-		t.Fatalf("saw claim=%v event=%v list=%v read=%v complete=%v complete_usage=%v fail=%v quota=%v", sawClaim, sawEvent, sawListArtifacts, sawReadArtifact, sawComplete, sawCompleteUsage, sawFail, sawQuotaReserve)
+	if !sawClaim || !sawEvent || !sawRegisterArtifacts || !sawListArtifacts || !sawReadArtifact || !sawComplete || !sawCompleteUsage || !sawFail || !sawQuotaReserve {
+		t.Fatalf("saw claim=%v event=%v register=%v list=%v read=%v complete=%v complete_usage=%v fail=%v quota=%v", sawClaim, sawEvent, sawRegisterArtifacts, sawListArtifacts, sawReadArtifact, sawComplete, sawCompleteUsage, sawFail, sawQuotaReserve)
 	}
 }
 

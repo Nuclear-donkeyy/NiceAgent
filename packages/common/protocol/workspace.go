@@ -34,6 +34,11 @@ type ArtifactListResponse struct {
 	Artifacts []Artifact `json:"artifacts"`
 }
 
+type ArtifactWriteRequest struct {
+	AttemptID string     `json:"attempt_id,omitempty"`
+	Artifacts []Artifact `json:"artifacts"`
+}
+
 type ArtifactTextResponse struct {
 	Artifact  Artifact `json:"artifact"`
 	Content   string   `json:"content"`

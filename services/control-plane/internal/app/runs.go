@@ -11,6 +11,38 @@ func (s RepositorySink) Emit(runID string, typ protocol.RunEventType, message st
 	return err
 }
 
+func (s RepositorySink) RegisterArtifacts(runID string, artifacts ...protocol.Artifact) ([]protocol.Artifact, error) {
+	run, err := s.Repo.GetRun(runID)
+	if err != nil {
+		return nil, err
+	}
+	if IsTerminalRunStatus(run.Status) {
+		return nil, nil
+	}
+	savedArtifacts := make([]protocol.Artifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if artifact.ID != "" {
+			if existing, err := s.Repo.GetArtifact(artifact.ID); err == nil && existing.RunID == run.ID {
+				savedArtifacts = append(savedArtifacts, existing)
+				continue
+			}
+		}
+		artifact.RunID = nonEmpty(artifact.RunID, run.ID)
+		artifact.ChatID = nonEmpty(artifact.ChatID, run.ChatID)
+		artifact.UserID = nonEmpty(artifact.UserID, run.UserID)
+		artifact.WorkspaceID = nonEmpty(artifact.WorkspaceID, run.WorkspaceID)
+		saved, err := s.Repo.AddArtifact(artifact)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := s.Repo.AddEvent(runID, protocol.EventArtifactCreated, "Artifact created.", saved); err != nil {
+			return nil, err
+		}
+		savedArtifacts = append(savedArtifacts, saved)
+	}
+	return savedArtifacts, nil
+}
+
 func (s RepositorySink) Complete(runID string, content string, artifacts ...protocol.Artifact) error {
 	run, err := s.Repo.GetRun(runID)
 	if err != nil {
@@ -19,16 +51,8 @@ func (s RepositorySink) Complete(runID string, content string, artifacts ...prot
 	if IsTerminalRunStatus(run.Status) {
 		return nil
 	}
-	for _, artifact := range artifacts {
-		artifact.RunID = nonEmpty(artifact.RunID, run.ID)
-		artifact.ChatID = nonEmpty(artifact.ChatID, run.ChatID)
-		artifact.UserID = nonEmpty(artifact.UserID, run.UserID)
-		artifact.WorkspaceID = nonEmpty(artifact.WorkspaceID, run.WorkspaceID)
-		saved, err := s.Repo.AddArtifact(artifact)
-		if err != nil {
-			return err
-		}
-		if _, err := s.Repo.AddEvent(runID, protocol.EventArtifactCreated, "Artifact created.", saved); err != nil {
+	if len(artifacts) > 0 {
+		if _, err := s.RegisterArtifacts(runID, artifacts...); err != nil {
 			return err
 		}
 	}
