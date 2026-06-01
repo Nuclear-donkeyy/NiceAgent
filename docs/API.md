@@ -139,6 +139,43 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 `retry_max_attempts` 可选，默认 1，最大 5；Runtime 只会对 HTTP Skill 的 429、5xx 和网络/超时类错误重试。`rate_limit_per_minute` 可选，默认 0 表示不启用，最大 600；当前是 Agent Runtime 进程内的 per-skill 最小限流，不是跨副本强一致配额。
 
+`POST /api/skills/import/openapi/preview`
+
+预览 OpenAPI JSON 文档中可转换为 HTTP Skill 的 operation。该接口只做 dry-run，不创建 skill、不保存 secret、不修改 grant。当前支持 OpenAPI JSON，不支持 YAML；只转换 `GET` 和 `POST` operation，并要求最终 base URL 为 `https`。
+
+请求体：
+
+```json
+{
+  "document": "{\"openapi\":\"3.1.0\",\"servers\":[{\"url\":\"https://api.example.com\"}],\"paths\":{}}",
+  "base_url": "https://api.example.com"
+}
+```
+
+`base_url` 可选；如果不传，则使用 OpenAPI `servers[0].url`。响应体：
+
+```json
+{
+  "candidates": [
+    {
+      "name": "getWeather",
+      "description": "Get weather",
+      "method": "POST",
+      "url": "https://api.example.com/weather",
+      "path": "/weather",
+      "operation_id": "getWeather",
+      "input_schema": "{\"type\":\"object\"}",
+      "output_schema": "{\"type\":\"object\"}",
+      "auth_type": "bearer",
+      "requires_secret": true,
+      "security_scheme": "bearerAuth"
+    }
+  ]
+}
+```
+
+如果 OpenAPI security scheme 不是当前 HTTP Skill 支持的 bearer 类型，响应会标记 `unsupported_auth=true`，由后续导入 UI 引导用户重新配置鉴权。
+
 `PATCH /api/skills/{skill_id}`
 
 更新当前用户拥有的 HTTP Skill。系统固定 skill 不允许通过该接口修改。

@@ -943,6 +943,10 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.createHTTPSkill(w, r)
 		return
 	}
+	if len(parts) == 3 && parts[0] == "import" && parts[1] == "openapi" && parts[2] == "preview" && r.Method == http.MethodPost {
+		s.previewOpenAPIImport(w, r)
+		return
+	}
 	if len(parts) == 1 && r.Method == http.MethodPatch {
 		s.updateHTTPSkill(w, r, parts[0])
 		return
@@ -984,6 +988,26 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platform.WriteError(w, http.StatusNotFound, "skill route not found")
+}
+
+func (s *Server) previewOpenAPIImport(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWriteRole(w, r, "skill.import.preview", "skill", "", "") {
+		return
+	}
+	var input protocol.OpenAPIImportPreviewInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	candidates, err := skillmanifest.PreviewOpenAPIHTTPSkills(input.Document, input.BaseURL)
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.auditAllow(r, "skill.import.preview", "skill", "", "", map[string]any{
+		"candidate_count": len(candidates),
+	})
+	platform.WriteJSON(w, http.StatusOK, protocol.OpenAPIImportPreviewResponse{Candidates: candidates})
 }
 
 func (s *Server) createHTTPSkill(w http.ResponseWriter, r *http.Request) {

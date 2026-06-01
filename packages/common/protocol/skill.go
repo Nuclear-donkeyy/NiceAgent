@@ -99,6 +99,30 @@ type HTTPSkillInput struct {
 	BearerTokenSecretRef string `json:"bearer_token_secret_ref,omitempty"`
 }
 
+type OpenAPIImportPreviewInput struct {
+	Document string `json:"document"`
+	BaseURL  string `json:"base_url,omitempty"`
+}
+
+type HTTPSkillImportCandidate struct {
+	Name            string `json:"name"`
+	Description     string `json:"description,omitempty"`
+	Method          string `json:"method"`
+	URL             string `json:"url"`
+	Path            string `json:"path"`
+	OperationID     string `json:"operation_id,omitempty"`
+	InputSchema     string `json:"input_schema,omitempty"`
+	OutputSchema    string `json:"output_schema,omitempty"`
+	AuthType        string `json:"auth_type,omitempty"`
+	RequiresSecret  bool   `json:"requires_secret,omitempty"`
+	SecurityScheme  string `json:"security_scheme,omitempty"`
+	UnsupportedAuth bool   `json:"unsupported_auth,omitempty"`
+}
+
+type OpenAPIImportPreviewResponse struct {
+	Candidates []HTTPSkillImportCandidate `json:"candidates"`
+}
+
 type SkillInvocation struct {
 	ID             string     `json:"id"`
 	RunID          string     `json:"run_id"`
