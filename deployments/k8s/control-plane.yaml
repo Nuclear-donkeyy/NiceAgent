@@ -271,6 +271,11 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: ARTIFACT_RETENTION_DAYS
+            - name: ARTIFACT_CLEANUP_DELETE_FILES
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: ARTIFACT_CLEANUP_DELETE_FILES
             - name: INTERNAL_API_TOKEN
               valueFrom:
                 secretKeyRef:

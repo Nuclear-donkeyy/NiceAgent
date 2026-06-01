@@ -37,7 +37,13 @@ curl -X POST http://control-plane:8080/internal/artifacts/cleanup-expired \
   -d '{"limit":100}'
 ```
 
-当前清理只把 metadata 标记为 `deleted_at`，不会删除本地 workspace 文件或对象存储对象；真实文件回收、对象存储生命周期和归档策略仍是后续工作。
+默认清理只把 metadata 标记为 `deleted_at`。如果需要同时删除本地 workspace 文件，可以单次请求传 `delete_files=true`，或在 Control Plane 配置：
+
+```bash
+ARTIFACT_CLEANUP_DELETE_FILES=true
+```
+
+本地文件回收只处理 `storage_backend` 为空或 `local` 的 artifact，并复用 workspace root、`output/` 路径限制、symlink escape 和 regular file 校验；不能安全解析或删除的文件会出现在响应的 `file_errors` 中。对象存储对象仍需要后续生命周期策略或归档任务处理。
 
 ## 认证与配额
 

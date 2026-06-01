@@ -61,7 +61,8 @@ func main() {
 			OutputBuffer: cfg.QuotaModelTokenOutputBuffer,
 			Model:        cfg.QuotaModelTokenEstimatorModel,
 		},
-		ArtifactRetention: time.Duration(cfg.ArtifactRetentionDays) * 24 * time.Hour,
+		ArtifactRetention:    time.Duration(cfg.ArtifactRetentionDays) * 24 * time.Hour,
+		ArtifactCleanupFiles: cfg.ArtifactCleanupDeleteFiles,
 		OIDC: httpapi.OIDCConfig{
 			Issuer:           cfg.OIDCIssuerURL,
 			Audience:         cfg.OIDCAudience,

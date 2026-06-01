@@ -80,6 +80,7 @@ services:
       WEB_DIST_DIR: /workspace/frontend/dist
       SANDBOX_WORKSPACE_ROOT: /workspace/workspaces
       ARTIFACT_RETENTION_DAYS: "0"
+      ARTIFACT_CLEANUP_DELETE_FILES: "false"
     ports:
       - "8080:8080"
     volumes:

@@ -42,6 +42,7 @@ type Server struct {
 	quotaLimiter            quotapkg.Limiter
 	tokenReservation        TokenReservationOptions
 	artifactRetention       time.Duration
+	artifactCleanupFiles    bool
 }
 
 type ServerOptions struct {
@@ -54,6 +55,7 @@ type ServerOptions struct {
 	QuotaLimiter            quotapkg.Limiter
 	TokenReservation        TokenReservationOptions
 	ArtifactRetention       time.Duration
+	ArtifactCleanupFiles    bool
 	OIDC                    OIDCConfig
 }
 
@@ -102,6 +104,7 @@ func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log
 		quotaLimiter:            opts.QuotaLimiter,
 		tokenReservation:        normalizeTokenReservationOptions(opts.TokenReservation),
 		artifactRetention:       opts.ArtifactRetention,
+		artifactCleanupFiles:    opts.ArtifactCleanupFiles,
 	}
 }
 
@@ -1394,7 +1397,11 @@ func (s *Server) internalCleanupExpiredArtifacts(w http.ResponseWriter, r *http.
 		writeStoreErr(w, err)
 		return
 	}
-	platform.WriteJSON(w, http.StatusOK, protocol.ArtifactListResponse{Artifacts: artifacts})
+	response := protocol.ArtifactCleanupResponse{Artifacts: artifacts}
+	if input.DeleteFiles || s.artifactCleanupFiles {
+		response.DeletedFiles, response.FileErrors = s.deleteLocalArtifactFiles(artifacts)
+	}
+	platform.WriteJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) internalReadArtifactText(w http.ResponseWriter, r *http.Request, artifactID string) {
@@ -1659,6 +1666,50 @@ func (s *Server) withArtifactExpiration(artifacts []protocol.Artifact) []protoco
 		}
 	}
 	return next
+}
+
+func (s *Server) deleteLocalArtifactFiles(artifacts []protocol.Artifact) (int, []string) {
+	deleted := 0
+	var errs []string
+	for _, artifact := range artifacts {
+		if artifact.Path == "" {
+			continue
+		}
+		if backend := strings.TrimSpace(artifact.StorageBackend); backend != "" && backend != "local" {
+			continue
+		}
+		workspace, err := s.repo.GetWorkspace(artifact.WorkspaceID)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: workspace unavailable", artifact.ID))
+			continue
+		}
+		filePath, err := resolveArtifactDownloadPath(workspace, artifact)
+		if err != nil {
+			if strings.Contains(err.Error(), "artifact file is unavailable") {
+				continue
+			}
+			errs = append(errs, fmt.Sprintf("%s: %v", artifact.ID, err))
+			continue
+		}
+		info, err := os.Lstat(filePath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			errs = append(errs, fmt.Sprintf("%s: %v", artifact.ID, err))
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			errs = append(errs, fmt.Sprintf("%s: artifact file is not regular", artifact.ID))
+			continue
+		}
+		if err := os.Remove(filePath); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", artifact.ID, err))
+			continue
+		}
+		deleted++
+	}
+	return deleted, errs
 }
 
 func (s *Server) internalFailRun(w http.ResponseWriter, r *http.Request, runID string) {

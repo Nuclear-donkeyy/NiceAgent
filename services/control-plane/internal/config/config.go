@@ -67,6 +67,7 @@ type Config struct {
 	QuotaModelTokenOutputBuffer      int
 	QuotaModelTokenEstimatorModel    string
 	ArtifactRetentionDays            int
+	ArtifactCleanupDeleteFiles       bool
 }
 
 func FromEnv() Config {
@@ -128,6 +129,7 @@ func FromEnv() Config {
 		QuotaModelTokenOutputBuffer:      intEnv("QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER", 0),
 		QuotaModelTokenEstimatorModel:    strings.TrimSpace(os.Getenv("QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL")),
 		ArtifactRetentionDays:            intEnv("ARTIFACT_RETENTION_DAYS", 0),
+		ArtifactCleanupDeleteFiles:       boolEnv("ARTIFACT_CLEANUP_DELETE_FILES", false),
 	}
 }
 
