@@ -59,6 +59,7 @@ func main() {
 		TokenReservation: httpapi.TokenReservationOptions{
 			Mode:         cfg.QuotaModelTokenReservationMode,
 			OutputBuffer: cfg.QuotaModelTokenOutputBuffer,
+			Model:        cfg.QuotaModelTokenEstimatorModel,
 		},
 		OIDC: httpapi.OIDCConfig{
 			Issuer:           cfg.OIDCIssuerURL,

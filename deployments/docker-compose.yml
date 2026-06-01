@@ -74,6 +74,7 @@ services:
       QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN: "0"
       QUOTA_MODEL_TOKEN_RESERVATION_MODE: fixed
       QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER: "0"
+      QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL: ""
       DATABASE_URL: postgres://niceagent:niceagent@postgres:5432/niceagent?sslmode=disable
       REDIS_ADDR: redis:6379
       WEB_DIST_DIR: /workspace/frontend/dist

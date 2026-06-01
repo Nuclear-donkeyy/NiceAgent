@@ -65,6 +65,7 @@ type Config struct {
 	QuotaModelTokenReservationPerRun int
 	QuotaModelTokenReservationMode   string
 	QuotaModelTokenOutputBuffer      int
+	QuotaModelTokenEstimatorModel    string
 }
 
 func FromEnv() Config {
@@ -124,6 +125,7 @@ func FromEnv() Config {
 		QuotaModelTokenReservationPerRun: intEnv("QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN", 0),
 		QuotaModelTokenReservationMode:   env("QUOTA_MODEL_TOKEN_RESERVATION_MODE", "fixed"),
 		QuotaModelTokenOutputBuffer:      intEnv("QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER", 0),
+		QuotaModelTokenEstimatorModel:    strings.TrimSpace(os.Getenv("QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL")),
 	}
 }
 

@@ -60,6 +60,7 @@ func TestFromEnvReadsQuotaCounterConfig(t *testing.T) {
 	t.Setenv("QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN", "512")
 	t.Setenv("QUOTA_MODEL_TOKEN_RESERVATION_MODE", "dynamic")
 	t.Setenv("QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER", "128")
+	t.Setenv("QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL", "gpt-4o")
 	t.Setenv("QUOTA_TOOL_CALLS_PER_DAY", "25")
 	t.Setenv("QUOTA_SANDBOX_SECONDS_PER_DAY", "120")
 
@@ -70,6 +71,9 @@ func TestFromEnvReadsQuotaCounterConfig(t *testing.T) {
 	}
 	if cfg.QuotaModelTokenReservationMode != "dynamic" || cfg.QuotaModelTokenOutputBuffer != 128 {
 		t.Fatalf("token reservation config = mode:%q buffer:%d", cfg.QuotaModelTokenReservationMode, cfg.QuotaModelTokenOutputBuffer)
+	}
+	if cfg.QuotaModelTokenEstimatorModel != "gpt-4o" {
+		t.Fatalf("token estimator model = %q", cfg.QuotaModelTokenEstimatorModel)
 	}
 	if cfg.MaxToolCallsPerDay != 25 || cfg.MaxSandboxSecondsPerDay != 120 {
 		t.Fatalf("usage quota config = tool:%d sandbox:%d", cfg.MaxToolCallsPerDay, cfg.MaxSandboxSecondsPerDay)

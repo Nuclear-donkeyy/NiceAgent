@@ -297,6 +297,21 @@ func TestEnginePrefersRealModelUsageAndFallsBackToEstimate(t *testing.T) {
 	if result.Usage.TokenEstimator != platform.HeuristicRuneDiv4TokenEstimator {
 		t.Fatalf("token estimator = %q, want %q", result.Usage.TokenEstimator, platform.HeuristicRuneDiv4TokenEstimator)
 	}
+
+	tiktokenSink := &recordingSink{}
+	result = estimateEngine.Execute(context.Background(), protocol.RunRequest{
+		RunID:       "run-tiktoken-estimate-usage",
+		ChatID:      "chat-1",
+		UserID:      "user-1",
+		WorkspaceID: "ws-1",
+		ModelPolicy: "gpt-4o",
+	}, "hello world", tiktokenSink)
+	if result.Status != protocol.RunSucceeded {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	if !result.Usage.Estimated || result.Usage.TokenEstimator != platform.TiktokenO200KTokenEstimator {
+		t.Fatalf("usage = %#v, want tiktoken estimated usage", result.Usage)
+	}
 }
 
 type recordingSink struct {

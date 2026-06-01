@@ -261,6 +261,11 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER
+            - name: QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL
             - name: INTERNAL_API_TOKEN
               valueFrom:
                 secretKeyRef:
