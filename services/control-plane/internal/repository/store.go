@@ -102,6 +102,7 @@ func NewStore() *Store {
 		Description:   "Inspect files and artifacts attached to a run workspace.",
 		Risk:          protocol.SkillRiskLow,
 		RequiresAuth:  false,
+		InputSchema:   `{"type":"object","properties":{"action":{"type":"string","enum":["summary","list","read"],"description":"summary returns workspace artifact metadata; list returns artifacts; read returns text artifact content"},"artifact_id":{"type":"string"},"max_bytes":{"type":"integer","minimum":1,"maximum":262144}}}`,
 		Annotations:   `{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}`,
 		RuntimeConfig: `{"type":"builtin"}`,
 		Enabled:       true,
