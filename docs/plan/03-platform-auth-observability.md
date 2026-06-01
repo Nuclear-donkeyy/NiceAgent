@@ -29,7 +29,7 @@ NiceAgent 需要从 `demo-user` 演示模式升级为真实多用户平台。产
 
 数据层已经有平台雏形：`users`、`organizations`、`projects` 表；`chat_sessions` 包含 `user_id` 和 `project_id`；`runs` 包含 `user_id`；`skills`、`skill_grants` 也有 user/project 维度。
 
-Control Plane 已新增 `ActorContext` 和 `AUTH_MODE=demo|trusted-header|oidc` 边界。`demo` 模式继续映射到 `demo-user/demo-project`；`trusted-header` 模式要求可信上游已完成 OIDC/session/JWT 校验，并传入 `X-NiceAgent-User-ID` 和 `X-NiceAgent-Project-ID`，可选 `X-NiceAgent-Org-ID`、`X-NiceAgent-Roles`、`X-NiceAgent-User-Email`、`X-NiceAgent-User-Name`、`X-NiceAgent-Identity-Provider`、`X-NiceAgent-Identity-Issuer` 和 `X-NiceAgent-Identity-Subject`。`oidc` 当前只是兼容别名。系统还没有真正的内置 OIDC 登录、session 或 JWT 校验。
+Control Plane 已新增 `ActorContext` 和 `AUTH_MODE=demo|trusted-header|oidc` 边界。`demo` 模式继续映射到 `demo-user/demo-project`；`trusted-header` 模式要求可信上游已完成 OIDC/session/JWT 校验，并传入 `X-NiceAgent-User-ID` 和 `X-NiceAgent-Project-ID`，可选 `X-NiceAgent-Org-ID`、`X-NiceAgent-Roles`、`X-NiceAgent-User-Email`、`X-NiceAgent-User-Name`、`X-NiceAgent-Identity-Provider`、`X-NiceAgent-Identity-Issuer` 和 `X-NiceAgent-Identity-Subject`。`oidc` 模式已能校验 `Authorization: Bearer <jwt>`，支持 RS256、issuer/audience/exp/nbf、JWKS 拉取和 claims 到 `ActorContext` 的映射。系统还没有内置浏览器 OIDC callback、session cookie 或 refresh token。
 
 Repository 仍保留偏底层的数据访问接口，权限主要在 HTTP handler 层按 actor 校验。会话、消息、run、events、artifact、skill 和 audit 的外部 API 已有基础 user/project 隔离。`X-NiceAgent-Roles` 已有最小 RBAC：`viewer` 只读，`owner/admin/member/editor/writer` 可写；组织/项目成员管理只允许 `owner/admin`。如果 header 没有 roles，普通项目 API 会优先从 `project_members` 持久角色绑定读取角色；组织成员 API 会从 `organization_members` 读取角色；当 `projects.organization_id` 与 actor 的 `OrgID` 匹配时，项目 API 也可以继承 `organization_members` 中的组织角色。当前已新增 `organization_members`、`project_members`、`invitations`、`user_identities` migration，并种子化 `demo-user/demo-org/demo-project owner`；外部 API 已支持列出、添加/更新、移除当前组织成员和当前项目成员，也支持创建组织/项目邀请并由已认证 actor 接受邀请。邀请接受会校验可信身份中的邮箱 claim 与邀请邮箱一致；如果上游传入 `issuer + subject`，Control Plane 会绑定并校验外部身份不能跨用户换绑。可选 SMTP 邀请邮件已有最小闭环；NiceAgent 内置 OIDC 登录、投递模板、退信处理和队列化发送还没有落地。
 
@@ -89,7 +89,7 @@ RBAC 当前最小角色和后续第一版角色：
 
 - `AUTH_MODE=demo`：继续映射到 `demo-user/demo-project`，本地开发默认。
 - `AUTH_MODE=trusted-header`：启用可信网关透传身份，设置上游网关并要求 actor headers。
-- `AUTH_MODE=oidc`：未来启用 NiceAgent 内置 OIDC 登录，设置 `OIDC_ISSUER_URL`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`、`SESSION_SECRET`。
+- `AUTH_MODE=oidc`：当前作为 API 资源服务器校验 bearer JWT，设置 `OIDC_ISSUER_URL`、`OIDC_AUDIENCE`、可选 `OIDC_JWKS_URL` 和 claims 映射；未来再补浏览器 OIDC callback/session。
 - 首次登录创建或绑定内部 `users.id`，创建默认 organization/project/member 关系。
 - 外部 API 不再直接读 `app.DemoUserID`，而是从 `ActorContext` 取当前用户和 project。
 

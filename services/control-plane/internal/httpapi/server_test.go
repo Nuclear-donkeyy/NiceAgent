@@ -260,17 +260,6 @@ func TestServerTrustedHeaderModeRequiresActorAndIsolatesUsers(t *testing.T) {
 	}
 }
 
-func TestServerOIDCModeAliasesTrustedHeaderForCompatibility(t *testing.T) {
-	_, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "oidc"})
-	request := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
-	setTrustedActor(request, "user-a", "project-a")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("trusted header alias status = %d, body = %s", response.Code, response.Body.String())
-	}
-}
-
 func TestServerTrustedHeaderViewerRoleIsReadOnly(t *testing.T) {
 	_, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
 	createChat := httptest.NewRequest(http.MethodPost, "/api/chats", jsonBody(t, map[string]string{"title": "rbac"}))

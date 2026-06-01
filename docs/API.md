@@ -10,7 +10,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 - `demo`：默认模式，所有外部 API 映射到 `demo-user/demo-project`，用于本地开发和演示。
 - `trusted-header`：要求上游网关已完成 OIDC/session/JWT 校验，并在外部 API 请求中传入 `X-NiceAgent-User-ID` 和 `X-NiceAgent-Project-ID`。可选传入 `X-NiceAgent-Org-ID`、`X-NiceAgent-Roles`、`X-NiceAgent-User-Email`、`X-NiceAgent-User-Name`、`X-NiceAgent-Identity-Provider`、`X-NiceAgent-Identity-Issuer`、`X-NiceAgent-Identity-Subject`。缺少 actor header 时返回 401；缺少 roles 时，普通项目 API 会从持久 `project_members` 读取角色，组织成员 API 会从持久 `organization_members` 读取角色，仍找不到成员关系则返回 403。如果请求携带 identity issuer/subject，Control Plane 会把该外部身份绑定到内部 `user_id`；同一个外部身份不能绑定到多个用户，同一个用户同一 provider 也不能换绑到另一个外部身份。接受邀请时必须有可信邮箱 header，且邮箱必须匹配邀请邮箱。
-- `oidc`：当前作为 `trusted-header` 的兼容别名保留。NiceAgent 自己发起 OIDC 登录和 JWT 校验仍是后续工作。
+- `oidc`：作为 API resource server 校验 `Authorization: Bearer <jwt>`，支持 RS256、JWKS、issuer、audience、`exp`、`nbf` 校验，并把 JWT claims 映射为 `ActorContext`。该模式不读取 trusted header；浏览器 OIDC callback/session/refresh token 仍是后续工作。
 
 `X-NiceAgent-Roles` 的最小 RBAC 语义：`owner`、`admin`、`member`、`editor`、`writer` 可以执行普通写操作；`viewer` 只能读。组织/项目成员管理只允许 `owner/admin` 操作。网关没有传 roles 时，Control Plane 优先使用 `project_members` 的持久项目角色；组织成员 API 会读取 `organization_members`；如果项目属于当前 actor 的组织，项目 API 也可以继承 `organization_members` 中的组织角色。更完整的 action 级 policy 和邀请流程仍是后续工作。
 

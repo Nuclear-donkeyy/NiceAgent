@@ -77,7 +77,13 @@ X-NiceAgent-Org-ID: org-a
 X-NiceAgent-Roles: owner
 ```
 
-`AUTH_MODE=oidc` 当前只是 `trusted-header` 的兼容别名，真正的 OIDC callback/session/JWT 校验还没有内置。
+`AUTH_MODE=oidc` 会直接校验 `Authorization: Bearer <jwt>`，要求配置 `OIDC_ISSUER_URL` 和 `OIDC_AUDIENCE`，并通过 `OIDC_JWKS_URL` 或默认 `<issuer>/.well-known/jwks.json` 拉取 RS256 JWKS。当前它是 API 资源服务器模式，不包含浏览器登录 callback、session cookie 或 refresh token。
+
+OIDC token 至少需要包含：
+
+- `iss`、`sub`、`aud`、`exp`
+- 项目 claim，默认 `niceagent_project_id`，也可以通过 `OIDC_DEFAULT_PROJECT_ID` 给单项目部署兜底
+- 角色 claim，默认 `niceagent_roles`；如果没有 roles，Control Plane 会从持久 membership 表加载角色
 
 `X-NiceAgent-Roles` 支持最小 RBAC：`viewer` 只能读，`owner/admin/member/editor/writer` 可以写。如果 trusted header 请求没有传 roles，Control Plane 会从持久 `project_members` 中读取当前用户在当前项目的角色；没有成员关系时返回 `403`。本地 demo 模式仍固定使用 `demo-user/demo-project/owner`。
 

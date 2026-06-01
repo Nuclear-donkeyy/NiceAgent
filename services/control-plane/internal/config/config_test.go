@@ -35,6 +35,25 @@ func TestNonLocalEnvironmentRequiresInternalTokenByDefault(t *testing.T) {
 	}
 }
 
+func TestValidateRequiresOIDCIssuerAndAudience(t *testing.T) {
+	t.Setenv("AUTH_MODE", "oidc")
+
+	cfg := FromEnv()
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected oidc mode without issuer and audience to fail validation")
+	}
+
+	t.Setenv("OIDC_ISSUER_URL", "https://issuer.example.test")
+	t.Setenv("OIDC_AUDIENCE", "niceagent")
+	cfg = FromEnv()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected oidc config to validate: %v", err)
+	}
+	if cfg.OIDCProjectIDClaim != "niceagent_project_id" || cfg.OIDCRolesClaim != "niceagent_roles" {
+		t.Fatalf("oidc claim config = %#v", cfg)
+	}
+}
+
 func TestFromEnvReadsQuotaCounterConfig(t *testing.T) {
 	t.Setenv("QUOTA_COUNTER_MODE", "redis")
 	t.Setenv("QUOTA_COUNTER_PREFIX", "custom:quota")

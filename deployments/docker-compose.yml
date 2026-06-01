@@ -40,6 +40,17 @@ services:
       SMTP_FROM: ""
       INTERNAL_API_TOKEN: niceagent-local-internal-token
       INTERNAL_API_TOKEN_REQUIRED: "false"
+      OIDC_ISSUER_URL: ""
+      OIDC_AUDIENCE: ""
+      OIDC_JWKS_URL: ""
+      OIDC_DEFAULT_PROJECT_ID: ""
+      OIDC_DEFAULT_ORG_ID: ""
+      OIDC_USER_ID_CLAIM: sub
+      OIDC_PROJECT_ID_CLAIM: niceagent_project_id
+      OIDC_ORG_ID_CLAIM: niceagent_org_id
+      OIDC_ROLES_CLAIM: niceagent_roles
+      OIDC_EMAIL_CLAIM: email
+      OIDC_NAME_CLAIM: name
       OTEL_TRACES_EXPORTER: none
       OTEL_EXPORTER_OTLP_ENDPOINT: ""
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ""

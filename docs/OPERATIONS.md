@@ -28,7 +28,16 @@ Redis Streams 已有 run queue 最小闭环：`DISPATCH_MODE=redis` 时 Control 
 
 - `AUTH_MODE=demo`：默认本地模式，所有请求映射到 `demo-user/demo-project`。
 - `AUTH_MODE=trusted-header`：生产网关模式，要求可信上游完成登录和 JWT/session 校验，再透传 `X-NiceAgent-User-ID`、`X-NiceAgent-Project-ID`、可选 `X-NiceAgent-Org-ID` 和 `X-NiceAgent-Roles`。
-- `AUTH_MODE=oidc`：当前作为 `trusted-header` 兼容别名。NiceAgent 内置 OIDC callback/session/JWT 仍是后续工作。
+- `AUTH_MODE=oidc`：Control Plane 直接校验 `Authorization: Bearer <jwt>`。当前支持 RS256 JWT、`iss`、`aud`、`exp`、`nbf` 校验和 JWKS 拉取，并把 claims 映射为 `ActorContext`；它是资源服务器模式，不包含浏览器 OIDC callback、session cookie 或 refresh token。
+
+OIDC JWT 模式需要配置：
+
+- `OIDC_ISSUER_URL`：JWT `iss`，同时作为默认 JWKS 根地址来源。
+- `OIDC_AUDIENCE`：必须匹配 JWT `aud`。
+- `OIDC_JWKS_URL`：可选，默认使用 `<OIDC_ISSUER_URL>/.well-known/jwks.json`。如果你的 IdP 只通过 discovery 暴露 JWKS URI，请显式配置该值。
+- `OIDC_PROJECT_ID_CLAIM`、`OIDC_ORG_ID_CLAIM`、`OIDC_ROLES_CLAIM`：默认分别是 `niceagent_project_id`、`niceagent_org_id`、`niceagent_roles`。如果 roles claim 为空，Control Plane 会继续从持久 membership 解析角色。
+- `OIDC_DEFAULT_PROJECT_ID`、`OIDC_DEFAULT_ORG_ID`：可选 fallback，适合单项目部署。
+- `OIDC_USER_ID_CLAIM`、`OIDC_EMAIL_CLAIM`、`OIDC_NAME_CLAIM`：默认分别是 `sub`、`email`、`name`。
 
 最小 RBAC 优先读取 trusted header 中的 `X-NiceAgent-Roles`：`viewer` 只允许读取，`owner/admin/member/editor/writer` 允许创建聊天、发送消息、取消 run 和管理 HTTP Skill；项目成员管理只允许 `owner/admin`。缺少 roles 时会从 `project_members` 持久角色绑定中读取；仍找不到成员关系时返回 `403`，并写入 `auth.authorize` deny audit event。当前 migration 会给 `demo-user/demo-project` 写入 `owner` 角色。
 
@@ -41,7 +50,7 @@ PATCH /api/projects/{project_id}/members/{user_id}
 DELETE /api/projects/{project_id}/members/{user_id}
 ```
 
-这些 API 只管理当前 actor 所在项目的 `project_members`，不会跨项目修改成员；第一版也不允许修改或删除自己的成员关系，避免把自己锁出项目。organization 级成员管理、邀请创建/接受、可信身份绑定和可选 SMTP 邀请邮件已有最小闭环；NiceAgent 内置 OIDC 登录和更细粒度 action policy 仍是后续工作。
+这些 API 只管理当前 actor 所在项目的 `project_members`，不会跨项目修改成员；第一版也不允许修改或删除自己的成员关系，避免把自己锁出项目。organization 级成员管理、邀请创建/接受、可信身份绑定和可选 SMTP 邀请邮件已有最小闭环；NiceAgent 内置浏览器 OIDC 登录/session 和更细粒度 action policy 仍是后续工作。
 
 邀请邮件默认关闭，适合本地开发。需要由 Control Plane 直接发送邀请邮件时配置：
 
