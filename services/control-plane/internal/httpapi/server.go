@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"niceagent/common/platform"
@@ -43,6 +44,7 @@ type Server struct {
 	tokenReservation        TokenReservationOptions
 	artifactRetention       time.Duration
 	artifactCleanupFiles    bool
+	sseActiveConnections    int64
 }
 
 type ServerOptions struct {
@@ -522,6 +524,7 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request, runID string)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+	defer s.trackSSEConnection("run_events")()
 
 	afterSeq, _ := strconv.ParseInt(firstNonEmpty(r.URL.Query().Get("after"), r.Header.Get("Last-Event-ID")), 10, 64)
 	var err error
@@ -568,6 +571,33 @@ func (s *Server) writeReplayEvents(w http.ResponseWriter, runID string, afterSeq
 		afterSeq = event.Seq
 	}
 	return afterSeq, nil
+}
+
+func (s *Server) trackSSEConnection(stream string) func() {
+	if stream == "" {
+		stream = "unknown"
+	}
+	labels := platform.Labels{"stream": stream}
+	active := atomic.AddInt64(&s.sseActiveConnections, 1)
+	s.metrics.IncCounter("niceagent_sse_connections_total", platform.Labels{
+		"stream": stream,
+		"event":  "opened",
+	})
+	s.metrics.SetGauge("niceagent_sse_active_connections", labels, float64(active))
+	startedAt := time.Now()
+	return func() {
+		active := atomic.AddInt64(&s.sseActiveConnections, -1)
+		if active < 0 {
+			active = 0
+			atomic.StoreInt64(&s.sseActiveConnections, 0)
+		}
+		s.metrics.IncCounter("niceagent_sse_connections_total", platform.Labels{
+			"stream": stream,
+			"event":  "closed",
+		})
+		s.metrics.SetGauge("niceagent_sse_active_connections", labels, float64(active))
+		s.metrics.ObserveDuration("niceagent_sse_connection_duration_seconds", labels, time.Since(startedAt))
+	}
 }
 
 func (s *Server) skills(w http.ResponseWriter, r *http.Request) {

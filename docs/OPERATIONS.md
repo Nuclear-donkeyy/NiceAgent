@@ -378,6 +378,9 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 - `niceagent_http_request_duration_seconds_*`：按同样标签统计 HTTP 请求耗时。
 - `niceagent_runs_created_total`：Control Plane 成功创建 run 的次数。
 - `niceagent_quota_denials_total`：Control Plane 配额拒绝次数。
+- `niceagent_sse_connections_total`：Control Plane SSE 连接打开/关闭次数，当前按 `stream=run_events` 和 `event=opened|closed` 标记。
+- `niceagent_sse_active_connections`：Control Plane 当前活跃 SSE 连接数，用于观察 run event 订阅连接压力。
+- `niceagent_sse_connection_duration_seconds_*`：Control Plane SSE 连接持续时间 summary。
 - `niceagent_runtime_runs_total`：Agent Runtime 执行结果次数。
 - `niceagent_model_runs_total`：Agent Runtime 按 provider/model/status/error_class/fallback 统计模型 run。
 - `niceagent_model_latency_seconds_*`：Agent Runtime 按 provider/model 统计模型调用耗时。
