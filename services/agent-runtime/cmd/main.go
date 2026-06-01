@@ -40,7 +40,7 @@ func main() {
 	}
 	agentEngine.Models = modelProvider
 	startModelHealthProbe(cfg, modelProvider, logger, metrics)
-	startQueueWorker(cfg, agentEngine, logger)
+	startQueueWorker(cfg, agentEngine, logger, metrics)
 	var modelHealth httpapi.ModelHealthReporter
 	if reporter, ok := modelProvider.(httpapi.ModelHealthReporter); ok {
 		modelHealth = reporter
@@ -82,7 +82,7 @@ func startModelHealthProbe(cfg config.Config, modelProvider model.ToolCallingCha
 	}, logger, metrics)
 }
 
-func startQueueWorker(cfg config.Config, agentEngine engine.AgentEngine, logger *slog.Logger) {
+func startQueueWorker(cfg config.Config, agentEngine engine.AgentEngine, logger *slog.Logger, metrics *platform.Metrics) {
 	if cfg.QueueMode == "" || cfg.QueueMode == "disabled" || cfg.QueueMode == "http" {
 		return
 	}
@@ -110,6 +110,7 @@ func startQueueWorker(cfg config.Config, agentEngine engine.AgentEngine, logger 
 		DeadLetterMaxLen:  cfg.RunQueueDLQMaxLen,
 		LeaseSeconds:      cfg.RunAttemptLeaseSeconds,
 		HeartbeatInterval: cfg.RunAttemptHeartbeat,
+		Metrics:           metrics,
 	}, agentEngine, logger)
 	logger.Info(
 		"starting redis run queue worker",

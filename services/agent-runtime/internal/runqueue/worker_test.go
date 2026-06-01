@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"niceagent/agent-runtime/internal/tools"
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 )
 
@@ -68,6 +70,7 @@ func TestRedisWorkerFetchesExecutionContextExecutesAndAcks(t *testing.T) {
 			},
 		}},
 	}
+	metrics := platform.NewMetrics("agent_runtime_test")
 	worker := newRedisWorkerWithClient(Config{
 		RedisAddr:       "redis:6379",
 		Stream:          "niceagent:runs:test",
@@ -75,6 +78,7 @@ func TestRedisWorkerFetchesExecutionContextExecutesAndAcks(t *testing.T) {
 		Consumer:        "runtime-a",
 		ControlPlaneURL: controlPlane.URL,
 		InternalToken:   "internal-secret",
+		Metrics:         metrics,
 	}, engine, client, controlPlane.Client(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if err := worker.ProcessNext(context.Background()); err != nil {
@@ -94,6 +98,12 @@ func TestRedisWorkerFetchesExecutionContextExecutesAndAcks(t *testing.T) {
 	}
 	if engine.userMessage != "/cli echo hello" {
 		t.Fatalf("user message = %q", engine.userMessage)
+	}
+	renderedMetrics := metrics.Render()
+	for _, want := range []string{"niceagent_redis_queue_messages_total", "niceagent_redis_queue_acked_total"} {
+		if !strings.Contains(renderedMetrics, want) {
+			t.Fatalf("metrics missing %s:\n%s", want, renderedMetrics)
+		}
 	}
 }
 
@@ -245,6 +255,7 @@ func TestRedisWorkerMovesOverDeliveredPendingMessageToDLQ(t *testing.T) {
 		}},
 		pending: map[string]int64{"1700000000000-0": 5},
 	}
+	metrics := platform.NewMetrics("agent_runtime_test")
 	worker := newRedisWorkerWithClient(Config{
 		RedisAddr:        "redis:6379",
 		Stream:           "niceagent:runs:test",
@@ -255,6 +266,7 @@ func TestRedisWorkerMovesOverDeliveredPendingMessageToDLQ(t *testing.T) {
 		MaxDeliveries:    5,
 		DeadLetterStream: "niceagent:runs:test:dlq",
 		DeadLetterMaxLen: 100,
+		Metrics:          metrics,
 	}, engine, client, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if err := worker.ProcessNext(context.Background()); err != nil {
@@ -278,6 +290,12 @@ func TestRedisWorkerMovesOverDeliveredPendingMessageToDLQ(t *testing.T) {
 	}
 	if add.values["reason"] != "max_deliveries_exceeded" || add.values["run_id"] != "run_1" {
 		t.Fatalf("dlq values = %#v", add.values)
+	}
+	renderedMetrics := metrics.Render()
+	for _, want := range []string{"niceagent_redis_queue_reclaimed_total", "niceagent_redis_queue_dlq_messages_total", "niceagent_redis_queue_acked_total"} {
+		if !strings.Contains(renderedMetrics, want) {
+			t.Fatalf("metrics missing %s:\n%s", want, renderedMetrics)
+		}
 	}
 }
 

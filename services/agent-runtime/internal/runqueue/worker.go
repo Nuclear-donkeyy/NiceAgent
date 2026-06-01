@@ -48,6 +48,7 @@ type Config struct {
 	DeadLetterMaxLen  int64
 	LeaseSeconds      int
 	HeartbeatInterval time.Duration
+	Metrics           *platform.Metrics
 }
 
 type RedisWorker struct {
@@ -56,6 +57,7 @@ type RedisWorker struct {
 	client     redisQueueClient
 	httpClient *http.Client
 	log        *slog.Logger
+	metrics    *platform.Metrics
 }
 
 func NewRedisWorker(cfg Config, agent engine.AgentEngine, log *slog.Logger) *RedisWorker {
@@ -66,6 +68,7 @@ func NewRedisWorker(cfg Config, agent engine.AgentEngine, log *slog.Logger) *Red
 		client:     newGoRedisQueueClient(cfg.RedisAddr),
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		log:        log,
+		metrics:    cfg.Metrics,
 	}
 }
 
@@ -80,6 +83,7 @@ func newRedisWorkerWithClient(cfg Config, agent engine.AgentEngine, client redis
 		client:     client,
 		httpClient: httpClient,
 		log:        log,
+		metrics:    cfg.Metrics,
 	}
 }
 
@@ -108,6 +112,7 @@ func (w *RedisWorker) ProcessNext(ctx context.Context) (err error) {
 	})
 	defer func() { endSpan(err, nil) }()
 	if err := w.ensureGroup(ctx); err != nil {
+		w.incQueueError("ensure_group")
 		return err
 	}
 	message, reclaimed, err := w.readNextMessage(ctx)
@@ -115,12 +120,15 @@ func (w *RedisWorker) ProcessNext(ctx context.Context) (err error) {
 		return nil
 	}
 	if err != nil {
+		w.incQueueError("read")
 		return err
 	}
+	w.incQueueMessage(reclaimed)
 	queued, err := decodeQueuedRun(message.Values)
 	if err != nil {
 		_ = w.deadLetter(ctx, message, "decode_failed", 0, err)
 		_, _ = w.client.XAck(ctx, w.cfg.Stream, w.cfg.Group, message.ID)
+		w.incQueueError("decode")
 		return err
 	}
 	queued.MessageID = message.ID
@@ -130,9 +138,15 @@ func (w *RedisWorker) ProcessNext(ctx context.Context) (err error) {
 		queued.AttemptID = platform.NewID("attempt")
 	}
 	if err := w.executeQueuedRun(ctx, queued); err != nil {
+		w.incQueueError("execute")
 		return err
 	}
 	_, err = w.client.XAck(ctx, w.cfg.Stream, w.cfg.Group, message.ID)
+	if err != nil {
+		w.incQueueError("ack")
+	} else {
+		w.incQueueAck()
+	}
 	return err
 }
 
@@ -165,17 +179,22 @@ func (w *RedisWorker) readNextMessage(ctx context.Context) (redisStreamMessage, 
 func (w *RedisWorker) autoClaimPending(ctx context.Context) (redisStreamMessage, bool, error) {
 	messages, _, err := w.client.XAutoClaim(ctx, w.cfg.Stream, w.cfg.Group, w.cfg.Consumer, w.cfg.ReclaimMinIdle, "0-0", w.cfg.ReclaimCount)
 	if err != nil {
+		w.incQueueError("autoclaim")
 		return redisStreamMessage{}, false, err
 	}
 	for _, message := range messages {
+		w.incQueueReclaim()
 		deliveryCount := w.pendingRetryCount(ctx, message.ID)
 		if w.cfg.MaxDeliveries > 0 && deliveryCount >= w.cfg.MaxDeliveries {
 			if err := w.deadLetter(ctx, message, "max_deliveries_exceeded", deliveryCount, nil); err != nil {
+				w.incQueueError("dead_letter")
 				return redisStreamMessage{}, true, err
 			}
 			if _, err := w.client.XAck(ctx, w.cfg.Stream, w.cfg.Group, message.ID); err != nil {
+				w.incQueueError("ack_dead_letter")
 				return redisStreamMessage{}, true, err
 			}
+			w.incQueueAck()
 			continue
 		}
 		message.DeliveryCount = deliveryCount
@@ -187,6 +206,9 @@ func (w *RedisWorker) autoClaimPending(ctx context.Context) (redisStreamMessage,
 func (w *RedisWorker) pendingRetryCount(ctx context.Context, messageID string) int64 {
 	entries, err := w.client.XPendingExt(ctx, w.cfg.Stream, w.cfg.Group, messageID, messageID, 1)
 	if err != nil || len(entries) == 0 {
+		if err != nil {
+			w.incQueueError("pending")
+		}
 		return 0
 	}
 	return entries[0].RetryCount
@@ -221,6 +243,9 @@ func (w *RedisWorker) deadLetter(ctx context.Context, message redisStreamMessage
 		values["payload"] = string(payload)
 	}
 	_, err = w.client.XAdd(ctx, stream, values, w.cfg.DeadLetterMaxLen)
+	if err == nil {
+		w.incDeadLetter(reason, stream)
+	}
 	return err
 }
 
@@ -402,6 +427,45 @@ func (w *RedisWorker) claimedBy() string {
 		return w.cfg.RuntimeID
 	}
 	return w.cfg.Consumer
+}
+
+func (w *RedisWorker) baseMetricLabels(extra platform.Labels) platform.Labels {
+	labels := platform.Labels{
+		"stream":   w.cfg.Stream,
+		"group":    w.cfg.Group,
+		"consumer": w.cfg.Consumer,
+	}
+	for key, value := range extra {
+		labels[key] = value
+	}
+	return labels
+}
+
+func (w *RedisWorker) incQueueMessage(reclaimed bool) {
+	w.metrics.IncCounter("niceagent_redis_queue_messages_total", w.baseMetricLabels(platform.Labels{
+		"reclaimed": fmt.Sprint(reclaimed),
+	}))
+}
+
+func (w *RedisWorker) incQueueReclaim() {
+	w.metrics.IncCounter("niceagent_redis_queue_reclaimed_total", w.baseMetricLabels(nil))
+}
+
+func (w *RedisWorker) incQueueAck() {
+	w.metrics.IncCounter("niceagent_redis_queue_acked_total", w.baseMetricLabels(nil))
+}
+
+func (w *RedisWorker) incQueueError(stage string) {
+	w.metrics.IncCounter("niceagent_redis_queue_errors_total", w.baseMetricLabels(platform.Labels{
+		"stage": stage,
+	}))
+}
+
+func (w *RedisWorker) incDeadLetter(reason, dlqStream string) {
+	w.metrics.IncCounter("niceagent_redis_queue_dlq_messages_total", w.baseMetricLabels(platform.Labels{
+		"reason":     reason,
+		"dlq_stream": dlqStream,
+	}))
 }
 
 func isTerminalRunStatus(status protocol.RunStatus) bool {
