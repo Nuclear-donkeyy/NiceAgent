@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -136,6 +138,115 @@ func TestHTTPSkillResolvesEnvSecretRef(t *testing.T) {
 	observation := decodeObservation(t, output)
 	if !observation.OK || observation.StatusCode != http.StatusOK {
 		t.Fatalf("observation = %#v, want ok", observation)
+	}
+}
+
+func TestHTTPSkillResolvesFileSecretRef(t *testing.T) {
+	secretDir := t.TempDir()
+	secretPath := filepath.Join(secretDir, "bearer-token")
+	if err := os.WriteFile(secretPath, []byte("file-secret-token\n"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	t.Setenv("NICEAGENT_SECRET_FILE_ROOTS", secretDir)
+	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if got := req.Header.Get("Authorization"); got != "Bearer file-secret-token" {
+			t.Fatalf("authorization = %q, want file secret token", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Header:     make(http.Header),
+		}, nil
+	}))
+	runtimeTool.runtimeSkill.Skill.RuntimeConfig = `{"type":"http","method":"POST","url":"https://api.example.com/weather","timeout_seconds":15,"auth_type":"bearer"}`
+	runtimeTool.runtimeSkill.SecretMaterials = map[string]protocol.RuntimeSecret{
+		"bearer_token": {SecretRef: "file://" + secretPath},
+	}
+
+	output, ok, err := runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil {
+		t.Fatalf("invoke http skill: %v", err)
+	}
+	if !ok {
+		t.Fatalf("ok = false, output = %s", output)
+	}
+	observation := decodeObservation(t, output)
+	if !observation.OK || observation.StatusCode != http.StatusOK {
+		t.Fatalf("observation = %#v, want ok", observation)
+	}
+}
+
+func TestHTTPSkillRejectsFileSecretOutsideAllowedRoots(t *testing.T) {
+	allowedDir := t.TempDir()
+	blockedDir := t.TempDir()
+	secretPath := filepath.Join(blockedDir, "bearer-token")
+	if err := os.WriteFile(secretPath, []byte("file-secret-token"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	t.Setenv("NICEAGENT_SECRET_FILE_ROOTS", allowedDir)
+	var calls int
+	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		t.Fatalf("unexpected request to %s", req.URL.String())
+		return nil, nil
+	}))
+	runtimeTool.runtimeSkill.Skill.RuntimeConfig = `{"type":"http","method":"POST","url":"https://api.example.com/weather","timeout_seconds":15,"auth_type":"bearer"}`
+	runtimeTool.runtimeSkill.SecretMaterials = map[string]protocol.RuntimeSecret{
+		"bearer_token": {SecretRef: "file://" + secretPath},
+	}
+
+	output, ok, err := runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil {
+		t.Fatalf("invoke http skill: %v", err)
+	}
+	if ok {
+		t.Fatal("ok = true, want false")
+	}
+	observation := decodeObservation(t, output)
+	if observation.OK || observation.ErrorType != "secret_unresolved" {
+		t.Fatalf("observation = %#v, want secret_unresolved", observation)
+	}
+	if calls != 0 {
+		t.Fatalf("calls = %d, want 0", calls)
+	}
+}
+
+func TestHTTPSkillRejectsFileSecretSymlinkEscape(t *testing.T) {
+	allowedDir := t.TempDir()
+	blockedDir := t.TempDir()
+	targetPath := filepath.Join(blockedDir, "bearer-token")
+	if err := os.WriteFile(targetPath, []byte("file-secret-token"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	linkPath := filepath.Join(allowedDir, "linked-token")
+	if err := os.Symlink(targetPath, linkPath); err != nil {
+		t.Fatalf("symlink secret: %v", err)
+	}
+	t.Setenv("NICEAGENT_SECRET_FILE_ROOTS", allowedDir)
+	var calls int
+	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		t.Fatalf("unexpected request to %s", req.URL.String())
+		return nil, nil
+	}))
+	runtimeTool.runtimeSkill.Skill.RuntimeConfig = `{"type":"http","method":"POST","url":"https://api.example.com/weather","timeout_seconds":15,"auth_type":"bearer"}`
+	runtimeTool.runtimeSkill.SecretMaterials = map[string]protocol.RuntimeSecret{
+		"bearer_token": {SecretRef: "file://" + linkPath},
+	}
+
+	output, ok, err := runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil {
+		t.Fatalf("invoke http skill: %v", err)
+	}
+	if ok {
+		t.Fatal("ok = true, want false")
+	}
+	observation := decodeObservation(t, output)
+	if observation.OK || observation.ErrorType != "secret_unresolved" {
+		t.Fatalf("observation = %#v, want secret_unresolved", observation)
+	}
+	if calls != 0 {
+		t.Fatalf("calls = %d, want 0", calls)
 	}
 }
 

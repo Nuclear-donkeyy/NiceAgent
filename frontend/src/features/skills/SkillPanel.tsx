@@ -20,11 +20,12 @@ const defaultForm: HTTPSkillInput = {
   method: "POST",
   auth_type: "none",
   bearer_token: "",
+  bearer_token_secret_ref: "",
 };
 
-type FieldName = "name" | "description" | "url" | "bearer_token";
+type FieldName = "name" | "description" | "url" | "bearer_token" | "bearer_token_secret_ref";
 type FieldErrors = Partial<Record<FieldName, string>>;
-type ImportFieldName = "document" | "selected" | "bearer_token";
+type ImportFieldName = "document" | "selected" | "bearer_token" | "bearer_token_secret_ref";
 type ImportFieldErrors = Partial<Record<ImportFieldName, string>>;
 
 interface ImportFormState {
@@ -32,6 +33,7 @@ interface ImportFormState {
   base_url: string;
   selected: string;
   bearer_token: string;
+  bearer_token_secret_ref: string;
 }
 
 const defaultImportForm: ImportFormState = {
@@ -39,6 +41,7 @@ const defaultImportForm: ImportFormState = {
   base_url: "",
   selected: "",
   bearer_token: "",
+  bearer_token_secret_ref: "",
 };
 
 interface SkillPanelProps {
@@ -86,6 +89,8 @@ export function SkillPanel({
       description: form.description.trim(),
       url: form.url.trim(),
       bearer_token: form.auth_type === "bearer" ? form.bearer_token?.trim() : "",
+      bearer_token_secret_ref:
+        form.auth_type === "bearer" ? form.bearer_token_secret_ref?.trim() : "",
       input_schema: '{"type":"object","additionalProperties":true}',
     };
     setSaving(true);
@@ -150,6 +155,9 @@ export function SkillPanel({
         method: selected.operation_id ? undefined : selected.method,
         path: selected.operation_id ? undefined : selected.path,
         bearer_token: selected.requires_secret ? importForm.bearer_token.trim() : undefined,
+        bearer_token_secret_ref: selected.requires_secret
+          ? importForm.bearer_token_secret_ref.trim()
+          : undefined,
       });
       setImportForm(defaultImportForm);
       setImportCandidates([]);
@@ -266,19 +274,42 @@ export function SkillPanel({
             </select>
           </div>
           {form.auth_type === "bearer" && (
-            <label className={styles.field}>
-              <span>Bearer Token</span>
-              <input
-                aria-invalid={Boolean(fieldErrors.bearer_token)}
-                disabled={saving}
-                value={form.bearer_token}
-                onBlur={() => setFieldErrors((prev) => mergeFieldError(prev, form, "bearer_token"))}
-                onChange={(event) => updateForm("bearer_token", event.target.value)}
-                placeholder="Bearer token"
-                type="password"
-              />
-              {fieldErrors.bearer_token && <small>{fieldErrors.bearer_token}</small>}
-            </label>
+            <>
+              <label className={styles.field}>
+                <span>Bearer Token</span>
+                <input
+                  aria-invalid={Boolean(fieldErrors.bearer_token)}
+                  disabled={saving}
+                  value={form.bearer_token}
+                  onBlur={() =>
+                    setFieldErrors((prev) => mergeFieldError(prev, form, "bearer_token"))
+                  }
+                  onChange={(event) => updateForm("bearer_token", event.target.value)}
+                  placeholder="直接填 token，适合本地开发"
+                  type="password"
+                />
+                {fieldErrors.bearer_token && <small>{fieldErrors.bearer_token}</small>}
+              </label>
+              <label className={styles.field}>
+                <span>Secret Ref</span>
+                <input
+                  aria-invalid={Boolean(fieldErrors.bearer_token_secret_ref)}
+                  disabled={saving}
+                  value={form.bearer_token_secret_ref}
+                  onBlur={() =>
+                    setFieldErrors((prev) => mergeFieldError(prev, form, "bearer_token_secret_ref"))
+                  }
+                  onChange={(event) => updateForm("bearer_token_secret_ref", event.target.value)}
+                  placeholder="env://TOKEN_NAME 或 file:///var/run/secrets/token"
+                />
+                {fieldErrors.bearer_token_secret_ref && (
+                  <small>{fieldErrors.bearer_token_secret_ref}</small>
+                )}
+              </label>
+              <p className={styles.hint}>
+                Bearer Token 和 Secret Ref 二选一。生产环境优先使用 Secret Ref。
+              </p>
+            </>
           )}
           {serverError && (
             <p className={styles.formError} role="alert">
@@ -352,18 +383,38 @@ export function SkillPanel({
                 {importErrors.selected && <small>{importErrors.selected}</small>}
               </label>
               {selectedImportCandidate(importCandidates, importForm.selected)?.requires_secret && (
-                <label className={styles.field}>
-                  <span>Bearer Token</span>
-                  <input
-                    aria-invalid={Boolean(importErrors.bearer_token)}
-                    disabled={savingImport}
-                    value={importForm.bearer_token}
-                    onChange={(event) => updateImportForm("bearer_token", event.target.value)}
-                    placeholder="Bearer token"
-                    type="password"
-                  />
-                  {importErrors.bearer_token && <small>{importErrors.bearer_token}</small>}
-                </label>
+                <>
+                  <label className={styles.field}>
+                    <span>Bearer Token</span>
+                    <input
+                      aria-invalid={Boolean(importErrors.bearer_token)}
+                      disabled={savingImport}
+                      value={importForm.bearer_token}
+                      onChange={(event) => updateImportForm("bearer_token", event.target.value)}
+                      placeholder="直接填 token，适合本地开发"
+                      type="password"
+                    />
+                    {importErrors.bearer_token && <small>{importErrors.bearer_token}</small>}
+                  </label>
+                  <label className={styles.field}>
+                    <span>Secret Ref</span>
+                    <input
+                      aria-invalid={Boolean(importErrors.bearer_token_secret_ref)}
+                      disabled={savingImport}
+                      value={importForm.bearer_token_secret_ref}
+                      onChange={(event) =>
+                        updateImportForm("bearer_token_secret_ref", event.target.value)
+                      }
+                      placeholder="env://TOKEN_NAME 或 file:///var/run/secrets/token"
+                    />
+                    {importErrors.bearer_token_secret_ref && (
+                      <small>{importErrors.bearer_token_secret_ref}</small>
+                    )}
+                  </label>
+                  <p className={styles.hint}>
+                    Bearer Token 和 Secret Ref 二选一。保存后不会在 API 响应中回显。
+                  </p>
+                </>
               )}
               <button
                 className={styles.primaryButton}
@@ -419,6 +470,7 @@ function validateForm(form: HTTPSkillInput): FieldErrors {
     ...validateField(form, "description"),
     ...validateField(form, "url"),
     ...validateField(form, "bearer_token"),
+    ...validateField(form, "bearer_token_secret_ref"),
   };
 }
 
@@ -430,8 +482,14 @@ function validateImportForm(
   if (!form.document.trim()) errors.document = "请粘贴 OpenAPI 文档";
   if (selected === null && form.selected) errors.selected = "请选择有效的 operation";
   if (selected?.unsupported_auth) errors.selected = "该 operation 的鉴权方式暂不支持";
-  if (selected?.requires_secret && !form.bearer_token.trim()) {
-    errors.bearer_token = "请输入 Bearer Token";
+  if (selected?.requires_secret && !hasBearerSecret(form)) {
+    errors.bearer_token = "请输入 Bearer Token 或 Secret Ref";
+  }
+  if (form.bearer_token.trim() && form.bearer_token_secret_ref.trim()) {
+    errors.bearer_token_secret_ref = "Bearer Token 和 Secret Ref 只能填写一个";
+  }
+  if (form.bearer_token_secret_ref.trim() && !isSupportedSecretRef(form.bearer_token_secret_ref)) {
+    errors.bearer_token_secret_ref = "Secret Ref 需使用 env:// 或 file://";
   }
   return errors;
 }
@@ -463,8 +521,22 @@ function validateField(form: HTTPSkillInput, field: FieldName): FieldErrors {
       }
     }
   }
-  if (field === "bearer_token" && form.auth_type === "bearer" && !form.bearer_token?.trim()) {
-    errors.bearer_token = "请输入 Bearer Token";
+  if (
+    form.auth_type === "bearer" &&
+    (field === "bearer_token" || field === "bearer_token_secret_ref")
+  ) {
+    if (!form.bearer_token?.trim() && !form.bearer_token_secret_ref?.trim()) {
+      errors.bearer_token = "请输入 Bearer Token 或 Secret Ref";
+    }
+    if (form.bearer_token?.trim() && form.bearer_token_secret_ref?.trim()) {
+      errors.bearer_token_secret_ref = "Bearer Token 和 Secret Ref 只能填写一个";
+    }
+    if (
+      form.bearer_token_secret_ref?.trim() &&
+      !isSupportedSecretRef(form.bearer_token_secret_ref)
+    ) {
+      errors.bearer_token_secret_ref = "Secret Ref 需使用 env:// 或 file://";
+    }
   }
   return errors;
 }
@@ -484,7 +556,7 @@ function withoutFieldError(current: FieldErrors, field: FieldName): FieldErrors 
 }
 
 function isFieldName(field: keyof HTTPSkillInput): field is FieldName {
-  return ["name", "description", "url", "bearer_token"].includes(field);
+  return ["name", "description", "url", "bearer_token", "bearer_token_secret_ref"].includes(field);
 }
 
 function withoutImportFieldError(
@@ -495,7 +567,17 @@ function withoutImportFieldError(
   if (field === "document") delete next.document;
   if (field === "selected") delete next.selected;
   if (field === "bearer_token") delete next.bearer_token;
+  if (field === "bearer_token_secret_ref") delete next.bearer_token_secret_ref;
   return next;
+}
+
+function hasBearerSecret(form: Pick<ImportFormState, "bearer_token" | "bearer_token_secret_ref">) {
+  return Boolean(form.bearer_token.trim() || form.bearer_token_secret_ref.trim());
+}
+
+function isSupportedSecretRef(value: string) {
+  const secretRef = value.trim();
+  return secretRef.startsWith("env://") || secretRef.startsWith("file://");
 }
 
 function candidateKey(candidate: HTTPSkillImportCandidate | undefined): string {

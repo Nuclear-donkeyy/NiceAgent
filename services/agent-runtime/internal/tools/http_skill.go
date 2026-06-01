@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ import (
 )
 
 const maxHTTPSkillResponseBytes = 64 * 1024
+const maxSecretFileBytes = 64 * 1024
 
 type SecretResolver interface {
 	ResolveSecret(ctx context.Context, material protocol.RuntimeSecret) (string, error)
@@ -53,10 +55,93 @@ func (LocalSecretResolver) ResolveSecret(_ context.Context, material protocol.Ru
 		}
 		return "", fmt.Errorf("secret_ref %s is not available in environment", secretRef)
 	}
+	if strings.HasPrefix(secretRef, "file://") {
+		return resolveFileSecretRef(secretRef)
+	}
 	if secretRef != "" {
 		return "", ErrSecretRefResolverUnwired
 	}
 	return "", ErrSecretMissing
+}
+
+func resolveFileSecretRef(secretRef string) (string, error) {
+	rawPath := strings.TrimSpace(strings.TrimPrefix(secretRef, "file://"))
+	if rawPath == "" {
+		return "", ErrSecretRefResolverUnwired
+	}
+	if strings.HasPrefix(rawPath, "localhost/") {
+		rawPath = strings.TrimPrefix(rawPath, "localhost")
+	}
+	if !filepath.IsAbs(rawPath) {
+		return "", fmt.Errorf("secret_ref %s must use an absolute file path", secretRef)
+	}
+	path := filepath.Clean(rawPath)
+	if err := ensureAllowedSecretFile(path); err != nil {
+		return "", err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("secret_ref %s is not readable: %w", secretRef, err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxSecretFileBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("secret_ref %s could not be read: %w", secretRef, err)
+	}
+	if len(data) > maxSecretFileBytes {
+		return "", fmt.Errorf("secret_ref %s exceeds %d bytes", secretRef, maxSecretFileBytes)
+	}
+	value := strings.TrimSpace(string(data))
+	if value == "" {
+		return "", fmt.Errorf("secret_ref %s is empty", secretRef)
+	}
+	return value, nil
+}
+
+func ensureAllowedSecretFile(path string) error {
+	allowedRoots := secretFileRoots()
+	if len(allowedRoots) == 0 {
+		return ErrSecretRefResolverUnwired
+	}
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		resolvedPath = path
+	}
+	resolvedPath = filepath.Clean(resolvedPath)
+	for _, root := range allowedRoots {
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			resolvedRoot = root
+		}
+		resolvedRoot = filepath.Clean(resolvedRoot)
+		if pathWithinRoot(path, root) && pathWithinRoot(resolvedPath, resolvedRoot) {
+			return nil
+		}
+	}
+	return fmt.Errorf("secret file path %q is outside configured secret roots", path)
+}
+
+func secretFileRoots() []string {
+	raw := os.Getenv("NICEAGENT_SECRET_FILE_ROOTS")
+	if strings.TrimSpace(raw) == "" {
+		raw = "/var/run/secrets,/run/secrets"
+	}
+	roots := []string{}
+	for _, item := range strings.Split(raw, ",") {
+		root := filepath.Clean(strings.TrimSpace(item))
+		if root != "." && filepath.IsAbs(root) {
+			roots = append(roots, root)
+		}
+	}
+	return roots
+}
+
+func pathWithinRoot(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 type httpSkillObservation struct {

@@ -240,7 +240,7 @@ Skill 存储分为四层：
 - `skill_grants`：用户/项目可用性。
 - `skill_secrets`：secret 引用或本地开发密文。
 
-前端 `GET /api/skills` 不返回 secret。Runtime 通过 Control Plane 下发的内部 `RuntimeSkill` 获取执行所需 secret。当前本地开发允许把 bearer token 存入 `encrypted_value`；`secret_ref` 第一版支持 `env://ENV_NAME`，适合把 K8s Secret 或外部 Secret Operator 注入为环境变量后再解析。生产环境后续仍应接阿里云 KMS、Vault 或 External Secrets，并避免长期使用明文环境变量作为唯一 secret backend。
+前端 `GET /api/skills` 不返回 secret。Runtime 通过 Control Plane 下发的内部 `RuntimeSkill` 获取执行所需 secret。当前本地开发允许把 bearer token 存入 `encrypted_value`；`secret_ref` 支持 `env://ENV_NAME` 和 `file:///absolute/path`。`env://` 适合把 K8s Secret 或外部 Secret Operator 注入为环境变量后再解析；`file://` 适合读取挂载到 Runtime 容器内的 secret 文件，默认只允许 `/var/run/secrets` 和 `/run/secrets`，可用 `NICEAGENT_SECRET_FILE_ROOTS=/path/a,/path/b` 覆盖。生产环境后续仍应接阿里云 KMS、Vault 或 External Secrets 原生 resolver，并避免长期使用明文环境变量作为唯一 secret backend。
 
 HTTP Skill 默认只允许 `https` URL，禁用重定向，拒绝 URL 中携带用户名/密码，并阻断 `localhost`、`.local`、metadata host、字面量 private/link-local/loopback IP。Runtime 发出请求前还会解析目标 host；如果 DNS 结果包含 private、link-local、loopback、multicast 或 unspecified 地址，会返回 `ssrf_rejected` observation，不会发起外部请求。排查 HTTP Skill 失败时优先看 observation 的 `error_type`：`ssrf_rejected` 表示策略拒绝，`upstream_dns` 表示解析失败，`upstream_tls` 表示证书或 TLS 问题。
 
