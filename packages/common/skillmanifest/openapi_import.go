@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"gopkg.in/yaml.v3"
 	"niceagent/common/protocol"
 )
 
@@ -71,9 +72,9 @@ func PreviewOpenAPIHTTPSkills(document, baseURL string) ([]protocol.HTTPSkillImp
 	if strings.TrimSpace(document) == "" {
 		return nil, errors.New("document is required")
 	}
-	var spec openAPIDocument
-	if err := json.Unmarshal([]byte(document), &spec); err != nil {
-		return nil, fmt.Errorf("invalid openapi json: %w", err)
+	spec, err := decodeOpenAPIDocument(document)
+	if err != nil {
+		return nil, err
 	}
 	if len(spec.Paths) == 0 {
 		return nil, errors.New("openapi paths are required")
@@ -116,6 +117,25 @@ func PreviewOpenAPIHTTPSkills(document, baseURL string) ([]protocol.HTTPSkillImp
 		return nil, errors.New("no supported GET or POST operations found")
 	}
 	return candidates, nil
+}
+
+func decodeOpenAPIDocument(document string) (openAPIDocument, error) {
+	var spec openAPIDocument
+	if err := json.Unmarshal([]byte(document), &spec); err == nil {
+		return spec, nil
+	}
+	var raw any
+	if err := yaml.Unmarshal([]byte(document), &raw); err != nil {
+		return openAPIDocument{}, fmt.Errorf("invalid openapi document: %w", err)
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return openAPIDocument{}, fmt.Errorf("invalid openapi yaml: %w", err)
+	}
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return openAPIDocument{}, fmt.Errorf("invalid openapi yaml: %w", err)
+	}
+	return spec, nil
 }
 
 func openAPIBaseURL(spec openAPIDocument, override string) (string, error) {
