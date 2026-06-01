@@ -3,7 +3,7 @@ IMAGE_TAG ?= local
 KIND_CLUSTER ?= niceagent
 K8S_NAMESPACE ?= niceagent
 
-.PHONY: run-control run-runtime run-sandbox run-web build-web test smoke-three-services smoke-three-services-ui smoke-three-services-redis compose-up compose-down compose-config check-js docker-build docker-build-control docker-build-runtime docker-build-sandbox kind-create kind-delete kind-load k8s-apply k8s-status k8s-port-forward kind-deploy
+.PHONY: run-control run-runtime run-sandbox run-web build-web test smoke-three-services smoke-three-services-ui smoke-three-services-redis smoke-control-plane-fanout compose-up compose-down compose-config check-js docker-build docker-build-control docker-build-runtime docker-build-sandbox kind-create kind-delete kind-load k8s-apply k8s-status k8s-port-forward kind-deploy
 
 run-control:
 	cd services/control-plane && go run ./cmd
@@ -31,6 +31,9 @@ smoke-three-services-ui:
 
 smoke-three-services-redis:
 	python3 scripts/smoke_three_services.py --dispatch-mode redis --start-redis --runtime-count 2 --run-count 2
+
+smoke-control-plane-fanout:
+	python3 scripts/smoke_multi_control_plane_fanout.py
 
 check-js:
 	@if [ -d frontend/node_modules ]; then \
