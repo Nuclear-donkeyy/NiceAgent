@@ -68,6 +68,7 @@ type RunQuota struct {
 type TokenReservationOptions struct {
 	Mode         string
 	OutputBuffer int
+	Model        string
 }
 
 func NewServer(repo app.Repository, dispatcher app.RunDispatcher, log *slog.Logger) *Server {
@@ -1731,7 +1732,7 @@ func (s *Server) estimateModelTokenReservation(userMessage string) int {
 	if s.tokenReservation.Mode != "dynamic" {
 		return 0
 	}
-	estimate := platform.EstimateTextTokens(strings.TrimSpace(userMessage)).Tokens + s.tokenReservation.OutputBuffer
+	estimate := platform.EstimateTextTokensForModel(strings.TrimSpace(userMessage), s.tokenReservation.Model).Tokens + s.tokenReservation.OutputBuffer
 	if estimate < 1 {
 		return 1
 	}
