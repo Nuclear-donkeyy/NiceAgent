@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -15,6 +16,12 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+type resolverFunc func(context.Context, string) ([]net.IPAddr, error)
+
+func (f resolverFunc) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return f(ctx, host)
 }
 
 func TestHTTPSkillRejectsInvalidArgumentsWithoutRequest(t *testing.T) {
@@ -180,9 +187,118 @@ func TestHTTPSkillRejectsPrivateAddressWithoutRequest(t *testing.T) {
 	}
 }
 
+func TestHTTPSkillRejectsPrivateResolvedAddressWithoutRequest(t *testing.T) {
+	var calls int
+	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		t.Fatalf("unexpected request to %s", req.URL.String())
+		return nil, nil
+	}))
+	runtimeTool.bridge.Resolver = resolverFunc(func(_ context.Context, host string) ([]net.IPAddr, error) {
+		if host != "api.example.com" {
+			t.Fatalf("resolved host = %q, want api.example.com", host)
+		}
+		return []net.IPAddr{{IP: net.ParseIP("10.0.0.10")}}, nil
+	})
+
+	output, ok, err := runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil {
+		t.Fatalf("invoke http skill: %v", err)
+	}
+	if ok {
+		t.Fatal("ok = true, want false")
+	}
+	observation := decodeObservation(t, output)
+	if observation.OK || observation.ErrorType != "ssrf_rejected" || !strings.Contains(observation.Message, "resolved to private address") {
+		t.Fatalf("observation = %#v, want ssrf_rejected resolved private address", observation)
+	}
+	if calls != 0 {
+		t.Fatalf("calls = %d, want 0", calls)
+	}
+}
+
+func TestHTTPSkillRejectsResolvedMetadataAddressWithoutRequest(t *testing.T) {
+	var calls int
+	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		t.Fatalf("unexpected request to %s", req.URL.String())
+		return nil, nil
+	}))
+	runtimeTool.bridge.Resolver = resolverFunc(func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("100.100.100.200")}}, nil
+	})
+
+	output, ok, err := runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil {
+		t.Fatalf("invoke http skill: %v", err)
+	}
+	if ok {
+		t.Fatal("ok = true, want false")
+	}
+	observation := decodeObservation(t, output)
+	if observation.OK || observation.ErrorType != "ssrf_rejected" {
+		t.Fatalf("observation = %#v, want ssrf_rejected", observation)
+	}
+	if calls != 0 {
+		t.Fatalf("calls = %d, want 0", calls)
+	}
+}
+
+func TestHTTPSkillReturnsDNSErrorWhenHostCannotResolve(t *testing.T) {
+	var calls int
+	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		t.Fatalf("unexpected request to %s", req.URL.String())
+		return nil, nil
+	}))
+	runtimeTool.bridge.Resolver = resolverFunc(func(_ context.Context, host string) ([]net.IPAddr, error) {
+		return nil, &net.DNSError{Name: host, Err: "no such host"}
+	})
+
+	output, ok, err := runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil {
+		t.Fatalf("invoke http skill: %v", err)
+	}
+	if ok {
+		t.Fatal("ok = true, want false")
+	}
+	observation := decodeObservation(t, output)
+	if observation.OK || observation.ErrorType != "upstream_dns" {
+		t.Fatalf("observation = %#v, want upstream_dns", observation)
+	}
+	if calls != 0 {
+		t.Fatalf("calls = %d, want 0", calls)
+	}
+}
+
+func TestSSRFGuardedDialerRejectsReboundPrivateAddress(t *testing.T) {
+	dialer := &ssrfGuardedDialer{
+		Resolver: resolverFunc(func(_ context.Context, host string) ([]net.IPAddr, error) {
+			if host != "api.example.com" {
+				t.Fatalf("resolved host = %q, want api.example.com", host)
+			}
+			return []net.IPAddr{{IP: net.ParseIP("192.168.1.10")}}, nil
+		}),
+	}
+
+	_, err := dialer.DialContext(context.Background(), "tcp", "api.example.com:443")
+	if err == nil {
+		t.Fatal("expected private resolved address to be rejected")
+	}
+	if !strings.Contains(err.Error(), "resolved only blocked addresses") {
+		t.Fatalf("error = %v, want blocked address message", err)
+	}
+	if got := classifyHTTPClientError(context.Background(), err); got != "ssrf_rejected" {
+		t.Fatalf("error type = %q, want ssrf_rejected", got)
+	}
+}
+
 func newTestHTTPSkillTool(transport http.RoundTripper) *runtimeTool {
 	bridge := NewDefaultToolBridge(nil)
 	bridge.Client = &http.Client{Transport: transport}
+	bridge.Resolver = resolverFunc(func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+	})
 	return &runtimeTool{
 		bridge: bridge,
 		runID:  "run-http-skill",

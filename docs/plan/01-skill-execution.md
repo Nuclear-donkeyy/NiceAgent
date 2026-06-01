@@ -36,7 +36,7 @@ Control Plane 已经支持：
 
 创建/更新 HTTP Skill 时已经校验 `name`、`GET|POST`、`auth_type`、`https` URL、URL 不含 credentials、timeout 范围、`input_schema` 和 `output_schema`。`runtime_config` 会由 `HTTPSkillRuntimeConfig` 统一生成，避免 token 进入 runtime config。OpenAPI/MCP 导入仍未实现。
 
-Agent Runtime 的 `ToolBridge` 已能把 `RuntimeSkill` 转成 Eino tool。builtin skill 调 `cli.exec` 或 `workspace.read`；HTTP Skill 会按 `runtime_config` 构造请求，支持 bearer token，响应限制为 64KB。Runtime 调用 HTTP Skill 前会校验 arguments；返回后会按 `output_schema` 校验 structured output；非 2xx、DNS、TLS、timeout、响应过大、schema 错误会转成结构化 observation。HTTP Skill 默认只允许 `https`，禁用重定向，拒绝 loopback、`.local`、metadata host 和字面量 private/link-local IP。当前仍缺 DNS 解析后的私网 IP 防护、per-skill retry/rate limit 和导入能力。
+Agent Runtime 的 `ToolBridge` 已能把 `RuntimeSkill` 转成 Eino tool。builtin skill 调 `cli.exec` 或 `workspace.read`；HTTP Skill 会按 `runtime_config` 构造请求，支持 bearer token，响应限制为 64KB。Runtime 调用 HTTP Skill 前会校验 arguments；返回后会按 `output_schema` 校验 structured output；非 2xx、DNS、TLS、timeout、响应过大、schema 错误会转成结构化 observation。HTTP Skill 默认只允许 `https`，禁用重定向，拒绝 loopback、`.local`、metadata host、字面量 private/link-local IP，并会在发出请求前解析域名，拒绝解析到 private/link-local/loopback/metadata 类地址的 host。当前仍缺 per-skill retry/rate limit 和导入能力。
 
 HTTP dispatcher 已经把完整 `RuntimeSkill` 下发给 Runtime。Redis queue 路径已经收敛为最小 `run_id/attempt_id` payload，并由 Agent Runtime worker 通过 Control Plane execution context API 拉取当前授权后的完整 `RuntimeSkill`，因此 HTTP Skill 执行材料不再依赖 queue payload。
 
@@ -120,7 +120,7 @@ OpenAPI/MCP 导入放在下一层：
 - invalid JSON Schema 创建/更新返回 400。
 - invalid tool arguments 不发起 HTTP 请求。
 - timeout、DNS、TLS、非 2xx、invalid output 均转成结构化 tool observation。
-- HTTP Skill 默认拒绝 private/link-local/metadata IP。
+- HTTP Skill 默认拒绝 private/link-local/metadata IP，并在 DNS 解析后再次拦截解析到私网/本机/metadata 类地址的 host。
 - HTTP dispatcher 和未来 queue dispatcher 都能让 Runtime 拿到完整授权后的 skill manifest。
 
 ## 参考资料

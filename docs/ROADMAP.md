@@ -54,6 +54,7 @@
 
 - 为 HTTP Skill 增加 input schema validation 和更明确的 runtime_config 校验。
 - 标准化 HTTP Skill 错误输出：网络错误、超时、非 2xx、无效响应都转为 agent 可读 observation 和审计事件。
+- HTTP Skill SSRF 防护已覆盖静态 URL 校验和 DNS 解析后的私网地址拦截；后续继续补 per-skill retry/rate limit。
 - 抽象 secret resolver：本地继续支持 `encrypted_value`，生产路径预留阿里云 KMS、Vault 或 External Secrets。
 - 预留 OpenAPI/MCP 导入入口，先落 manifest 转换接口和文档，不要求完整 UI。
 
