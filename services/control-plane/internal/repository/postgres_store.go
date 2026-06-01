@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"strings"
@@ -25,9 +26,110 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	}
 }
 
+type tracedRow struct {
+	row     *sql.Row
+	endSpan platform.EndSpanFunc
+}
+
+func (r tracedRow) Scan(dest ...any) error {
+	err := r.row.Scan(dest...)
+	r.endSpan(err, nil)
+	return err
+}
+
+type tracedTx struct {
+	tx *sql.Tx
+}
+
+func (s *PostgresStore) query(query string, args ...any) (*sql.Rows, error) {
+	ctx, endSpan := startPostgresCommandSpan(query)
+	var err error
+	defer func() { endSpan(err, nil) }()
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	return rows, err
+}
+
+func (s *PostgresStore) queryRow(query string, args ...any) tracedRow {
+	ctx, endSpan := startPostgresCommandSpan(query)
+	return tracedRow{row: s.db.QueryRowContext(ctx, query, args...), endSpan: endSpan}
+}
+
+func (s *PostgresStore) exec(query string, args ...any) (sql.Result, error) {
+	ctx, endSpan := startPostgresCommandSpan(query)
+	var err error
+	defer func() { endSpan(err, nil) }()
+	result, err := s.db.ExecContext(ctx, query, args...)
+	return result, err
+}
+
+func (s *PostgresStore) begin() (*tracedTx, error) {
+	ctx, endSpan := startPostgresCommandSpan("BEGIN")
+	var err error
+	defer func() { endSpan(err, nil) }()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &tracedTx{tx: tx}, nil
+}
+
+func (t *tracedTx) QueryRow(query string, args ...any) tracedRow {
+	ctx, endSpan := startPostgresCommandSpan(query)
+	return tracedRow{row: t.tx.QueryRowContext(ctx, query, args...), endSpan: endSpan}
+}
+
+func (t *tracedTx) Exec(query string, args ...any) (sql.Result, error) {
+	ctx, endSpan := startPostgresCommandSpan(query)
+	var err error
+	defer func() { endSpan(err, nil) }()
+	result, err := t.tx.ExecContext(ctx, query, args...)
+	return result, err
+}
+
+func (t *tracedTx) Commit() error {
+	_, endSpan := startPostgresCommandSpan("COMMIT")
+	err := t.tx.Commit()
+	endSpan(err, nil)
+	return err
+}
+
+func (t *tracedTx) Rollback() error {
+	_, endSpan := startPostgresCommandSpan("ROLLBACK")
+	err := t.tx.Rollback()
+	if err == sql.ErrTxDone {
+		endSpan(nil, nil)
+		return err
+	}
+	endSpan(err, nil)
+	return err
+}
+
+func startPostgresCommandSpan(query string) (context.Context, platform.EndSpanFunc) {
+	operation := sqlOperation(query)
+	return platform.StartSpan(context.Background(), "niceagent/control_plane", "db.command", platform.Labels{
+		"db_system":    "postgresql",
+		"db_operation": operation,
+		"component":    "repository",
+	})
+}
+
+func sqlOperation(query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return "UNKNOWN"
+	}
+	end := strings.IndexFunc(query, func(r rune) bool {
+		return r == ' ' || r == '\n' || r == '\t' || r == '\r' || r == '('
+	})
+	if end < 0 {
+		end = len(query)
+	}
+	return strings.ToUpper(query[:end])
+}
+
 func (s *PostgresStore) ListChats(userID, projectID string, opts app.ChatListOptions) []protocol.ChatSession {
 	query := "%" + strings.ToLower(strings.TrimSpace(opts.Query)) + "%"
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT c.id, c.user_id, c.project_id, c.title, c.archived, COALESCE(c.last_run_id, ''),
 		       c.created_at, c.updated_at, COUNT(m.id)
 		FROM chat_sessions c
@@ -65,7 +167,7 @@ func (s *PostgresStore) CreateChat(userID, projectID, title string) (protocol.Ch
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	_, err := s.db.Exec(`
+	_, err := s.exec(`
 		INSERT INTO chat_sessions (id, user_id, project_id, title, archived, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, false, $5, $6)`,
 		chat.ID, chat.UserID, chat.ProjectID, chat.Title, chat.CreatedAt, chat.UpdatedAt)
@@ -77,7 +179,7 @@ func (s *PostgresStore) CreateChat(userID, projectID, title string) (protocol.Ch
 
 func (s *PostgresStore) GetChat(chatID string) (protocol.ChatSession, []protocol.Message, error) {
 	var chat protocol.ChatSession
-	if err := s.db.QueryRow(`
+	if err := s.queryRow(`
 		SELECT id, user_id, project_id, title, archived, COALESCE(last_run_id, ''), created_at, updated_at
 		FROM chat_sessions
 		WHERE id = $1`, chatID).Scan(
@@ -88,7 +190,7 @@ func (s *PostgresStore) GetChat(chatID string) (protocol.ChatSession, []protocol
 		}
 		return protocol.ChatSession{}, nil, err
 	}
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT id, chat_id, COALESCE(run_id, ''), role, content, created_at
 		FROM messages
 		WHERE chat_id = $1
@@ -113,7 +215,7 @@ func (s *PostgresStore) GetChat(chatID string) (protocol.ChatSession, []protocol
 
 func (s *PostgresStore) SetChatArchived(chatID, userID string, archived bool) (protocol.ChatSession, error) {
 	now := time.Now().UTC()
-	result, err := s.db.Exec(`
+	result, err := s.exec(`
 		UPDATE chat_sessions
 		SET archived = $1, updated_at = $2
 		WHERE id = $3 AND user_id = $4`, archived, now, chatID, userID)
@@ -133,7 +235,7 @@ func (s *PostgresStore) SetChatArchived(chatID, userID string, archived bool) (p
 
 func (s *PostgresStore) AddUserMessage(chatID, userID, content string) (protocol.Message, protocol.Run, error) {
 	now := time.Now().UTC()
-	tx, err := s.db.Begin()
+	tx, err := s.begin()
 	if err != nil {
 		return protocol.Message{}, protocol.Run{}, err
 	}
@@ -196,7 +298,7 @@ func (s *PostgresStore) AddAssistantMessage(chatID, runID, content string) (prot
 		Content:   content,
 		CreatedAt: time.Now().UTC(),
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.begin()
 	if err != nil {
 		return protocol.Message{}, err
 	}
@@ -218,7 +320,7 @@ func (s *PostgresStore) GetRun(runID string) (protocol.Run, error) {
 	var run protocol.Run
 	var startedAt, finishedAt, leaseExpiresAt sql.NullTime
 	var errText, attemptID, claimedBy sql.NullString
-	if err := s.db.QueryRow(`
+	if err := s.queryRow(`
 		SELECT id, chat_id, user_id, workspace_id, active_attempt_id, claimed_by, lease_expires_at, attempt_count,
 		       status, error, created_at, updated_at, started_at, finished_at
 		FROM runs WHERE id = $1`, runID).Scan(
@@ -258,7 +360,7 @@ func (s *PostgresStore) GetRun(runID string) (protocol.Run, error) {
 
 func (s *PostgresStore) CountActiveRuns(userID, projectID string) int {
 	var count int
-	err := s.db.QueryRow(`
+	err := s.queryRow(`
 		SELECT COUNT(*)
 		FROM runs r
 		JOIN chat_sessions c ON c.id = r.chat_id
@@ -275,7 +377,7 @@ func (s *PostgresStore) CountActiveRuns(userID, projectID string) int {
 
 func (s *PostgresStore) CountRunsCreatedSince(userID, projectID string, since time.Time) int {
 	var count int
-	err := s.db.QueryRow(`
+	err := s.queryRow(`
 		SELECT COUNT(*)
 		FROM runs r
 		JOIN chat_sessions c ON c.id = r.chat_id
@@ -296,7 +398,7 @@ func (s *PostgresStore) SumRunUsageTokensSince(userID, projectID string, since t
 
 func (s *PostgresStore) SumRunUsageSince(userID, projectID string, since time.Time) protocol.RunUsage {
 	var usage protocol.RunUsage
-	err := s.db.QueryRow(`
+	err := s.queryRow(`
 		SELECT
 			COALESCE(SUM(ru.input_tokens), 0),
 			COALESCE(SUM(ru.output_tokens), 0),
@@ -353,7 +455,7 @@ func (s *PostgresStore) SumRunUsageSince(userID, projectID string, since time.Ti
 }
 
 func (s *PostgresStore) ListRunUsageBucketsSince(projectID string, since time.Time) []protocol.RunUsageBucket {
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT
 			ru.provider,
 			ru.model,
@@ -432,7 +534,7 @@ func (s *PostgresStore) ListRunUsageBucketsSince(projectID string, since time.Ti
 
 func (s *PostgresStore) ProjectBelongsToOrganization(projectID, orgID string) bool {
 	var exists bool
-	err := s.db.QueryRow(`
+	err := s.queryRow(`
 		SELECT EXISTS (
 			SELECT 1
 			FROM projects
@@ -452,7 +554,7 @@ func (s *PostgresStore) BindUserIdentity(identity protocol.UserIdentity) (protoc
 		return protocol.UserIdentity{}, app.ErrInvalidInput
 	}
 	now := time.Now().UTC()
-	tx, err := s.db.Begin()
+	tx, err := s.begin()
 	if err != nil {
 		return protocol.UserIdentity{}, err
 	}
@@ -528,7 +630,7 @@ func (s *PostgresStore) BindUserIdentity(identity protocol.UserIdentity) (protoc
 }
 
 func (s *PostgresStore) ListOrganizationRoles(userID, orgID string) []string {
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT role
 		FROM organization_members
 		WHERE user_id = $1 AND organization_id = $2
@@ -548,7 +650,7 @@ func (s *PostgresStore) ListOrganizationRoles(userID, orgID string) []string {
 }
 
 func (s *PostgresStore) ListProjectRoles(userID, projectID string) []string {
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT role
 		FROM project_members
 		WHERE user_id = $1 AND project_id = $2
@@ -568,7 +670,7 @@ func (s *PostgresStore) ListProjectRoles(userID, projectID string) []string {
 }
 
 func (s *PostgresStore) ListOrganizationMembers(orgID string) []protocol.OrganizationMember {
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT om.id, om.user_id, om.organization_id, om.role, u.email, u.name, om.created_at, om.updated_at
 		FROM organization_members om
 		JOIN users u ON u.id = om.user_id
@@ -603,7 +705,7 @@ func (s *PostgresStore) UpsertOrganizationMember(orgID string, input protocol.Or
 	if name == "" {
 		name = userID
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.begin()
 	if err != nil {
 		return protocol.OrganizationMember{}, err
 	}
@@ -637,7 +739,7 @@ func (s *PostgresStore) RemoveOrganizationMember(orgID, userID string) (protocol
 	if err != nil {
 		return protocol.OrganizationMember{}, err
 	}
-	result, err := s.db.Exec(`DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2`, orgID, userID)
+	result, err := s.exec(`DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2`, orgID, userID)
 	if err != nil {
 		return protocol.OrganizationMember{}, err
 	}
@@ -652,7 +754,7 @@ func (s *PostgresStore) RemoveOrganizationMember(orgID, userID string) (protocol
 }
 
 func (s *PostgresStore) ListInvitations(orgID string) []protocol.Invitation {
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT id, COALESCE(project_id, ''), email, role,
 		       CASE WHEN status = 'pending' AND expires_at <= now() THEN 'expired' ELSE status END,
 		       invited_by_user_id, COALESCE(accepted_by_user_id, ''), created_at, expires_at, accepted_at
@@ -725,7 +827,7 @@ func (s *PostgresStore) CreateInvitation(orgID, invitedByUserID string, input pr
 	if projectID != "" {
 		nullableProjectID = projectID
 	}
-	if _, err := s.db.Exec(`
+	if _, err := s.exec(`
 		INSERT INTO invitations (
 			id, token, organization_id, project_id, email, role, status,
 			invited_by_user_id, created_at, expires_at
@@ -747,7 +849,7 @@ func (s *PostgresStore) AcceptInvitation(token, userID, email, name string) (pro
 		return protocol.Invitation{}, app.ErrInvalidInput
 	}
 	now := time.Now().UTC()
-	tx, err := s.db.Begin()
+	tx, err := s.begin()
 	if err != nil {
 		return protocol.Invitation{}, err
 	}
@@ -838,7 +940,7 @@ func (s *PostgresStore) AcceptInvitation(token, userID, email, name string) (pro
 }
 
 func (s *PostgresStore) ListProjectMembers(projectID string) []protocol.ProjectMember {
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT pm.id, pm.user_id, pm.project_id, pm.role, u.email, u.name, pm.created_at, pm.updated_at
 		FROM project_members pm
 		JOIN users u ON u.id = pm.user_id
@@ -873,7 +975,7 @@ func (s *PostgresStore) UpsertProjectMember(projectID string, input protocol.Pro
 	if name == "" {
 		name = userID
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.begin()
 	if err != nil {
 		return protocol.ProjectMember{}, err
 	}
@@ -907,7 +1009,7 @@ func (s *PostgresStore) RemoveProjectMember(projectID, userID string) (protocol.
 	if err != nil {
 		return protocol.ProjectMember{}, err
 	}
-	result, err := s.db.Exec(`DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`, projectID, userID)
+	result, err := s.exec(`DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`, projectID, userID)
 	if err != nil {
 		return protocol.ProjectMember{}, err
 	}
@@ -923,7 +1025,7 @@ func (s *PostgresStore) RemoveProjectMember(projectID, userID string) (protocol.
 
 func (s *PostgresStore) GetProjectQuotaPolicy(projectID string) (protocol.ProjectQuotaPolicy, bool) {
 	var policy protocol.ProjectQuotaPolicy
-	err := s.db.QueryRow(`
+	err := s.queryRow(`
 		SELECT project_id, max_concurrent_runs, max_runs_per_hour, max_model_tokens_per_day,
 		       max_tool_calls_per_day, max_sandbox_seconds_per_day, created_at, updated_at
 		FROM project_quota_policies
@@ -944,7 +1046,7 @@ func (s *PostgresStore) SetProjectQuotaPolicy(projectID string, input protocol.P
 	}
 	now := time.Now().UTC()
 	var policy protocol.ProjectQuotaPolicy
-	err := s.db.QueryRow(`
+	err := s.queryRow(`
 		INSERT INTO project_quota_policies (
 			project_id, max_concurrent_runs, max_runs_per_hour, max_model_tokens_per_day,
 			max_tool_calls_per_day, max_sandbox_seconds_per_day, created_at, updated_at
@@ -973,7 +1075,7 @@ func (s *PostgresStore) SetProjectQuotaPolicy(projectID string, input protocol.P
 
 func (s *PostgresStore) ClaimRunAttempt(runID, attemptID, claimedBy string, leaseExpiresAt time.Time) (protocol.Run, error) {
 	now := time.Now().UTC()
-	tx, err := s.db.Begin()
+	tx, err := s.begin()
 	if err != nil {
 		return protocol.Run{}, err
 	}
@@ -1052,7 +1154,7 @@ func (s *PostgresStore) UpdateRunStatus(runID string, status protocol.RunStatus,
 	if app.IsTerminalRunStatus(status) && finishedAt == nil {
 		finishedAt = &now
 	}
-	_, err = s.db.Exec(`
+	_, err = s.exec(`
 		UPDATE runs
 		SET status = $1, error = NULLIF($2, ''), updated_at = $3, started_at = $4, finished_at = $5
 		WHERE id = $6`, status, errMessage, now, startedAt, finishedAt, runID)
@@ -1067,7 +1169,7 @@ func (s *PostgresStore) SaveRunUsage(runID string, usage protocol.RunUsage) (pro
 		return protocol.RunUsage{}, err
 	}
 	usage = protocol.NormalizeRunUsage(usage)
-	_, err := s.db.Exec(`
+	_, err := s.exec(`
 		INSERT INTO run_usage (
 			run_id, provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
 			total_tokens, estimated, token_estimator, cost, currency, latency_millis, retry_count, fallback_from,
@@ -1116,7 +1218,7 @@ func (s *PostgresStore) SaveRunUsage(runID string, usage protocol.RunUsage) (pro
 
 func (s *PostgresStore) GetRunUsage(runID string) (protocol.RunUsage, error) {
 	var exists bool
-	if err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM runs WHERE id = $1)`, runID).Scan(&exists); err != nil {
+	if err := s.queryRow(`SELECT EXISTS (SELECT 1 FROM runs WHERE id = $1)`, runID).Scan(&exists); err != nil {
 		return protocol.RunUsage{}, err
 	}
 	if !exists {
@@ -1127,7 +1229,7 @@ func (s *PostgresStore) GetRunUsage(runID string) (protocol.RunUsage, error) {
 
 func (s *PostgresStore) getRunUsage(runID string) (protocol.RunUsage, error) {
 	var usage protocol.RunUsage
-	if err := s.db.QueryRow(`
+	if err := s.queryRow(`
 		SELECT provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
 		       total_tokens, estimated, token_estimator, cost, currency, latency_millis, retry_count,
 		       fallback_from, fallback_to, error_class, tool_calls, tool_errors,
@@ -1150,7 +1252,7 @@ func (s *PostgresStore) getRunUsage(runID string) (protocol.RunUsage, error) {
 }
 
 func (s *PostgresStore) AddEvent(runID string, typ protocol.RunEventType, message string, payload any) (protocol.RunEvent, error) {
-	tx, err := s.db.Begin()
+	tx, err := s.begin()
 	if err != nil {
 		return protocol.RunEvent{}, err
 	}
@@ -1192,7 +1294,7 @@ func (s *PostgresStore) AddEvent(runID string, typ protocol.RunEventType, messag
 }
 
 func (s *PostgresStore) ListEvents(runID string, afterSeq int64) []protocol.RunEvent {
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT id, run_id, chat_id, seq, type, COALESCE(message, ''), payload, created_at
 		FROM run_events
 		WHERE run_id = $1 AND seq > $2
@@ -1249,7 +1351,7 @@ func (s *PostgresStore) AddWorkspace(workspace protocol.Workspace) (protocol.Wor
 	if workspace.CreatedAt.IsZero() {
 		workspace.CreatedAt = time.Now().UTC()
 	}
-	_, err := s.db.Exec(`
+	_, err := s.exec(`
 		INSERT INTO workspaces (id, user_id, project_id, chat_id, run_id, root_path, created_at)
 		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7)
 		ON CONFLICT (id)
@@ -1267,7 +1369,7 @@ func (s *PostgresStore) AddWorkspace(workspace protocol.Workspace) (protocol.Wor
 
 func (s *PostgresStore) GetWorkspace(workspaceID string) (protocol.Workspace, error) {
 	var workspace protocol.Workspace
-	if err := s.db.QueryRow(`
+	if err := s.queryRow(`
 		SELECT id, user_id, COALESCE(project_id, ''), COALESCE(chat_id, ''), COALESCE(run_id, ''), root_path, created_at
 		FROM workspaces
 		WHERE id = $1`, workspaceID).Scan(
@@ -1299,7 +1401,7 @@ func (s *PostgresStore) AddArtifact(artifact protocol.Artifact) (protocol.Artifa
 			}
 		}
 	}
-	_, err := s.db.Exec(`
+	_, err := s.exec(`
 		INSERT INTO artifacts (id, run_id, chat_id, user_id, project_id, workspace_id, path, name, mime_type, size_bytes, sha256, storage_backend, storage_key, created_at, deleted_at)
 		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, NULLIF($8, ''), $9, $10, NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), $14, $15)
 		ON CONFLICT (id)
@@ -1320,7 +1422,7 @@ func (s *PostgresStore) AddArtifact(artifact protocol.Artifact) (protocol.Artifa
 }
 
 func (s *PostgresStore) ListArtifacts(runID string) []protocol.Artifact {
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT id, run_id, COALESCE(chat_id, ''), COALESCE(user_id, ''), COALESCE(project_id, ''), COALESCE(workspace_id, ''),
 		       path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, deleted_at
 		FROM artifacts
@@ -1350,7 +1452,7 @@ func (s *PostgresStore) ListArtifacts(runID string) []protocol.Artifact {
 func (s *PostgresStore) GetArtifact(artifactID string) (protocol.Artifact, error) {
 	var artifact protocol.Artifact
 	var deletedAt sql.NullTime
-	if err := s.db.QueryRow(`
+	if err := s.queryRow(`
 		SELECT id, run_id, COALESCE(chat_id, ''), COALESCE(user_id, ''), COALESCE(project_id, ''), COALESCE(workspace_id, ''),
 		       path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, deleted_at
 		FROM artifacts
@@ -1383,7 +1485,7 @@ func (s *PostgresStore) ListRuntimeSkillsForUser(userID, projectID string) []pro
 	for _, skill := range skills {
 		secrets := map[string]string{}
 		secretMaterials := map[string]protocol.RuntimeSecret{}
-		rows, err := s.db.Query(`SELECT secret_key, COALESCE(encrypted_value, ''), COALESCE(secret_ref, '') FROM skill_secrets WHERE skill_id = $1`, skill.ID)
+		rows, err := s.query(`SELECT secret_key, COALESCE(encrypted_value, ''), COALESCE(secret_ref, '') FROM skill_secrets WHERE skill_id = $1`, skill.ID)
 		if err == nil {
 			for rows.Next() {
 				var key, encryptedValue, secretRef string
@@ -1409,7 +1511,7 @@ func (s *PostgresStore) listSkillsForUser(userID, projectID string, runtimeOnly 
 	if runtimeOnly {
 		statusFilter = "AND s.status = 'enabled'"
 	}
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT s.id, s.slug, s.scope, s.kind, COALESCE(s.owner_user_id, ''),
 		       COALESCE(s.project_id, ''), s.status, COALESCE(s.current_version_id, ''),
 		       v.name, v.version, v.description, v.risk, false,
@@ -1471,7 +1573,7 @@ func (s *PostgresStore) CreateHTTPSkill(userID, projectID string, input protocol
 		return protocol.Skill{}, err
 	}
 	now := time.Now().UTC()
-	tx, err := s.db.Begin()
+	tx, err := s.begin()
 	if err != nil {
 		return protocol.Skill{}, err
 	}
@@ -1511,7 +1613,7 @@ func (s *PostgresStore) CreateHTTPSkill(userID, projectID string, input protocol
 func (s *PostgresStore) UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkillInput) (protocol.Skill, error) {
 	var current protocol.Skill
 	var scope, kind, status, projectID string
-	if err := s.db.QueryRow(`
+	if err := s.queryRow(`
 		SELECT id, slug, scope, kind, COALESCE(project_id, ''), status
 		FROM skills
 		WHERE id = $1 AND owner_user_id = $2`, skillID, userID).Scan(
@@ -1536,7 +1638,7 @@ func (s *PostgresStore) UpdateHTTPSkill(userID, skillID string, input protocol.H
 	skill.Status = protocol.SkillStatus(status)
 	skill.Enabled = skill.Status == protocol.SkillStatusEnabled
 	now := time.Now().UTC()
-	tx, err := s.db.Begin()
+	tx, err := s.begin()
 	if err != nil {
 		return protocol.Skill{}, err
 	}
@@ -1571,7 +1673,7 @@ func (s *PostgresStore) SetSkillEnabled(userID, skillID string, enabled bool) (p
 	if enabled {
 		status = protocol.SkillStatusEnabled
 	}
-	result, err := s.db.Exec(`
+	result, err := s.exec(`
 		UPDATE skills
 		SET status = $1, updated_at = $2
 		WHERE id = $3 AND owner_user_id = $4 AND scope = 'user'`,
@@ -1595,7 +1697,7 @@ func (s *PostgresStore) AddAuditEvent(input protocol.AuditEventInput) (protocol.
 	if err != nil {
 		return protocol.AuditEvent{}, err
 	}
-	_, err = s.db.Exec(`
+	_, err = s.exec(`
 		INSERT INTO audit_events (
 			id, actor_user_id, actor_project_id, actor_org_id, action, resource_type,
 			resource_id, decision, reason, request_id, trace_id, run_id, ip, user_agent,
@@ -1618,7 +1720,7 @@ func (s *PostgresStore) ListAuditEvents(actor app.ActorContext, opts app.AuditEv
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT id, COALESCE(actor_user_id, ''), COALESCE(actor_project_id, ''), COALESCE(actor_org_id, ''),
 		       action, resource_type, COALESCE(resource_id, ''), decision, COALESCE(reason, ''),
 		       COALESCE(request_id, ''), COALESCE(trace_id, ''), COALESCE(run_id, ''),
@@ -1664,7 +1766,7 @@ func (s *PostgresStore) ListAuditEvents(actor app.ActorContext, opts app.AuditEv
 
 func (s *PostgresStore) getProjectMember(projectID, userID string) (protocol.ProjectMember, error) {
 	var member protocol.ProjectMember
-	err := s.db.QueryRow(`
+	err := s.queryRow(`
 		SELECT pm.id, pm.user_id, pm.project_id, pm.role, u.email, u.name, pm.created_at, pm.updated_at
 		FROM project_members pm
 		JOIN users u ON u.id = pm.user_id
@@ -1682,7 +1784,7 @@ func (s *PostgresStore) getProjectMember(projectID, userID string) (protocol.Pro
 
 func (s *PostgresStore) getOrganizationMember(orgID, userID string) (protocol.OrganizationMember, error) {
 	var member protocol.OrganizationMember
-	err := s.db.QueryRow(`
+	err := s.queryRow(`
 		SELECT om.id, om.user_id, om.organization_id, om.role, u.email, u.name, om.created_at, om.updated_at
 		FROM organization_members om
 		JOIN users u ON u.id = om.user_id
@@ -1701,7 +1803,7 @@ func (s *PostgresStore) getOrganizationMember(orgID, userID string) (protocol.Or
 func (s *PostgresStore) getOwnedHTTPSkill(userID, skillID string) (protocol.Skill, error) {
 	var skill protocol.Skill
 	var scope, kind, status, risk string
-	if err := s.db.QueryRow(`
+	if err := s.queryRow(`
 		SELECT s.id, s.slug, s.scope, s.kind, COALESCE(s.owner_user_id, ''),
 		       COALESCE(s.project_id, ''), s.status, COALESCE(s.current_version_id, ''),
 		       v.name, v.version, v.description, v.risk, false,
