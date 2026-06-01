@@ -309,6 +309,42 @@ func TestRedisWorkerMovesOverDeliveredPendingMessageToDLQ(t *testing.T) {
 	}
 }
 
+func TestRedisWorkerSamplesOldestPendingIdleMetric(t *testing.T) {
+	client := &fakeRedisQueueClient{
+		pendingCount: 3,
+		pendingEntries: map[string][]redisPendingEntry{
+			"-:+": {{
+				ID:   "1700000000000-0",
+				Idle: 2 * time.Minute,
+			}},
+		},
+	}
+	metrics := platform.NewMetrics("agent_runtime_test")
+	worker := newRedisWorkerWithClient(Config{
+		RedisAddr:        "redis:6379",
+		Stream:           "niceagent:runs:test",
+		Group:            "workers",
+		Consumer:         "runtime-b",
+		DeadLetterStream: "niceagent:runs:test:dlq",
+		Metrics:          metrics,
+	}, &fakeEngine{}, client, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	worker.sampleQueueDepths(context.Background())
+
+	renderedMetrics := metrics.Render()
+	if !strings.Contains(renderedMetrics, `niceagent_redis_queue_pending_entries{`) ||
+		!strings.Contains(renderedMetrics, `stream="niceagent:runs:test"`) ||
+		!strings.Contains(renderedMetrics, `group="workers"`) ||
+		!strings.Contains(renderedMetrics, `consumer="runtime-b"`) ||
+		!strings.Contains(renderedMetrics, `} 3.000000`) {
+		t.Fatalf("pending gauge missing:\n%s", renderedMetrics)
+	}
+	if !strings.Contains(renderedMetrics, `niceagent_redis_queue_oldest_pending_idle_seconds{`) ||
+		!strings.Contains(renderedMetrics, `} 120.000000`) {
+		t.Fatalf("oldest pending idle gauge missing:\n%s", renderedMetrics)
+	}
+}
+
 type fakeEngine struct {
 	request     protocol.RunRequest
 	userMessage string
@@ -325,6 +361,7 @@ type fakeRedisQueueClient struct {
 	messages          []redisStreamMessage
 	autoClaimMessages []redisStreamMessage
 	pending           map[string]int64
+	pendingEntries    map[string][]redisPendingEntry
 	pendingCount      int64
 	streamLengths     map[string]int64
 	adds              []fakeXAdd
@@ -363,7 +400,12 @@ func (c *fakeRedisQueueClient) XAutoClaim(_ context.Context, _, _, _ string, _ t
 	return messages, "0-0", nil
 }
 
-func (c *fakeRedisQueueClient) XPendingExt(_ context.Context, _, _, start, _ string, _ int64) ([]redisPendingEntry, error) {
+func (c *fakeRedisQueueClient) XPendingExt(_ context.Context, _, _, start, end string, _ int64) ([]redisPendingEntry, error) {
+	if c.pendingEntries != nil {
+		if entries := c.pendingEntries[start+":"+end]; entries != nil {
+			return entries, nil
+		}
+	}
 	if c.pending == nil {
 		return nil, nil
 	}

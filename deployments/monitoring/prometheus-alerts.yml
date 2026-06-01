@@ -105,6 +105,17 @@ groups:
           summary: "NiceAgent Redis queue pending backlog on {{ $labels.stream }}"
           description: "Pending entries are above 100 for 15 minutes."
 
+      - alert: NiceAgentRedisQueueOldestPendingIdle
+        expr: |
+          max by (stream, group) (niceagent_redis_queue_oldest_pending_idle_seconds) > 900
+        for: 10m
+        labels:
+          severity: warning
+          component: redis-queue
+        annotations:
+          summary: "NiceAgent Redis queue has old pending messages on {{ $labels.stream }}"
+          description: "The oldest pending entry has been idle for more than 15 minutes."
+
       - alert: NiceAgentRedisQueueDLQNotEmpty
         expr: |
           sum by (stream, group, dlq_stream) (niceagent_redis_queue_dlq_length) > 0

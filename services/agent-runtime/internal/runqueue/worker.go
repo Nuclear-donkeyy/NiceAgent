@@ -224,6 +224,7 @@ func (w *RedisWorker) sampleQueueDepths(ctx context.Context) {
 		w.incQueueError("pending_sample")
 	} else {
 		w.metrics.SetGauge("niceagent_redis_queue_pending_entries", w.baseMetricLabels(nil), float64(pendingCount))
+		w.sampleOldestPendingIdle(ctx, pendingCount)
 	}
 	dlqStream := strings.TrimSpace(w.cfg.DeadLetterStream)
 	if dlqStream == "" {
@@ -237,6 +238,23 @@ func (w *RedisWorker) sampleQueueDepths(ctx context.Context) {
 	w.metrics.SetGauge("niceagent_redis_queue_dlq_length", w.baseMetricLabels(platform.Labels{
 		"dlq_stream": dlqStream,
 	}), float64(dlqLength))
+}
+
+func (w *RedisWorker) sampleOldestPendingIdle(ctx context.Context, pendingCount int64) {
+	if pendingCount <= 0 {
+		w.metrics.SetGauge("niceagent_redis_queue_oldest_pending_idle_seconds", w.baseMetricLabels(nil), 0)
+		return
+	}
+	entries, err := w.client.XPendingExt(ctx, w.cfg.Stream, w.cfg.Group, "-", "+", 1)
+	if err != nil {
+		w.incQueueError("pending_idle_sample")
+		return
+	}
+	if len(entries) == 0 {
+		w.metrics.SetGauge("niceagent_redis_queue_oldest_pending_idle_seconds", w.baseMetricLabels(nil), 0)
+		return
+	}
+	w.metrics.SetGauge("niceagent_redis_queue_oldest_pending_idle_seconds", w.baseMetricLabels(nil), entries[0].Idle.Seconds())
 }
 
 func (w *RedisWorker) deadLetter(ctx context.Context, message redisStreamMessage, reason string, deliveryCount int64, cause error) error {
@@ -545,6 +563,7 @@ type redisStreamMessage struct {
 
 type redisPendingEntry struct {
 	ID         string
+	Idle       time.Duration
 	RetryCount int64
 }
 
@@ -653,7 +672,7 @@ func (c *goRedisQueueClient) XPendingExt(ctx context.Context, stream, group, sta
 	}
 	result := make([]redisPendingEntry, 0, len(entries))
 	for _, entry := range entries {
-		result = append(result, redisPendingEntry{ID: entry.ID, RetryCount: entry.RetryCount})
+		result = append(result, redisPendingEntry{ID: entry.ID, Idle: entry.Idle, RetryCount: entry.RetryCount})
 	}
 	return result, nil
 }
