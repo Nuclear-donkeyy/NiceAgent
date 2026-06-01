@@ -1785,8 +1785,8 @@ func (s *PostgresStore) AddArtifact(artifact protocol.Artifact) (protocol.Artifa
 		}
 	}
 	_, err := s.exec(`
-		INSERT INTO artifacts (id, run_id, chat_id, user_id, project_id, workspace_id, path, name, mime_type, size_bytes, sha256, storage_backend, storage_key, created_at, deleted_at)
-		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, NULLIF($8, ''), $9, $10, NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), $14, $15)
+		INSERT INTO artifacts (id, run_id, chat_id, user_id, project_id, workspace_id, path, name, mime_type, size_bytes, sha256, storage_backend, storage_key, created_at, expires_at, deleted_at)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, NULLIF($8, ''), $9, $10, NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), $14, $15, $16)
 		ON CONFLICT (id)
 		DO UPDATE SET path = EXCLUDED.path,
 		              name = EXCLUDED.name,
@@ -1795,9 +1795,10 @@ func (s *PostgresStore) AddArtifact(artifact protocol.Artifact) (protocol.Artifa
 		              sha256 = EXCLUDED.sha256,
 		              storage_backend = EXCLUDED.storage_backend,
 		              storage_key = EXCLUDED.storage_key,
+		              expires_at = EXCLUDED.expires_at,
 		              deleted_at = EXCLUDED.deleted_at`,
 		artifact.ID, artifact.RunID, artifact.ChatID, artifact.UserID, artifact.ProjectID, artifact.WorkspaceID,
-		artifact.Path, artifact.Name, artifact.MimeType, artifact.SizeBytes, artifact.SHA256, artifact.StorageBackend, artifact.StorageKey, artifact.CreatedAt, artifact.DeletedAt)
+		artifact.Path, artifact.Name, artifact.MimeType, artifact.SizeBytes, artifact.SHA256, artifact.StorageBackend, artifact.StorageKey, artifact.CreatedAt, artifact.ExpiresAt, artifact.DeletedAt)
 	if err != nil {
 		return protocol.Artifact{}, err
 	}
@@ -1807,9 +1808,9 @@ func (s *PostgresStore) AddArtifact(artifact protocol.Artifact) (protocol.Artifa
 func (s *PostgresStore) ListArtifacts(runID string) []protocol.Artifact {
 	rows, err := s.query(`
 		SELECT id, run_id, COALESCE(chat_id, ''), COALESCE(user_id, ''), COALESCE(project_id, ''), COALESCE(workspace_id, ''),
-		       path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, deleted_at
+		       path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, expires_at, deleted_at
 		FROM artifacts
-		WHERE run_id = $1 AND deleted_at IS NULL
+		WHERE run_id = $1 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > now())
 		ORDER BY created_at`, runID)
 	if err != nil {
 		return nil
@@ -1818,11 +1819,15 @@ func (s *PostgresStore) ListArtifacts(runID string) []protocol.Artifact {
 	var artifacts []protocol.Artifact
 	for rows.Next() {
 		var artifact protocol.Artifact
+		var expiresAt sql.NullTime
 		var deletedAt sql.NullTime
 		if err := rows.Scan(
 			&artifact.ID, &artifact.RunID, &artifact.ChatID, &artifact.UserID, &artifact.ProjectID, &artifact.WorkspaceID,
-			&artifact.Path, &artifact.Name, &artifact.MimeType, &artifact.SizeBytes, &artifact.SHA256, &artifact.StorageBackend, &artifact.StorageKey, &artifact.CreatedAt, &deletedAt,
+			&artifact.Path, &artifact.Name, &artifact.MimeType, &artifact.SizeBytes, &artifact.SHA256, &artifact.StorageBackend, &artifact.StorageKey, &artifact.CreatedAt, &expiresAt, &deletedAt,
 		); err == nil {
+			if expiresAt.Valid {
+				artifact.ExpiresAt = &expiresAt.Time
+			}
 			if deletedAt.Valid {
 				artifact.DeletedAt = &deletedAt.Time
 			}
@@ -1834,24 +1839,77 @@ func (s *PostgresStore) ListArtifacts(runID string) []protocol.Artifact {
 
 func (s *PostgresStore) GetArtifact(artifactID string) (protocol.Artifact, error) {
 	var artifact protocol.Artifact
+	var expiresAt sql.NullTime
 	var deletedAt sql.NullTime
 	if err := s.queryRow(`
 		SELECT id, run_id, COALESCE(chat_id, ''), COALESCE(user_id, ''), COALESCE(project_id, ''), COALESCE(workspace_id, ''),
-		       path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, deleted_at
+		       path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, expires_at, deleted_at
 		FROM artifacts
-		WHERE id = $1 AND deleted_at IS NULL`, artifactID).Scan(
+		WHERE id = $1 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > now())`, artifactID).Scan(
 		&artifact.ID, &artifact.RunID, &artifact.ChatID, &artifact.UserID, &artifact.ProjectID, &artifact.WorkspaceID,
-		&artifact.Path, &artifact.Name, &artifact.MimeType, &artifact.SizeBytes, &artifact.SHA256, &artifact.StorageBackend, &artifact.StorageKey, &artifact.CreatedAt, &deletedAt,
+		&artifact.Path, &artifact.Name, &artifact.MimeType, &artifact.SizeBytes, &artifact.SHA256, &artifact.StorageBackend, &artifact.StorageKey, &artifact.CreatedAt, &expiresAt, &deletedAt,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return protocol.Artifact{}, app.ErrNotFound
 		}
 		return protocol.Artifact{}, err
 	}
+	if expiresAt.Valid {
+		artifact.ExpiresAt = &expiresAt.Time
+	}
 	if deletedAt.Valid {
 		artifact.DeletedAt = &deletedAt.Time
 	}
 	return artifact, nil
+}
+
+func (s *PostgresStore) DeleteExpiredArtifacts(now time.Time, limit int) ([]protocol.Artifact, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.query(`
+		UPDATE artifacts
+		SET deleted_at = $1
+		WHERE id IN (
+			SELECT id
+			FROM artifacts
+			WHERE deleted_at IS NULL AND expires_at IS NOT NULL AND expires_at <= $1
+			ORDER BY expires_at
+			LIMIT $2
+		)
+		RETURNING id, run_id, COALESCE(chat_id, ''), COALESCE(user_id, ''), COALESCE(project_id, ''), COALESCE(workspace_id, ''),
+		          path, COALESCE(name, ''), mime_type, size_bytes, COALESCE(sha256, ''), COALESCE(storage_backend, ''), COALESCE(storage_key, ''), created_at, expires_at, deleted_at`,
+		now.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var artifacts []protocol.Artifact
+	for rows.Next() {
+		var artifact protocol.Artifact
+		var expiresAt sql.NullTime
+		var deletedAt sql.NullTime
+		if err := rows.Scan(
+			&artifact.ID, &artifact.RunID, &artifact.ChatID, &artifact.UserID, &artifact.ProjectID, &artifact.WorkspaceID,
+			&artifact.Path, &artifact.Name, &artifact.MimeType, &artifact.SizeBytes, &artifact.SHA256, &artifact.StorageBackend, &artifact.StorageKey, &artifact.CreatedAt, &expiresAt, &deletedAt,
+		); err != nil {
+			return nil, err
+		}
+		if expiresAt.Valid {
+			artifact.ExpiresAt = &expiresAt.Time
+		}
+		if deletedAt.Valid {
+			artifact.DeletedAt = &deletedAt.Time
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return artifacts, nil
 }
 
 func (s *PostgresStore) ListSkillsForUser(userID, projectID string) []protocol.Skill {

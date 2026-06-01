@@ -1993,6 +1993,59 @@ func TestInternalRegisterRunArtifactsCreatesEventsAndIsAttemptFenced(t *testing.
 	}
 }
 
+func TestInternalRegisterRunArtifactsAppliesRetentionAndCleanup(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{ArtifactRetention: time.Hour})
+	chat := mustCreateChat(t, store, "demo-user", "expiring artifacts")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "make artifact")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	if _, err := store.ClaimRunAttempt(run.ID, "attempt-retention", "runtime-a", time.Now().UTC().Add(time.Minute)); err != nil {
+		t.Fatalf("claim run: %v", err)
+	}
+
+	register := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/artifacts", jsonBody(t, protocol.ArtifactWriteRequest{
+		AttemptID: "attempt-retention",
+		Artifacts: []protocol.Artifact{{
+			Path:     "output/report.txt",
+			Name:     "report.txt",
+			MimeType: "text/plain",
+		}},
+	}))
+	registerResponse := httptest.NewRecorder()
+	handler.ServeHTTP(registerResponse, register)
+	if registerResponse.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, body = %s", registerResponse.Code, registerResponse.Body.String())
+	}
+	var registered protocol.ArtifactListResponse
+	decodeJSON(t, registerResponse.Body, &registered)
+	if len(registered.Artifacts) != 1 || registered.Artifacts[0].ExpiresAt == nil {
+		t.Fatalf("registered artifacts = %#v, want expires_at", registered.Artifacts)
+	}
+
+	expiredAt := time.Now().UTC().Add(-time.Minute)
+	expired, err := store.AddArtifact(protocol.Artifact{
+		RunID:     run.ID,
+		Path:      "output/old.txt",
+		MimeType:  "text/plain",
+		ExpiresAt: &expiredAt,
+	})
+	if err != nil {
+		t.Fatalf("add expired artifact: %v", err)
+	}
+	cleanup := httptest.NewRequest(http.MethodPost, "/internal/artifacts/cleanup-expired", jsonBody(t, protocol.ArtifactCleanupRequest{Limit: 10}))
+	cleanupResponse := httptest.NewRecorder()
+	handler.ServeHTTP(cleanupResponse, cleanup)
+	if cleanupResponse.Code != http.StatusOK {
+		t.Fatalf("cleanup status = %d, body = %s", cleanupResponse.Code, cleanupResponse.Body.String())
+	}
+	var cleaned protocol.ArtifactListResponse
+	decodeJSON(t, cleanupResponse.Body, &cleaned)
+	if len(cleaned.Artifacts) != 1 || cleaned.Artifacts[0].ID != expired.ID || cleaned.Artifacts[0].DeletedAt == nil {
+		t.Fatalf("cleaned artifacts = %#v, want expired artifact marked deleted", cleaned.Artifacts)
+	}
+}
+
 func TestInternalArtifactReadRejectsUnsafeOrBinaryArtifacts(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	t.Setenv("SANDBOX_WORKSPACE_ROOT", workspaceRoot)

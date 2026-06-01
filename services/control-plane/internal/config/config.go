@@ -66,6 +66,7 @@ type Config struct {
 	QuotaModelTokenReservationMode   string
 	QuotaModelTokenOutputBuffer      int
 	QuotaModelTokenEstimatorModel    string
+	ArtifactRetentionDays            int
 }
 
 func FromEnv() Config {
@@ -126,6 +127,7 @@ func FromEnv() Config {
 		QuotaModelTokenReservationMode:   env("QUOTA_MODEL_TOKEN_RESERVATION_MODE", "fixed"),
 		QuotaModelTokenOutputBuffer:      intEnv("QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER", 0),
 		QuotaModelTokenEstimatorModel:    strings.TrimSpace(os.Getenv("QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL")),
+		ArtifactRetentionDays:            intEnv("ARTIFACT_RETENTION_DAYS", 0),
 	}
 }
 
@@ -181,6 +183,9 @@ func (c Config) Validate() error {
 				return fmt.Errorf("INVITATION_EMAIL_RETRY_ATTEMPTS must be greater than 0 when INVITATION_EMAIL_QUEUE_MODE=memory or outbox")
 			}
 		}
+	}
+	if c.ArtifactRetentionDays < 0 {
+		return fmt.Errorf("ARTIFACT_RETENTION_DAYS must be >= 0")
 	}
 	return nil
 }

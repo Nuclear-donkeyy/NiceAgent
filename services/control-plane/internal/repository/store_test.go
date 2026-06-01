@@ -76,6 +76,57 @@ func TestStoreRegistersWorkspaceAndArtifactsForRun(t *testing.T) {
 	}
 }
 
+func TestStoreHidesAndDeletesExpiredArtifacts(t *testing.T) {
+	store := NewStore()
+	chat := mustCreateChat(t, store, "demo-user", "artifact expiration")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "make expiring file")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	now := time.Now().UTC()
+	expiredAt := now.Add(-time.Minute)
+	futureAt := now.Add(time.Hour)
+	expired, err := store.AddArtifact(protocol.Artifact{
+		RunID:     run.ID,
+		Path:      "output/old.txt",
+		MimeType:  "text/plain",
+		SizeBytes: 1,
+		ExpiresAt: &expiredAt,
+	})
+	if err != nil {
+		t.Fatalf("add expired artifact: %v", err)
+	}
+	future, err := store.AddArtifact(protocol.Artifact{
+		RunID:     run.ID,
+		Path:      "output/future.txt",
+		MimeType:  "text/plain",
+		SizeBytes: 1,
+		ExpiresAt: &futureAt,
+	})
+	if err != nil {
+		t.Fatalf("add future artifact: %v", err)
+	}
+
+	if _, err := store.GetArtifact(expired.ID); err != app.ErrNotFound {
+		t.Fatalf("expired get err = %v, want ErrNotFound", err)
+	}
+	listed := store.ListArtifacts(run.ID)
+	if len(listed) != 1 || listed[0].ID != future.ID {
+		t.Fatalf("listed artifacts = %#v, want future only", listed)
+	}
+
+	deleted, err := store.DeleteExpiredArtifacts(now, 10)
+	if err != nil {
+		t.Fatalf("delete expired artifacts: %v", err)
+	}
+	if len(deleted) != 1 || deleted[0].ID != expired.ID || deleted[0].DeletedAt == nil {
+		t.Fatalf("deleted artifacts = %#v, want expired with deleted_at", deleted)
+	}
+	if _, err := store.GetArtifact(future.ID); err != nil {
+		t.Fatalf("future get: %v", err)
+	}
+}
+
 func TestStoreListsSearchesArchivesAndRestoresChats(t *testing.T) {
 	store := NewStore()
 	alpha := mustCreateChat(t, store, "demo-user", "Alpha project")

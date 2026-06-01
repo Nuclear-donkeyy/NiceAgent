@@ -1270,8 +1270,9 @@ func (s *Store) ListArtifacts(runID string) []protocol.Artifact {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	artifacts := make([]protocol.Artifact, 0)
+	now := time.Now().UTC()
 	for _, artifact := range s.artifacts {
-		if artifact.RunID == runID && artifact.DeletedAt == nil {
+		if artifact.RunID == runID && artifactVisibleAt(artifact, now) {
 			artifacts = append(artifacts, artifact)
 		}
 	}
@@ -1285,10 +1286,48 @@ func (s *Store) GetArtifact(artifactID string) (protocol.Artifact, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	artifact, ok := s.artifacts[artifactID]
-	if !ok || artifact.DeletedAt != nil {
+	if !ok || !artifactVisibleAt(artifact, time.Now().UTC()) {
 		return protocol.Artifact{}, app.ErrNotFound
 	}
 	return artifact, nil
+}
+
+func (s *Store) DeleteExpiredArtifacts(now time.Time, limit int) ([]protocol.Artifact, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	expired := make([]protocol.Artifact, 0)
+	for id, artifact := range s.artifacts {
+		if len(expired) >= limit {
+			break
+		}
+		if artifact.DeletedAt != nil || artifact.ExpiresAt == nil || artifact.ExpiresAt.After(now) {
+			continue
+		}
+		deletedAt := now.UTC()
+		artifact.DeletedAt = &deletedAt
+		s.artifacts[id] = artifact
+		expired = append(expired, artifact)
+	}
+	sort.Slice(expired, func(i, j int) bool {
+		return expired[i].CreatedAt.Before(expired[j].CreatedAt)
+	})
+	return expired, nil
+}
+
+func artifactVisibleAt(artifact protocol.Artifact, now time.Time) bool {
+	if artifact.DeletedAt != nil {
+		return false
+	}
+	if artifact.ExpiresAt != nil && !artifact.ExpiresAt.After(now) {
+		return false
+	}
+	return true
 }
 
 func (s *Store) ListSkillsForUser(userID, projectID string) []protocol.Skill {

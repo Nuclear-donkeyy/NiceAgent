@@ -85,11 +85,14 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
       "path": "output/report.txt",
       "name": "report.txt",
       "mime_type": "text/plain",
-      "size_bytes": 128
+      "size_bytes": 128,
+      "expires_at": "2026-06-09T12:00:00Z"
     }
   ]
 }
 ```
+
+如果 artifact 已被标记删除，或 `expires_at` 已过期，列表、详情、下载和内容读取接口都会按不可见处理并返回空列表或 `404`。
 
 `GET /api/artifacts/{artifact_id}`
 
@@ -670,7 +673,7 @@ Agent Runtime 的 `workspace.read` 使用该接口列出当前 run 已登记 art
 
 `POST /internal/runs/{run_id}/artifacts`
 
-Agent Runtime 在 sandbox/CLI tool 调用结束后使用该接口增量登记本次工具调用产生的 artifact metadata。Control Plane 会校验 active `attempt_id`，补齐 run/chat/user/workspace/project 归属，写入 `artifacts`，并为每个新 artifact 写入 `artifact.created` event。若后续 `complete` 再携带相同 artifact id，Control Plane 会按已有 artifact 处理，不重复发 `artifact.created`。
+Agent Runtime 在 sandbox/CLI tool 调用结束后使用该接口增量登记本次工具调用产生的 artifact metadata。Control Plane 会校验 active `attempt_id`，补齐 run/chat/user/workspace/project 归属，写入 `artifacts`，并为每个新 artifact 写入 `artifact.created` event。若配置了 `ARTIFACT_RETENTION_DAYS`，Control Plane 会为未显式设置 `expires_at` 的 artifact 补默认过期时间。若后续 `complete` 再携带相同 artifact id，Control Plane 会按已有 artifact 处理，不重复发 `artifact.created`。
 
 请求体：
 
@@ -706,6 +709,18 @@ Agent Runtime 的 `workspace.read` 使用该接口读取已登记文本 artifact
 - `max_bytes`：最大读取字节数，默认 64 KiB，服务端上限 256 KiB。
 
 该接口只读取通过 artifact metadata 登记的文件，并复用 workspace root、`output/` 路径限制、symlink escape 检查、regular file 检查、MIME 文本限制和读取大小限制。二进制 artifact、未登记文件、`../`、绝对路径和 symlink escape 会被拒绝。
+
+`POST /internal/artifacts/cleanup-expired`
+
+Control Plane 运维/后台任务使用该接口把已过期 artifact metadata 标记为删除。请求需要内部 bearer token；第一版只更新 metadata 的 `deleted_at`，不会删除本地文件或对象存储中的真实文件。
+
+请求体：
+
+```json
+{ "limit": 100 }
+```
+
+响应体复用 `ArtifactListResponse`，返回本次被标记删除的 artifacts。`limit` 默认 100，最大 1000。
 
 响应体：
 

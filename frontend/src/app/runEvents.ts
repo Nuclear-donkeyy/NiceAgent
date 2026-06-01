@@ -86,6 +86,7 @@ function artifactFromPayload(payload: Record<string, unknown>): Artifact | null 
     storage_backend: optionalStringValue(payload.storage_backend),
     storage_key: optionalStringValue(payload.storage_key),
     created_at: optionalStringValue(payload.created_at),
+    expires_at: optionalStringValue(payload.expires_at),
     deleted_at: optionalStringValue(payload.deleted_at),
   };
 }
