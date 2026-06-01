@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -18,6 +19,7 @@ type Handler struct {
 	RuntimeID       string
 	Metrics         *platform.Metrics
 	ModelHealth     ModelHealthReporter
+	Logger          *slog.Logger
 }
 
 type ModelHealthReporter interface {
@@ -28,6 +30,7 @@ type HandlerOptions struct {
 	RuntimeID   string
 	ModelHealth ModelHealthReporter
 	Metrics     *platform.Metrics
+	Logger      *slog.Logger
 }
 
 func NewHandler(agent engine.AgentEngine, controlPlaneURL, internalToken string) http.Handler {
@@ -54,13 +57,16 @@ func NewHandlerWithOptions(agent engine.AgentEngine, controlPlaneURL, internalTo
 		RuntimeID:       runtimeID,
 		Metrics:         metrics,
 		ModelHealth:     opts.ModelHealth,
+		Logger:          opts.Logger,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", platform.Method(http.MethodGet, h.health))
 	mux.Handle("/metrics", h.Metrics.Handler())
 	mux.HandleFunc("/internal/runs/execute", platform.Method(http.MethodPost, h.executeRun))
-	handler := platform.WithTraceID(platform.MetricsMiddleware(h.Metrics, mux))
-	return platform.OpenTelemetryMiddleware("agent_runtime", handler)
+	handler := platform.MetricsMiddleware(h.Metrics, mux)
+	handler = platform.RequestLogger(h.Logger, "agent_runtime", handler)
+	handler = platform.WithTraceID(handler)
+	return platform.WithRequestID(platform.OpenTelemetryMiddleware("agent_runtime", handler))
 }
 
 func (h Handler) health(w http.ResponseWriter, _ *http.Request) {

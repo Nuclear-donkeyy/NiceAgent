@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,6 +54,33 @@ func TestHandlerRecordsModelMetricsAfterRun(t *testing.T) {
 	metrics := metricsResponse.Body.String()
 	if !strings.Contains(metrics, "niceagent_model_runs_total") || !strings.Contains(metrics, `provider="fake-provider"`) {
 		t.Fatalf("metrics body = %s", metrics)
+	}
+}
+
+func TestHandlerPropagatesRequestIDHeader(t *testing.T) {
+	handler := NewHandlerWithOptions(fakeEngine{}, "http://control-plane.local", "", HandlerOptions{
+		RuntimeID: "runtime-test",
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	body, _ := json.Marshal(protocol.RunExecutionRequest{
+		Request:     protocol.RunRequest{RunID: "run-1", ChatID: "chat-1", UserID: "user-1"},
+		UserMessage: "hello",
+	})
+	request := httptest.NewRequest(http.MethodPost, "/internal/runs/execute", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Request-ID", "req-runtime-1")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("execute status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("X-Request-ID"); got != "req-runtime-1" {
+		t.Fatalf("request id response header = %q", got)
+	}
+	if got := response.Header().Get("X-Trace-ID"); got == "" {
+		t.Fatal("expected trace id response header")
 	}
 }
 

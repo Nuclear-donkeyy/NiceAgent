@@ -232,7 +232,7 @@ docker compose -f deployments/docker-compose.yml down -v
 
 - `run_id`：贯穿一次用户请求的执行链路。
 - `X-Trace-ID`：三服务之间会透传的轻量 trace id。浏览器或网关可传入 `X-Trace-ID`/`Traceparent`，Control Plane、Agent Runtime 和 Sandbox Executor 会在响应头继续返回 `X-Trace-ID`。
-- `X-Request-ID`：Control Plane 外部 API 的请求标识，request log 和 audit event 会记录它。
+- `X-Request-ID`：三服务之间会透传的请求标识。浏览器或网关可传入 `X-Request-ID`；如果缺失，服务会生成一个 `req_` 前缀 ID，并在响应头继续返回。Control Plane request log、audit event、Agent Runtime request log 和 Sandbox Executor request log 都会记录它。
 - `chat_id`：定位用户会话。
 - event `seq`：确认 SSE replay 和事件顺序。
 - run terminal state：确认 `succeeded`、`failed`、`canceled` 是否被迟到事件覆盖。
@@ -250,7 +250,7 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 # OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>,x-tenant=niceagent"
 ```
 
-服务启动后会以 `control_plane`、`agent_runtime`、`sandbox_executor` 作为默认 service name，也可以用 `OTEL_SERVICE_NAME` 覆盖。当前 OpenTelemetry 会为每个入站 HTTP 请求创建 server span，并通过 `traceparent` 在 Control Plane、Agent Runtime 和 Sandbox Executor 之间传播；`X-Trace-ID` 继续保留，便于日志、audit event 和非 OTel 工具串联。内部 span 已覆盖 Control Plane HTTP dispatcher、Redis run queue enqueue/process/fetch execution context、Runtime run execute、模型调用、tool invoke、HTTP Skill 请求、Runtime 调 Sandbox Executor、Sandbox Executor 命令执行和 Runtime 回写 Control Plane。Redis Streams、Redis PubSub event fanout 和 Redis quota counter 的底层命令会统一输出 `redis.command` span，并带上 `redis_command`、`stream`、`group` 或 `component` 等低基数字段。Postgres repository 会为 `SELECT`、`INSERT`、`UPDATE`、`DELETE`、`BEGIN`、`COMMIT`、`ROLLBACK` 等操作输出 `db.command` span，只记录 `db_system=postgresql`、`db_operation`、`component=repository`，不记录 SQL 文本或参数。
+服务启动后会以 `control_plane`、`agent_runtime`、`sandbox_executor` 作为默认 service name，也可以用 `OTEL_SERVICE_NAME` 覆盖。当前 OpenTelemetry 会为每个入站 HTTP 请求创建 server span，并通过 `traceparent` 在 Control Plane、Agent Runtime 和 Sandbox Executor 之间传播；`X-Trace-ID` 和 `X-Request-ID` 继续保留，便于日志、audit event 和非 OTel 工具串联。三服务的 JSON request log 都包含 `request_id`、`trace_id`、`method`、`path`、`status` 和 `duration`，Control Plane 还会额外记录 actor 信息。内部 span 已覆盖 Control Plane HTTP dispatcher、Redis run queue enqueue/process/fetch execution context、Runtime run execute、模型调用、tool invoke、HTTP Skill 请求、Runtime 调 Sandbox Executor、Sandbox Executor 命令执行和 Runtime 回写 Control Plane。Redis Streams、Redis PubSub event fanout 和 Redis quota counter 的底层命令会统一输出 `redis.command` span，并带上 `redis_command`、`stream`、`group` 或 `component` 等低基数字段。Postgres repository 会为 `SELECT`、`INSERT`、`UPDATE`、`DELETE`、`BEGIN`、`COMMIT`、`ROLLBACK` 等操作输出 `db.command` span，只记录 `db_system=postgresql`、`db_operation`、`component=repository`，不记录 SQL 文本或参数。
 
 三服务都提供 `GET /metrics`，输出 Prometheus text exposition 风格指标。当前内置指标覆盖：
 

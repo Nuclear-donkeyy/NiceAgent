@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"niceagent/common/platform"
@@ -14,6 +15,7 @@ type Handler struct {
 	executor Executor
 	token    string
 	metrics  *platform.Metrics
+	logger   *slog.Logger
 }
 
 type Executor interface {
@@ -21,13 +23,19 @@ type Executor interface {
 }
 
 func NewHandler(executor Executor, token string) http.Handler {
-	h := Handler{executor: executor, token: token, metrics: platform.NewMetrics("sandbox_executor")}
+	return NewHandlerWithLogger(executor, token, nil)
+}
+
+func NewHandlerWithLogger(executor Executor, token string, logger *slog.Logger) http.Handler {
+	h := Handler{executor: executor, token: token, metrics: platform.NewMetrics("sandbox_executor"), logger: logger}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", platform.Method(http.MethodGet, h.health))
 	mux.Handle("/metrics", h.metrics.Handler())
 	mux.HandleFunc("/internal/sandbox/exec", platform.Method(http.MethodPost, h.exec))
-	handler := platform.WithTraceID(platform.MetricsMiddleware(h.metrics, mux))
-	return platform.OpenTelemetryMiddleware("sandbox_executor", handler)
+	handler := platform.MetricsMiddleware(h.metrics, mux)
+	handler = platform.RequestLogger(h.logger, "sandbox_executor", handler)
+	handler = platform.WithTraceID(handler)
+	return platform.WithRequestID(platform.OpenTelemetryMiddleware("sandbox_executor", handler))
 }
 
 func (h Handler) health(w http.ResponseWriter, _ *http.Request) {
