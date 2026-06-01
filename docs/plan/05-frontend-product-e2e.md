@@ -55,13 +55,13 @@ HTTP Skill 表单已有字段级错误、URL 客户端校验、Bearer token 条�
 仍待落地能力：
 
 - 真实 HTTP Skill 后端流、复杂 SSE 断线重连、失败重试和更大样本的浏览器 E2E。
-- 表格内容预览、skill 导入向导和面向多用户/项目的导航体验。
+- 更多文件类型预览、skill 导入向导和面向多用户/项目的导航体验。
 
 ## 扩展点
 
 - `frontend/src/domain/artifact.ts`：定义 artifact 类型和展示字段。
-- `frontend/src/api/artifacts.ts`：封装 list/download API。
-- `frontend/src/features/artifacts/*`：artifact 列表、卡片、下载入口。
+- `frontend/src/api/artifacts.ts`：封装 list/download/content API。
+- `frontend/src/features/artifacts/*`：artifact 列表、卡片、下载入口和 CSV/TSV 表格预览。
 - `frontend/src/features/skills/*`：拆出 HTTP Skill 表单状态、字段校验和错误展示。
 - `frontend/src/app/runEvents.ts`：处理 `artifact.created`、tool failure、SSE reconnect 状态。
 - `frontend/e2e/*`：Playwright 冒烟测试。

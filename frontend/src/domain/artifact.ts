@@ -19,3 +19,10 @@ export interface Artifact {
 export interface ArtifactListResponse {
   artifacts: Artifact[];
 }
+
+export interface ArtifactTextResponse {
+  artifact: Artifact;
+  content: string;
+  truncated: boolean;
+  bytes_read: number;
+}

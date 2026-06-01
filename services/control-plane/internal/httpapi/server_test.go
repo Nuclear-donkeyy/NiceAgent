@@ -1569,6 +1569,17 @@ func TestServerPersistsListsAndDownloadsArtifacts(t *testing.T) {
 	if !strings.HasPrefix(inlinePreviewResponse.Header().Get("Content-Disposition"), "inline;") {
 		t.Fatalf("inline content-disposition = %q, want inline", inlinePreviewResponse.Header().Get("Content-Disposition"))
 	}
+	content := httptest.NewRequest(http.MethodGet, "/api/artifacts/"+artifact.ID+"/content?max_bytes=4", nil)
+	contentResponse := httptest.NewRecorder()
+	handler.ServeHTTP(contentResponse, content)
+	if contentResponse.Code != http.StatusOK {
+		t.Fatalf("content status = %d, body = %s", contentResponse.Code, contentResponse.Body.String())
+	}
+	var text protocol.ArtifactTextResponse
+	decodeJSON(t, contentResponse.Body, &text)
+	if text.Content != "repo" || !text.Truncated || text.BytesRead != 4 {
+		t.Fatalf("text response = %#v", text)
+	}
 	if !containsEvent(store.ListEvents(run.ID, 0), protocol.EventArtifactCreated) {
 		t.Fatalf("events = %#v, want artifact.created", store.ListEvents(run.ID, 0))
 	}
@@ -1644,6 +1655,14 @@ func TestArtifactAPIsIsolateUsersAndProjects(t *testing.T) {
 			handler.ServeHTTP(downloadResponse, download)
 			if downloadResponse.Code != http.StatusNotFound {
 				t.Fatalf("cross-scope download status = %d, body = %s", downloadResponse.Code, downloadResponse.Body.String())
+			}
+
+			content := httptest.NewRequest(http.MethodGet, "/api/artifacts/"+artifact.ID+"/content", nil)
+			setTrustedActor(content, tc.userID, tc.projectID)
+			contentResponse := httptest.NewRecorder()
+			handler.ServeHTTP(contentResponse, content)
+			if contentResponse.Code != http.StatusNotFound {
+				t.Fatalf("cross-scope content status = %d, body = %s", contentResponse.Code, contentResponse.Body.String())
 			}
 		})
 	}

@@ -224,7 +224,7 @@ HTTP Skill 默认只允许 `https` URL，禁用重定向，拒绝 URL 中携带�
 
 HTTP Skill `runtime_config` 支持最小 retry/rate limit：`retry.max_attempts` 默认 1、最大 5，只对 429、5xx 和网络/超时类错误重试；`rate_limit.requests_per_minute` 默认 0、最大 600，按 Agent Runtime 进程内的 skill id 做固定窗口限流。命中限流会返回 `rate_limited` observation，不会发起请求。这个能力用于保护第三方 API 和降低瞬时错误，不替代 Control Plane 的项目级 quota，也不是跨 Runtime 副本强一致限流。
 
-`workspace.read` 是系统内置只读 skill。它不会让 Runtime 直接读取任意磁盘路径，而是通过 Control Plane 内部 API 列出当前 run 已登记 artifacts，并只读取文本 artifact 的内容摘要。读取会校验 active `attempt_id`，并复用 artifact metadata、workspace root、`output/` 路径限制、symlink escape 检查、regular file 检查、MIME 文本限制和读取大小限制。前端 artifact 面板会对图片、PDF、音频和视频使用 `?disposition=inline` 做内联预览，下载按钮仍走默认 attachment。排查读取或预览失败时优先看 artifact 是否已登记、文件是否仍在 workspace、MIME 是否正确，以及路径是否在 `output/` 下。
+`workspace.read` 是系统内置只读 skill。它不会让 Runtime 直接读取任意磁盘路径，而是通过 Control Plane 内部 API 列出当前 run 已登记 artifacts，并只读取文本 artifact 的内容摘要。读取会校验 active `attempt_id`，并复用 artifact metadata、workspace root、`output/` 路径限制、symlink escape 检查、regular file 检查、MIME 文本限制和读取大小限制。前端 artifact 面板会对图片、PDF、音频和视频使用 `?disposition=inline` 做内联预览，下载按钮仍走默认 attachment；CSV/TSV 等文本表格会通过 `GET /api/artifacts/{id}/content` 读取前几行做表格预览。排查读取或预览失败时优先看 artifact 是否已登记、文件是否仍在 workspace、MIME 是否正确，以及路径是否在 `output/` 下。
 
 ## Postgres 模式排查
 

@@ -1,4 +1,9 @@
-import { artifactDownloadPath, artifactPreviewPath } from "../../api/artifacts";
+import { useEffect, useMemo, useState } from "react";
+import {
+  artifactDownloadPath,
+  artifactPreviewPath,
+  readArtifactContent,
+} from "../../api/artifacts";
 import type { Artifact } from "../../domain/artifact";
 import styles from "./ArtifactList.module.scss";
 
@@ -126,6 +131,9 @@ function ArtifactPreview({
       </a>
     );
   }
+  if (previewType === "table") {
+    return <TableArtifactPreview artifact={artifact} displayName={displayName} />;
+  }
   return (
     <a
       className={`${styles.preview} ${styles.filePreview}`}
@@ -135,6 +143,117 @@ function ArtifactPreview({
       <span>{artifactExtension(artifact) || "FILE"}</span>
     </a>
   );
+}
+
+interface TableArtifactPreviewProps {
+  artifact: Artifact;
+  displayName: string;
+}
+
+function TableArtifactPreview({ artifact, displayName }: TableArtifactPreviewProps) {
+  const [content, setContent] = useState("");
+  const [truncated, setTruncated] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let canceled = false;
+    setLoading(true);
+    setError("");
+    readArtifactContent(artifact.id, 16384)
+      .then((response) => {
+        if (canceled) return;
+        setContent(response.content || "");
+        setTruncated(Boolean(response.truncated));
+      })
+      .catch((err: unknown) => {
+        if (canceled) return;
+        setError(err instanceof Error ? err.message : "预览加载失败");
+      })
+      .finally(() => {
+        if (!canceled) setLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [artifact.id]);
+
+  const rows = useMemo(() => parseTableRows(content, artifact), [artifact, content]);
+  const headers = rows[0] || [];
+  const bodyRows = rows.slice(1, 6);
+
+  return (
+    <div className={styles.tablePreview} aria-label={`预览 ${displayName}`}>
+      <div className={styles.tablePreviewHeader}>
+        <span>{loading ? "表格同步中" : "表格预览"}</span>
+        {truncated && <span>已截断</span>}
+      </div>
+      {error ? (
+        <div className={styles.tablePreviewState}>{error}</div>
+      ) : rows.length > 0 ? (
+        <div className={styles.tableScroll}>
+          <table>
+            <tbody>
+              {headers.length > 0 && (
+                <tr>
+                  {headers.slice(0, 5).map((cell, index) => (
+                    <th key={`${cell}-${index}`}>{cell || "-"}</th>
+                  ))}
+                </tr>
+              )}
+              {bodyRows.map((row, rowIndex) => (
+                <tr key={`row-${rowIndex}`}>
+                  {row.slice(0, 5).map((cell, cellIndex) => (
+                    <td key={`${rowIndex}-${cellIndex}`}>{cell || "-"}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className={styles.tablePreviewState}>{loading ? "读取中" : "无可预览内容"}</div>
+      )}
+    </div>
+  );
+}
+
+function parseTableRows(content: string, artifact: Artifact): string[][] {
+  const extension = artifactExtension(artifact).toLowerCase();
+  const mimeType = normalizedMimeType(artifact);
+  const delimiter = extension === "tsv" || mimeType === "text/tab-separated-values" ? "\t" : ",";
+  return content
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "")
+    .slice(0, 7)
+    .map((line) => splitDelimitedLine(line, delimiter).slice(0, 8));
+}
+
+function splitDelimitedLine(line: string, delimiter: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (char === '"' && quoted && next === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === delimiter && !quoted) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells;
 }
 
 function previewKind(artifact: Artifact): PreviewKind {
@@ -163,10 +282,9 @@ function normalizedMimeType(artifact: Artifact): string {
 function isTableArtifact(artifact: Artifact, mimeType: string): boolean {
   const extension = artifactExtension(artifact);
   return (
-    ["csv", "tsv", "xlsx", "xls"].includes(extension.toLowerCase()) ||
+    ["csv", "tsv"].includes(extension.toLowerCase()) ||
     mimeType === "text/csv" ||
-    mimeType === "text/tab-separated-values" ||
-    mimeType.includes("spreadsheet")
+    mimeType === "text/tab-separated-values"
   );
 }
 

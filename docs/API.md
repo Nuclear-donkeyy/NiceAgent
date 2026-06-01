@@ -99,7 +99,30 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 下载 artifact 文件。当前只支持 `storage_backend=local` 的最小闭环；服务会按当前用户、run workspace、`output/` 相对路径和 symlink 解析结果做越界检查。默认响应使用 `Content-Disposition: attachment`，用于下载；前端预览可显式传 `?disposition=inline`，让浏览器以内联方式渲染图片、PDF、音频和视频等安全预览。
 
-前端会对 `image/*`、`application/pdf`、`audio/*` 和 `video/*` artifact 使用 inline URL 渲染预览；其他类型仍以下载为主。
+`GET /api/artifacts/{artifact_id}/content`
+
+读取已登记文本 artifact 的内容摘要，用于前端表格/文本类轻量预览。查询参数：
+
+- `max_bytes`：可选，默认 `32768`，最大 `131072`。
+
+该接口和下载接口使用相同的 actor/run/artifact 权限校验，并复用 workspace root、`output/` 路径限制、symlink escape 检查、regular file 检查、MIME 文本限制和读取大小限制。二进制 artifact、未登记文件、`../`、绝对路径和 symlink escape 会被拒绝。
+
+响应体：
+
+```json
+{
+  "artifact": {
+    "id": "art_xxx",
+    "path": "output/report.csv",
+    "mime_type": "text/csv"
+  },
+  "content": "name,value\nfoo,1\n",
+  "truncated": false,
+  "bytes_read": 17
+}
+```
+
+前端会对 `image/*`、`application/pdf`、`audio/*` 和 `video/*` artifact 使用 inline URL 渲染预览；对 `text/csv`、`text/tab-separated-values`、`.csv` 和 `.tsv` 使用 `content` API 渲染前几行表格预览；其他类型仍以下载为主。
 
 `POST /api/runs/{run_id}/cancel`
 
