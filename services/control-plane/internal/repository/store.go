@@ -13,54 +13,56 @@ import (
 )
 
 type Store struct {
-	mu             sync.RWMutex
-	users          map[string]protocol.User
-	identities     map[string]protocol.UserIdentity
-	userIdentities map[string]string
-	projects       map[string]protocol.Project
-	chats          map[string]protocol.ChatSession
-	messages       map[string][]protocol.Message
-	runs           map[string]protocol.Run
-	runUsage       map[string]protocol.RunUsage
-	events         map[string][]protocol.RunEvent
-	auditEvents    []protocol.AuditEvent
-	workspaces     map[string]protocol.Workspace
-	artifacts      map[string]protocol.Artifact
-	invitations    map[string]protocol.Invitation
-	skills         map[string]protocol.Skill
-	skillGrants    map[string][]string
-	skillSecrets   map[string]map[string]protocol.RuntimeSecret
-	orgRoles       map[string][]string
-	projectRoles   map[string][]string
-	quotaPolicies  map[string]protocol.ProjectQuotaPolicy
-	subscribers    map[string]map[chan protocol.RunEvent]struct{}
-	seq            map[string]int64
+	mu              sync.RWMutex
+	users           map[string]protocol.User
+	identities      map[string]protocol.UserIdentity
+	userIdentities  map[string]string
+	projects        map[string]protocol.Project
+	chats           map[string]protocol.ChatSession
+	messages        map[string][]protocol.Message
+	runs            map[string]protocol.Run
+	runUsage        map[string]protocol.RunUsage
+	events          map[string][]protocol.RunEvent
+	auditEvents     []protocol.AuditEvent
+	workspaces      map[string]protocol.Workspace
+	artifacts       map[string]protocol.Artifact
+	invitations     map[string]protocol.Invitation
+	emailDeliveries map[string]protocol.InvitationEmailDelivery
+	skills          map[string]protocol.Skill
+	skillGrants     map[string][]string
+	skillSecrets    map[string]map[string]protocol.RuntimeSecret
+	orgRoles        map[string][]string
+	projectRoles    map[string][]string
+	quotaPolicies   map[string]protocol.ProjectQuotaPolicy
+	subscribers     map[string]map[chan protocol.RunEvent]struct{}
+	seq             map[string]int64
 }
 
 func NewStore() *Store {
 	now := time.Now().UTC()
 	store := &Store{
-		users:          map[string]protocol.User{},
-		identities:     map[string]protocol.UserIdentity{},
-		userIdentities: map[string]string{},
-		projects:       map[string]protocol.Project{},
-		chats:          map[string]protocol.ChatSession{},
-		messages:       map[string][]protocol.Message{},
-		runs:           map[string]protocol.Run{},
-		runUsage:       map[string]protocol.RunUsage{},
-		events:         map[string][]protocol.RunEvent{},
-		auditEvents:    []protocol.AuditEvent{},
-		workspaces:     map[string]protocol.Workspace{},
-		artifacts:      map[string]protocol.Artifact{},
-		invitations:    map[string]protocol.Invitation{},
-		skills:         map[string]protocol.Skill{},
-		skillGrants:    map[string][]string{},
-		skillSecrets:   map[string]map[string]protocol.RuntimeSecret{},
-		orgRoles:       map[string][]string{},
-		projectRoles:   map[string][]string{},
-		quotaPolicies:  map[string]protocol.ProjectQuotaPolicy{},
-		subscribers:    map[string]map[chan protocol.RunEvent]struct{}{},
-		seq:            map[string]int64{},
+		users:           map[string]protocol.User{},
+		identities:      map[string]protocol.UserIdentity{},
+		userIdentities:  map[string]string{},
+		projects:        map[string]protocol.Project{},
+		chats:           map[string]protocol.ChatSession{},
+		messages:        map[string][]protocol.Message{},
+		runs:            map[string]protocol.Run{},
+		runUsage:        map[string]protocol.RunUsage{},
+		events:          map[string][]protocol.RunEvent{},
+		auditEvents:     []protocol.AuditEvent{},
+		workspaces:      map[string]protocol.Workspace{},
+		artifacts:       map[string]protocol.Artifact{},
+		invitations:     map[string]protocol.Invitation{},
+		emailDeliveries: map[string]protocol.InvitationEmailDelivery{},
+		skills:          map[string]protocol.Skill{},
+		skillGrants:     map[string][]string{},
+		skillSecrets:    map[string]map[string]protocol.RuntimeSecret{},
+		orgRoles:        map[string][]string{},
+		projectRoles:    map[string][]string{},
+		quotaPolicies:   map[string]protocol.ProjectQuotaPolicy{},
+		subscribers:     map[string]map[chan protocol.RunEvent]struct{}{},
+		seq:             map[string]int64{},
 	}
 	store.users["demo-user"] = protocol.User{
 		ID:        "demo-user",
@@ -637,6 +639,152 @@ func (s *Store) AcceptInvitation(token, userID, email, name string) (protocol.In
 	s.invitations[token] = invitation
 	invitation.Token = ""
 	return invitation, nil
+}
+
+func (s *Store) EnqueueInvitationEmail(invitation protocol.Invitation, maxAttempts int) (protocol.InvitationEmailDelivery, error) {
+	if strings.TrimSpace(invitation.ID) == "" {
+		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.emailDeliveries {
+		if existing.InvitationID == invitation.ID {
+			existing.Invitation = invitation
+			return existing, nil
+		}
+	}
+	delivery := protocol.InvitationEmailDelivery{
+		ID:            platform.NewID("invmail"),
+		InvitationID:  invitation.ID,
+		Invitation:    invitation,
+		Status:        protocol.InvitationEmailPending,
+		MaxAttempts:   maxAttempts,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	s.emailDeliveries[delivery.ID] = delivery
+	return delivery, nil
+}
+
+func (s *Store) ClaimDueInvitationEmails(limit int, lockedBy string, lockUntil time.Time) []protocol.InvitationEmailDelivery {
+	if limit <= 0 {
+		limit = 1
+	}
+	now := time.Now().UTC()
+	lockedBy = strings.TrimSpace(lockedBy)
+	if lockedBy == "" {
+		lockedBy = "control-plane"
+	}
+	if !lockUntil.After(now) {
+		lockUntil = now.Add(time.Minute)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deliveries := make([]protocol.InvitationEmailDelivery, 0, limit)
+	for id, delivery := range s.emailDeliveries {
+		if len(deliveries) >= limit {
+			break
+		}
+		if delivery.Status != protocol.InvitationEmailPending && delivery.Status != protocol.InvitationEmailSending {
+			continue
+		}
+		if delivery.NextAttemptAt.After(now) {
+			continue
+		}
+		if delivery.LockedUntil != nil && delivery.LockedUntil.After(now) {
+			continue
+		}
+		if delivery.Attempts >= delivery.MaxAttempts {
+			delivery.Status = protocol.InvitationEmailFailed
+			delivery.LastError = firstNonEmpty(delivery.LastError, "max attempts reached")
+			delivery.LockedBy = ""
+			delivery.LockedUntil = nil
+			delivery.UpdatedAt = now
+			s.emailDeliveries[id] = delivery
+			continue
+		}
+		invitation, ok := invitationByID(s.invitations, delivery.InvitationID)
+		if !ok {
+			delivery.Status = protocol.InvitationEmailFailed
+			delivery.LastError = "invitation not found"
+			delivery.UpdatedAt = now
+			s.emailDeliveries[id] = delivery
+			continue
+		}
+		delivery.Status = protocol.InvitationEmailSending
+		delivery.Attempts++
+		delivery.LockedBy = lockedBy
+		delivery.LockedUntil = &lockUntil
+		delivery.Invitation = invitation
+		delivery.UpdatedAt = now
+		s.emailDeliveries[id] = delivery
+		deliveries = append(deliveries, delivery)
+	}
+	return deliveries
+}
+
+func (s *Store) MarkInvitationEmailSent(deliveryID string) error {
+	deliveryID = strings.TrimSpace(deliveryID)
+	if deliveryID == "" {
+		return app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delivery, ok := s.emailDeliveries[deliveryID]
+	if !ok {
+		return app.ErrNotFound
+	}
+	delivery.Status = protocol.InvitationEmailSent
+	delivery.LockedBy = ""
+	delivery.LockedUntil = nil
+	delivery.LastError = ""
+	delivery.SentAt = &now
+	delivery.UpdatedAt = now
+	s.emailDeliveries[deliveryID] = delivery
+	return nil
+}
+
+func (s *Store) MarkInvitationEmailFailed(deliveryID, lastError string, nextAttemptAt *time.Time, terminal bool) error {
+	deliveryID = strings.TrimSpace(deliveryID)
+	if deliveryID == "" {
+		return app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delivery, ok := s.emailDeliveries[deliveryID]
+	if !ok {
+		return app.ErrNotFound
+	}
+	if terminal {
+		delivery.Status = protocol.InvitationEmailFailed
+	} else {
+		delivery.Status = protocol.InvitationEmailPending
+	}
+	delivery.LockedBy = ""
+	delivery.LockedUntil = nil
+	delivery.LastError = strings.TrimSpace(lastError)
+	if nextAttemptAt != nil {
+		delivery.NextAttemptAt = nextAttemptAt.UTC()
+	}
+	delivery.UpdatedAt = now
+	s.emailDeliveries[deliveryID] = delivery
+	return nil
+}
+
+func invitationByID(invitations map[string]protocol.Invitation, invitationID string) (protocol.Invitation, bool) {
+	for _, invitation := range invitations {
+		if invitation.ID == invitationID {
+			return invitation, true
+		}
+	}
+	return protocol.Invitation{}, false
 }
 
 func (s *Store) ListProjectMembers(projectID string) []protocol.ProjectMember {

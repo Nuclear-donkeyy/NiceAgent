@@ -199,6 +199,28 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if orgInvitation.Token == "" || orgInvitation.Status != protocol.InvitationPending {
 		t.Fatalf("organization invitation = %#v", orgInvitation)
 	}
+	delivery, err := reloaded.EnqueueInvitationEmail(orgInvitation, 2)
+	if err != nil {
+		t.Fatalf("enqueue invitation email: %v", err)
+	}
+	claimedDeliveries := reloaded.ClaimDueInvitationEmails(1, "postgres-worker-a", time.Now().UTC().Add(time.Minute))
+	if len(claimedDeliveries) != 1 || claimedDeliveries[0].ID != delivery.ID || claimedDeliveries[0].Attempts != 1 || claimedDeliveries[0].Invitation.Token != orgInvitation.Token {
+		t.Fatalf("claimed invitation email deliveries = %#v", claimedDeliveries)
+	}
+	nextAttempt := time.Now().UTC()
+	if err := reloaded.MarkInvitationEmailFailed(delivery.ID, "temporary smtp failure", &nextAttempt, false); err != nil {
+		t.Fatalf("mark invitation email failed: %v", err)
+	}
+	claimedDeliveries = reloaded.ClaimDueInvitationEmails(1, "postgres-worker-b", time.Now().UTC().Add(time.Minute))
+	if len(claimedDeliveries) != 1 || claimedDeliveries[0].Attempts != 2 || claimedDeliveries[0].LockedBy != "postgres-worker-b" {
+		t.Fatalf("reclaimed invitation email deliveries = %#v", claimedDeliveries)
+	}
+	if err := reloaded.MarkInvitationEmailSent(delivery.ID); err != nil {
+		t.Fatalf("mark invitation email sent: %v", err)
+	}
+	if claimedDeliveries = reloaded.ClaimDueInvitationEmails(1, "postgres-worker-c", time.Now().UTC().Add(time.Minute)); len(claimedDeliveries) != 0 {
+		t.Fatalf("sent delivery was claimed again: %#v", claimedDeliveries)
+	}
 	invitations := reloaded.ListInvitations(app.DemoOrgID)
 	if len(invitations) == 0 || invitations[0].Token != "" {
 		t.Fatalf("listed invitations = %#v, want redacted token", invitations)

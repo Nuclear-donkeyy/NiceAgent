@@ -94,6 +94,39 @@ func TestQueuedInvitationMailerReturnsQueueFull(t *testing.T) {
 	close(inner.release)
 }
 
+func TestOutboxInvitationMailerPersistsRetriesAndMarksSent(t *testing.T) {
+	inner := &flakyInvitationSender{failures: 1}
+	outbox := newFakeInvitationOutbox()
+	mailer := &OutboxInvitationMailer{
+		inner:             inner,
+		outbox:            outbox,
+		logger:            slog.New(slog.NewTextHandler(testWriter{t: t}, nil)),
+		retryAttempts:     2,
+		retryInitialDelay: 0,
+		lockTTL:           time.Second,
+		workerID:          "test-worker",
+	}
+	invitation := protocol.Invitation{
+		ID:             "invitation-outbox",
+		Email:          "invited@example.test",
+		Token:          "token",
+		OrganizationID: "org-a",
+		Role:           "viewer",
+	}
+	if err := mailer.SendInvitation(context.Background(), invitation); err != nil {
+		t.Fatalf("enqueue invitation: %v", err)
+	}
+
+	mailer.deliverDue(1)
+	if inner.calls.Load() != 1 || outbox.status() != protocol.InvitationEmailPending {
+		t.Fatalf("after first attempt calls=%d status=%s", inner.calls.Load(), outbox.status())
+	}
+	mailer.deliverDue(1)
+	if inner.calls.Load() != 2 || inner.delivered.Load() != 1 || outbox.status() != protocol.InvitationEmailSent {
+		t.Fatalf("after retry calls=%d delivered=%d status=%s", inner.calls.Load(), inner.delivered.Load(), outbox.status())
+	}
+}
+
 type flakyInvitationSender struct {
 	failures  int
 	calls     atomic.Int32
@@ -128,6 +161,76 @@ type testWriter struct {
 func (w testWriter) Write(p []byte) (int, error) {
 	w.t.Log(strings.TrimSpace(string(p)))
 	return len(p), nil
+}
+
+type fakeInvitationOutbox struct {
+	mu       sync.Mutex
+	delivery protocol.InvitationEmailDelivery
+}
+
+func newFakeInvitationOutbox() *fakeInvitationOutbox {
+	return &fakeInvitationOutbox{}
+}
+
+func (o *fakeInvitationOutbox) EnqueueInvitationEmail(invitation protocol.Invitation, maxAttempts int) (protocol.InvitationEmailDelivery, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	now := time.Now().UTC()
+	o.delivery = protocol.InvitationEmailDelivery{
+		ID:            "delivery-a",
+		InvitationID:  invitation.ID,
+		Invitation:    invitation,
+		Status:        protocol.InvitationEmailPending,
+		MaxAttempts:   maxAttempts,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	return o.delivery, nil
+}
+
+func (o *fakeInvitationOutbox) ClaimDueInvitationEmails(limit int, lockedBy string, lockUntil time.Time) []protocol.InvitationEmailDelivery {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.delivery.ID == "" || o.delivery.Status != protocol.InvitationEmailPending || o.delivery.NextAttemptAt.After(time.Now().UTC()) {
+		return nil
+	}
+	o.delivery.Status = protocol.InvitationEmailSending
+	o.delivery.Attempts++
+	o.delivery.LockedBy = lockedBy
+	o.delivery.LockedUntil = &lockUntil
+	return []protocol.InvitationEmailDelivery{o.delivery}
+}
+
+func (o *fakeInvitationOutbox) MarkInvitationEmailSent(deliveryID string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.delivery.Status = protocol.InvitationEmailSent
+	return nil
+}
+
+func (o *fakeInvitationOutbox) MarkInvitationEmailFailed(deliveryID, lastError string, nextAttemptAt *time.Time, terminal bool) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if terminal {
+		o.delivery.Status = protocol.InvitationEmailFailed
+	} else {
+		o.delivery.Status = protocol.InvitationEmailPending
+	}
+	o.delivery.LastError = lastError
+	if nextAttemptAt != nil {
+		o.delivery.NextAttemptAt = *nextAttemptAt
+	}
+	return nil
+}
+
+func (o *fakeInvitationOutbox) status() protocol.InvitationEmailDeliveryStatus {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.delivery.Status
 }
 
 func TestSMTPInvitationMailerUsesCustomTemplates(t *testing.T) {

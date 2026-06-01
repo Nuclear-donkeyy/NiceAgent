@@ -485,6 +485,28 @@ func TestStoreManagesInvitations(t *testing.T) {
 	if orgInvitation.Token == "" || orgInvitation.Status != protocol.InvitationPending {
 		t.Fatalf("org invitation = %#v", orgInvitation)
 	}
+	delivery, err := store.EnqueueInvitationEmail(orgInvitation, 2)
+	if err != nil {
+		t.Fatalf("enqueue invitation email: %v", err)
+	}
+	claimed := store.ClaimDueInvitationEmails(1, "worker-a", time.Now().UTC().Add(time.Minute))
+	if len(claimed) != 1 || claimed[0].ID != delivery.ID || claimed[0].Attempts != 1 || claimed[0].Invitation.Token != orgInvitation.Token {
+		t.Fatalf("claimed deliveries = %#v", claimed)
+	}
+	nextAttempt := time.Now().UTC()
+	if err := store.MarkInvitationEmailFailed(delivery.ID, "temporary smtp failure", &nextAttempt, false); err != nil {
+		t.Fatalf("mark invitation email failed: %v", err)
+	}
+	claimed = store.ClaimDueInvitationEmails(1, "worker-b", time.Now().UTC().Add(time.Minute))
+	if len(claimed) != 1 || claimed[0].Attempts != 2 || claimed[0].LockedBy != "worker-b" {
+		t.Fatalf("reclaimed deliveries = %#v", claimed)
+	}
+	if err := store.MarkInvitationEmailSent(delivery.ID); err != nil {
+		t.Fatalf("mark invitation email sent: %v", err)
+	}
+	if claimed = store.ClaimDueInvitationEmails(1, "worker-c", time.Now().UTC().Add(time.Minute)); len(claimed) != 0 {
+		t.Fatalf("sent delivery was claimed again: %#v", claimed)
+	}
 	invitations := store.ListInvitations(app.DemoOrgID)
 	if len(invitations) != 1 || invitations[0].Token != "" {
 		t.Fatalf("listed invitations = %#v, want redacted token", invitations)

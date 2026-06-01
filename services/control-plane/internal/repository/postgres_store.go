@@ -939,6 +939,230 @@ func (s *PostgresStore) AcceptInvitation(token, userID, email, name string) (pro
 	return invitation, nil
 }
 
+func (s *PostgresStore) EnqueueInvitationEmail(invitation protocol.Invitation, maxAttempts int) (protocol.InvitationEmailDelivery, error) {
+	if strings.TrimSpace(invitation.ID) == "" {
+		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	now := time.Now().UTC()
+	delivery := protocol.InvitationEmailDelivery{
+		ID:            platform.NewID("invmail"),
+		InvitationID:  invitation.ID,
+		Invitation:    invitation,
+		Status:        protocol.InvitationEmailPending,
+		MaxAttempts:   maxAttempts,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	row := s.queryRow(`
+		INSERT INTO invitation_email_outbox (
+			id, invitation_id, status, attempts, max_attempts, next_attempt_at, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, 0, $4, $5, $6, $7)
+		ON CONFLICT (invitation_id)
+		DO UPDATE SET updated_at = invitation_email_outbox.updated_at
+		RETURNING id, invitation_id, status, attempts, max_attempts, next_attempt_at,
+		          COALESCE(locked_by, ''), locked_until, COALESCE(last_error, ''), sent_at, created_at, updated_at`,
+		delivery.ID, invitation.ID, string(delivery.Status), maxAttempts, now, now, now)
+	if err := scanInvitationEmailDelivery(row, &delivery); err != nil {
+		return protocol.InvitationEmailDelivery{}, err
+	}
+	delivery.Invitation = invitation
+	return delivery, nil
+}
+
+func (s *PostgresStore) ClaimDueInvitationEmails(limit int, lockedBy string, lockUntil time.Time) []protocol.InvitationEmailDelivery {
+	if limit <= 0 {
+		limit = 1
+	}
+	now := time.Now().UTC()
+	lockedBy = strings.TrimSpace(lockedBy)
+	if lockedBy == "" {
+		lockedBy = "control-plane"
+	}
+	if !lockUntil.After(now) {
+		lockUntil = now.Add(time.Minute)
+	}
+	rows, err := s.query(`
+		WITH picked AS (
+			SELECT d.id
+			FROM invitation_email_outbox d
+			JOIN invitations i ON i.id = d.invitation_id
+			WHERE d.status IN ('pending', 'sending')
+			  AND d.next_attempt_at <= now()
+			  AND (d.locked_until IS NULL OR d.locked_until <= now())
+			  AND d.attempts < d.max_attempts
+			  AND i.status = 'pending'
+			  AND i.expires_at > now()
+			ORDER BY d.next_attempt_at ASC, d.created_at ASC
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE invitation_email_outbox d
+		SET status = 'sending',
+		    attempts = d.attempts + 1,
+		    locked_by = $2,
+		    locked_until = $3,
+		    updated_at = now()
+		FROM picked, invitations i
+		WHERE d.id = picked.id AND i.id = d.invitation_id
+		RETURNING d.id, d.invitation_id, d.status, d.attempts, d.max_attempts, d.next_attempt_at,
+		          COALESCE(d.locked_by, ''), d.locked_until, COALESCE(d.last_error, ''), d.sent_at, d.created_at, d.updated_at,
+		          i.id, i.token, i.organization_id, COALESCE(i.project_id, ''), i.email, i.role, i.status,
+		          i.invited_by_user_id, COALESCE(i.accepted_by_user_id, ''), i.created_at, i.expires_at, i.accepted_at`,
+		limit, lockedBy, lockUntil)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	deliveries := []protocol.InvitationEmailDelivery{}
+	for rows.Next() {
+		delivery, err := scanInvitationEmailDeliveryWithInvitation(rows)
+		if err == nil {
+			deliveries = append(deliveries, delivery)
+		}
+	}
+	return deliveries
+}
+
+func (s *PostgresStore) MarkInvitationEmailSent(deliveryID string) error {
+	deliveryID = strings.TrimSpace(deliveryID)
+	if deliveryID == "" {
+		return app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	result, err := s.exec(`
+		UPDATE invitation_email_outbox
+		SET status = 'sent', locked_by = NULL, locked_until = NULL, last_error = NULL, sent_at = $1, updated_at = $2
+		WHERE id = $3`, now, now, deliveryID)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
+		return app.ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) MarkInvitationEmailFailed(deliveryID, lastError string, nextAttemptAt *time.Time, terminal bool) error {
+	deliveryID = strings.TrimSpace(deliveryID)
+	if deliveryID == "" {
+		return app.ErrInvalidInput
+	}
+	status := protocol.InvitationEmailPending
+	if terminal {
+		status = protocol.InvitationEmailFailed
+	}
+	var nextAttempt any
+	if nextAttemptAt != nil {
+		nextAttempt = nextAttemptAt.UTC()
+	}
+	result, err := s.exec(`
+		UPDATE invitation_email_outbox
+		SET status = $1,
+		    locked_by = NULL,
+		    locked_until = NULL,
+		    last_error = $2,
+		    next_attempt_at = COALESCE($3, next_attempt_at),
+		    updated_at = now()
+		WHERE id = $4`, string(status), strings.TrimSpace(lastError), nextAttempt, deliveryID)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
+		return app.ErrNotFound
+	}
+	return nil
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanInvitationEmailDelivery(row rowScanner, delivery *protocol.InvitationEmailDelivery) error {
+	var status string
+	var lockedUntil sql.NullTime
+	var sentAt sql.NullTime
+	if err := row.Scan(
+		&delivery.ID,
+		&delivery.InvitationID,
+		&status,
+		&delivery.Attempts,
+		&delivery.MaxAttempts,
+		&delivery.NextAttemptAt,
+		&delivery.LockedBy,
+		&lockedUntil,
+		&delivery.LastError,
+		&sentAt,
+		&delivery.CreatedAt,
+		&delivery.UpdatedAt,
+	); err != nil {
+		return err
+	}
+	delivery.Status = protocol.InvitationEmailDeliveryStatus(status)
+	if lockedUntil.Valid {
+		delivery.LockedUntil = &lockedUntil.Time
+	}
+	if sentAt.Valid {
+		delivery.SentAt = &sentAt.Time
+	}
+	return nil
+}
+
+func scanInvitationEmailDeliveryWithInvitation(row rowScanner) (protocol.InvitationEmailDelivery, error) {
+	var delivery protocol.InvitationEmailDelivery
+	var invitation protocol.Invitation
+	var deliveryStatus string
+	var invitationStatus string
+	var lockedUntil sql.NullTime
+	var sentAt sql.NullTime
+	var acceptedAt sql.NullTime
+	if err := row.Scan(
+		&delivery.ID,
+		&delivery.InvitationID,
+		&deliveryStatus,
+		&delivery.Attempts,
+		&delivery.MaxAttempts,
+		&delivery.NextAttemptAt,
+		&delivery.LockedBy,
+		&lockedUntil,
+		&delivery.LastError,
+		&sentAt,
+		&delivery.CreatedAt,
+		&delivery.UpdatedAt,
+		&invitation.ID,
+		&invitation.Token,
+		&invitation.OrganizationID,
+		&invitation.ProjectID,
+		&invitation.Email,
+		&invitation.Role,
+		&invitationStatus,
+		&invitation.InvitedByUserID,
+		&invitation.AcceptedByUserID,
+		&invitation.CreatedAt,
+		&invitation.ExpiresAt,
+		&acceptedAt,
+	); err != nil {
+		return protocol.InvitationEmailDelivery{}, err
+	}
+	delivery.Status = protocol.InvitationEmailDeliveryStatus(deliveryStatus)
+	if lockedUntil.Valid {
+		delivery.LockedUntil = &lockedUntil.Time
+	}
+	if sentAt.Valid {
+		delivery.SentAt = &sentAt.Time
+	}
+	invitation.Status = protocol.InvitationStatus(invitationStatus)
+	if acceptedAt.Valid {
+		invitation.AcceptedAt = &acceptedAt.Time
+	}
+	delivery.Invitation = invitation
+	return delivery, nil
+}
+
 func (s *PostgresStore) ListProjectMembers(projectID string) []protocol.ProjectMember {
 	rows, err := s.query(`
 		SELECT pm.id, pm.user_id, pm.project_id, pm.role, u.email, u.name, pm.created_at, pm.updated_at
