@@ -1265,6 +1265,62 @@ func TestServerCreatesUserHTTPSkill(t *testing.T) {
 	}
 }
 
+func TestServerPreviewsOpenAPIImport(t *testing.T) {
+	_, handler := newTestHandler()
+	document := `{
+		"openapi":"3.1.0",
+		"servers":[{"url":"https://api.example.com"}],
+		"components":{"securitySchemes":{"bearerAuth":{"type":"http","scheme":"bearer"}}},
+		"security":[{"bearerAuth":[]}],
+		"paths":{
+			"/weather":{
+				"post":{
+					"operationId":"getWeather",
+					"summary":"Get weather",
+					"requestBody":{"content":{"application/json":{"schema":{"type":"object","properties":{"city":{"type":"string"}}}}}},
+					"responses":{"200":{"content":{"application/json":{"schema":{"type":"object"}}}}}
+				}
+			}
+		}
+	}`
+	request := httptest.NewRequest(http.MethodPost, "/api/skills/import/openapi/preview", jsonBody(t, protocol.OpenAPIImportPreviewInput{
+		Document: document,
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var output protocol.OpenAPIImportPreviewResponse
+	decodeJSON(t, response.Body, &output)
+	if len(output.Candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one", output.Candidates)
+	}
+	candidate := output.Candidates[0]
+	if candidate.Name != "getWeather" || candidate.URL != "https://api.example.com/weather" {
+		t.Fatalf("candidate = %#v, want weather candidate", candidate)
+	}
+	if candidate.AuthType != "bearer" || !candidate.RequiresSecret {
+		t.Fatalf("candidate auth = %#v, want bearer secret hint", candidate)
+	}
+}
+
+func TestServerRejectsInvalidOpenAPIImportPreview(t *testing.T) {
+	_, handler := newTestHandler()
+	request := httptest.NewRequest(http.MethodPost, "/api/skills/import/openapi/preview", jsonBody(t, protocol.OpenAPIImportPreviewInput{
+		Document: `{"openapi":"3.1.0","paths":{"/x":{"get":{"responses":{}}}}}`,
+		BaseURL:  "http://api.example.com",
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("preview status = %d, body = %s; want 400", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "base_url scheme must be https") {
+		t.Fatalf("response body = %s, want https base url error", response.Body.String())
+	}
+}
+
 func TestServerRejectsInvalidHTTPSkillSchemas(t *testing.T) {
 	_, handler := newTestHandler()
 	request := httptest.NewRequest(http.MethodPost, "/api/skills/http", jsonBody(t, protocol.HTTPSkillInput{
