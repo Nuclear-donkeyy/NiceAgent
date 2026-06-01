@@ -22,7 +22,7 @@
 1. DeepSeek 真实 key 冒烟与模型运营记录：在现有 OpenAI-compatible + Eino `ToolCallingChatModel` 路径上完成可复现 smoke，不提交密钥。
 2. Skill 治理补强：在已有 HTTP Skill schema validation、错误模型、secret redaction、OpenAPI preview、per-skill retry/rate limit 基础上，继续补完整 OpenAPI 保存向导、MCP 导入预留和跨副本限流。
 3. Sandbox 生产化：把 Compose/部署默认路径从 local executor 推向 container executor，在已有 K8s egress NetworkPolicy 和镜像白名单基础上补云侧出口控制、强隔离和更完整 artifact 预览。
-4. 平台化收口：在 `AUTH_MODE=trusted-header|oidc`、ActorContext、RBAC、邀请、quota、metrics/tracing、告警规则、Alertmanager 路由样例、durable 邀请邮件 outbox 和 provider-neutral 退信事件记录已有最小闭环基础上，补浏览器 OIDC login/session/refresh token、真实 tokenizer、服务商 webhook 签名适配和真实值班系统接入。
+4. 平台化收口：在 `AUTH_MODE=trusted-header|oidc`、ActorContext、RBAC、邀请、quota、metrics/tracing、告警规则、Alertmanager 路由样例、durable 邀请邮件 outbox、provider-neutral 退信事件记录和 HMAC webhook 入口已有最小闭环基础上，补浏览器 OIDC login/session/refresh token、真实 tokenizer、服务商原生字段映射和真实值班系统接入。
 5. Redis 与多副本韧性：在 Redis Streams worker、attempt/lease/DLQ、跨 Control Plane nudge fanout 和 CI smoke 已落地后，继续补 Redis HA、容量压测和外部告警。
 6. 前端真实链路 E2E：在 artifact、skill 表单、mock smoke 和三服务 UI smoke 已有基础上，补真实 HTTP Skill 后端流和复杂 SSE 断线重连场景。
 

@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,29 +28,31 @@ import (
 )
 
 type Server struct {
-	repo             app.Repository
-	dispatcher       app.RunDispatcher
-	log              *slog.Logger
-	metrics          *platform.Metrics
-	authMode         string
-	oidcVerifier     *OIDCVerifier
-	controlPlaneURL  string
-	internalToken    string
-	invitationMailer app.InvitationMailer
-	runQuota         RunQuota
-	quotaLimiter     quotapkg.Limiter
-	tokenReservation TokenReservationOptions
+	repo                    app.Repository
+	dispatcher              app.RunDispatcher
+	log                     *slog.Logger
+	metrics                 *platform.Metrics
+	authMode                string
+	oidcVerifier            *OIDCVerifier
+	controlPlaneURL         string
+	internalToken           string
+	invitationWebhookSecret string
+	invitationMailer        app.InvitationMailer
+	runQuota                RunQuota
+	quotaLimiter            quotapkg.Limiter
+	tokenReservation        TokenReservationOptions
 }
 
 type ServerOptions struct {
-	AuthMode              string
-	ControlPlanePublicURL string
-	InternalAPIToken      string
-	InvitationMailer      app.InvitationMailer
-	RunQuota              RunQuota
-	QuotaLimiter          quotapkg.Limiter
-	TokenReservation      TokenReservationOptions
-	OIDC                  OIDCConfig
+	AuthMode                string
+	ControlPlanePublicURL   string
+	InternalAPIToken        string
+	InvitationWebhookSecret string
+	InvitationMailer        app.InvitationMailer
+	RunQuota                RunQuota
+	QuotaLimiter            quotapkg.Limiter
+	TokenReservation        TokenReservationOptions
+	OIDC                    OIDCConfig
 }
 
 const defaultAttemptLeaseSeconds = 600
@@ -80,18 +85,19 @@ func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log
 		oidcVerifier = verifier
 	}
 	return &Server{
-		repo:             repo,
-		dispatcher:       dispatcher,
-		log:              log,
-		metrics:          platform.NewMetrics("control_plane"),
-		authMode:         authMode,
-		oidcVerifier:     oidcVerifier,
-		controlPlaneURL:  strings.TrimRight(opts.ControlPlanePublicURL, "/"),
-		internalToken:    internalToken(opts.InternalAPIToken),
-		invitationMailer: opts.InvitationMailer,
-		runQuota:         opts.RunQuota,
-		quotaLimiter:     opts.QuotaLimiter,
-		tokenReservation: normalizeTokenReservationOptions(opts.TokenReservation),
+		repo:                    repo,
+		dispatcher:              dispatcher,
+		log:                     log,
+		metrics:                 platform.NewMetrics("control_plane"),
+		authMode:                authMode,
+		oidcVerifier:            oidcVerifier,
+		controlPlaneURL:         strings.TrimRight(opts.ControlPlanePublicURL, "/"),
+		internalToken:           internalToken(opts.InternalAPIToken),
+		invitationWebhookSecret: opts.InvitationWebhookSecret,
+		invitationMailer:        opts.InvitationMailer,
+		runQuota:                opts.RunQuota,
+		quotaLimiter:            opts.QuotaLimiter,
+		tokenReservation:        normalizeTokenReservationOptions(opts.TokenReservation),
 	}
 }
 
@@ -109,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/skills", platform.Method(http.MethodGet, s.skills))
 	mux.HandleFunc("/api/skills/", s.skillSubroutes)
 	mux.HandleFunc("/api/audit/events", platform.Method(http.MethodGet, s.auditEvents))
+	mux.HandleFunc("/webhooks/invitation-email-events", platform.Method(http.MethodPost, s.invitationEmailWebhook))
 	mux.HandleFunc("/internal/runs/", s.internalRunSubroutes)
 	mux.HandleFunc("/internal/artifacts/", s.internalArtifactSubroutes)
 	mux.Handle("/", http.FileServer(http.Dir(staticDir())))
@@ -878,6 +885,61 @@ func (s *Server) recordInvitationEmailEvent(w http.ResponseWriter, r *http.Reque
 		"provider":    event.Provider,
 	})
 	platform.WriteJSON(w, http.StatusCreated, protocol.InvitationEmailEventResponse{Event: event})
+}
+
+func (s *Server) invitationEmailWebhook(w http.ResponseWriter, r *http.Request) {
+	secret := strings.TrimSpace(s.invitationWebhookSecret)
+	if secret == "" {
+		platform.WriteError(w, http.StatusNotFound, "webhook not configured")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid webhook body")
+		return
+	}
+	if !verifyWebhookSignature(secret, body, r.Header.Get("X-NiceAgent-Webhook-Signature")) {
+		s.writeAuditEvent(r, app.ActorContext{}, "invitation.email_webhook.verify", "webhook", "invitation-email-events", "", protocol.AuditDecisionDeny, "invalid webhook signature", nil)
+		platform.WriteError(w, http.StatusUnauthorized, "invalid webhook signature")
+		return
+	}
+	var input protocol.InvitationEmailEventInput
+	if err := json.Unmarshal(body, &input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	input.InvitationID = strings.TrimSpace(input.InvitationID)
+	if input.InvitationID == "" {
+		platform.WriteError(w, http.StatusBadRequest, "invitation_id is required")
+		return
+	}
+	event, err := s.repo.RecordInvitationEmailEvent(input)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	s.writeAuditEvent(r, app.ActorContext{}, "invitation.email_webhook.record", "invitation", event.InvitationID, "", protocol.AuditDecisionAllow, "", map[string]any{
+		"delivery_id": event.DeliveryID,
+		"type":        event.Type,
+		"provider":    event.Provider,
+	})
+	platform.WriteJSON(w, http.StatusAccepted, protocol.InvitationEmailEventResponse{Event: event})
+}
+
+func verifyWebhookSignature(secret string, body []byte, signatureHeader string) bool {
+	secret = strings.TrimSpace(secret)
+	signatureHeader = strings.TrimSpace(signatureHeader)
+	if secret == "" || signatureHeader == "" {
+		return false
+	}
+	signatureHeader = strings.TrimPrefix(signatureHeader, "sha256=")
+	got, err := hex.DecodeString(signatureHeader)
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(body)
+	return hmac.Equal(got, mac.Sum(nil))
 }
 
 func invitationBelongsToOrg(repo app.Repository, orgID, invitationID string) bool {

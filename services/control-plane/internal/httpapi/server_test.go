@@ -3,6 +3,9 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -568,6 +571,54 @@ func TestServerManagesOrganizationMembers(t *testing.T) {
 	handler.ServeHTTP(removeResponse, remove)
 	if removeResponse.Code != http.StatusOK {
 		t.Fatalf("remove organization member status = %d, body = %s", removeResponse.Code, removeResponse.Body.String())
+	}
+}
+
+func TestServerRecordsSignedInvitationEmailWebhook(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{
+		InvitationWebhookSecret: "test-webhook-secret",
+	})
+	invitation, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email: "webhook-bounced@example.test",
+		Role:  "viewer",
+	})
+	if err != nil {
+		t.Fatalf("create invitation: %v", err)
+	}
+	delivery, err := store.EnqueueInvitationEmail(invitation, 2)
+	if err != nil {
+		t.Fatalf("enqueue invitation email: %v", err)
+	}
+	body := []byte(`{"invitation_id":"` + invitation.ID + `","delivery_id":"` + delivery.ID + `","provider":"smtp-test","provider_message_id":"message-a","type":"bounced","reason":"mailbox unavailable","payload":{"smtp_code":"550"}}`)
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/invitation-email-events", bytes.NewReader(body))
+	request.Header.Set("X-NiceAgent-Webhook-Signature", signedWebhookBody("test-webhook-secret", body))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("webhook status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var output protocol.InvitationEmailEventResponse
+	decodeJSON(t, response.Body, &output)
+	if output.Event.Type != protocol.InvitationEmailEventBounced || output.Event.InvitationID != invitation.ID || output.Event.DeliveryID != delivery.ID {
+		t.Fatalf("webhook event = %#v", output.Event)
+	}
+	events := store.ListInvitationEmailEvents(app.DemoOrgID, app.InvitationEmailEventListOptions{InvitationID: invitation.ID})
+	if len(events) != 1 || events[0].Reason != "mailbox unavailable" {
+		t.Fatalf("stored events = %#v, want bounced event", events)
+	}
+}
+
+func TestServerRejectsUnsignedInvitationEmailWebhook(t *testing.T) {
+	_, handler := newTestHandlerWithOptions(ServerOptions{
+		InvitationWebhookSecret: "test-webhook-secret",
+	})
+	body := []byte(`{"invitation_id":"invitation-a","type":"bounced"}`)
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/invitation-email-events", bytes.NewReader(body))
+	request.Header.Set("X-NiceAgent-Webhook-Signature", "sha256=bad")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unsigned webhook status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 
@@ -1929,6 +1980,12 @@ func jsonBody(t *testing.T, value any) io.Reader {
 		t.Fatalf("marshal json body: %v", err)
 	}
 	return bytes.NewReader(body)
+}
+
+func signedWebhookBody(secret string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func decodeJSON(t *testing.T, body io.Reader, target any) {

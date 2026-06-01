@@ -43,10 +43,11 @@ func main() {
 	dispatcher := newDispatcher(cfg, store, logger)
 	invitationMailer := newInvitationMailer(cfg, store, logger)
 	server := httpapi.NewServerWithOptions(store, dispatcher, logger, httpapi.ServerOptions{
-		AuthMode:              cfg.AuthMode,
-		ControlPlanePublicURL: cfg.ControlPlanePublicURL,
-		InternalAPIToken:      cfg.InternalAPIToken,
-		InvitationMailer:      invitationMailer,
+		AuthMode:                cfg.AuthMode,
+		ControlPlanePublicURL:   cfg.ControlPlanePublicURL,
+		InternalAPIToken:        cfg.InternalAPIToken,
+		InvitationWebhookSecret: cfg.InvitationEmailWebhookSecret,
+		InvitationMailer:        invitationMailer,
 		RunQuota: httpapi.RunQuota{
 			MaxConcurrentRuns:       cfg.MaxConcurrentRuns,
 			MaxRunsPerHour:          cfg.MaxRunsPerHour,

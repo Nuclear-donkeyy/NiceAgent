@@ -356,6 +356,14 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 }
 ```
 
+`POST /webhooks/invitation-email-events`
+
+邮件服务商 webhook 入口。该接口不使用用户登录态，而是要求配置 `INVITATION_EMAIL_WEBHOOK_SECRET` 并携带 `X-NiceAgent-Webhook-Signature`。签名算法为 `sha256=<hex(hmac_sha256(secret, raw_body))>`；未配置 secret 时接口返回 404，签名错误返回 401。请求体与上面的 `InvitationEmailEventInput` 相同，仍要求 `invitation_id`；具体服务商字段映射应在 webhook adapter 或网关层转换成该 provider-neutral 格式。
+
+```http
+X-NiceAgent-Webhook-Signature: sha256=...
+```
+
 `GET /api/projects/{project_id}/members`
 
 列出当前项目成员。`project_id` 必须等于当前 actor 所在项目；否则返回 404。响应体：

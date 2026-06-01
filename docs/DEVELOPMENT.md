@@ -99,7 +99,7 @@ OIDC token 至少需要包含：
 
 `X-NiceAgent-Roles` 支持最小 RBAC：`viewer` 只能读，`owner/admin/member/editor/writer` 可以写。如果 trusted header 请求没有传 roles，Control Plane 会从持久 `project_members` 中读取当前用户在当前项目的角色；没有成员关系时返回 `403`。本地 demo 模式仍固定使用 `demo-user/demo-project/owner`。
 
-邀请邮件默认关闭。需要在本地验证 SMTP 配置时，可以设置 `INVITATION_EMAIL_MODE=smtp`、`SMTP_HOST`、`SMTP_FROM` 和可选 `INVITATION_EMAIL_SUBJECT_TEMPLATE`、`INVITATION_EMAIL_BODY_TEMPLATE`。邮件模板使用 Go `text/template` 语法，可用字段包括 `.Email`、`.Role`、`.OrganizationID`、`.ProjectIDOrDash`、`.AcceptURL` 和 `.ExpiresAt`；启动时会校验模板，避免未知字段进入运行期。需要测试进程内队列化投递时，可设置 `INVITATION_EMAIL_QUEUE_MODE=memory`、`INVITATION_EMAIL_QUEUE_SIZE`、`INVITATION_EMAIL_QUEUE_WORKERS` 和 `INVITATION_EMAIL_RETRY_ATTEMPTS`。需要测试可重启恢复的持久投递时，在 Postgres 模式下设置 `INVITATION_EMAIL_QUEUE_MODE=outbox`，投递任务会写入 `invitation_email_outbox`，后台 worker 会 claim due jobs 并重试。
+邀请邮件默认关闭。需要在本地验证 SMTP 配置时，可以设置 `INVITATION_EMAIL_MODE=smtp`、`SMTP_HOST`、`SMTP_FROM` 和可选 `INVITATION_EMAIL_SUBJECT_TEMPLATE`、`INVITATION_EMAIL_BODY_TEMPLATE`。邮件模板使用 Go `text/template` 语法，可用字段包括 `.Email`、`.Role`、`.OrganizationID`、`.ProjectIDOrDash`、`.AcceptURL` 和 `.ExpiresAt`；启动时会校验模板，避免未知字段进入运行期。需要测试进程内队列化投递时，可设置 `INVITATION_EMAIL_QUEUE_MODE=memory`、`INVITATION_EMAIL_QUEUE_SIZE`、`INVITATION_EMAIL_QUEUE_WORKERS` 和 `INVITATION_EMAIL_RETRY_ATTEMPTS`。需要测试可重启恢复的持久投递时，在 Postgres 模式下设置 `INVITATION_EMAIL_QUEUE_MODE=outbox`，投递任务会写入 `invitation_email_outbox`，后台 worker 会 claim due jobs 并重试。需要测试邮件服务商回调时，设置 `INVITATION_EMAIL_WEBHOOK_SECRET`，然后向 `POST /webhooks/invitation-email-events` 发送 provider-neutral 事件，并附带 `X-NiceAgent-Webhook-Signature: sha256=<hmac_sha256(secret, raw_body)>`。
 
 最小 run 配额可通过环境变量开启，默认 `0` 表示不限制：
 

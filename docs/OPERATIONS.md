@@ -94,7 +94,15 @@ INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS=250
 
 `outbox` 模式会把投递任务写入 `invitation_email_outbox` 表。后台 worker 会 claim due jobs、发送 SMTP、成功后标记 `sent`；失败时按指数退避重新置为 `pending`，超过最大次数后标记 `failed`。如果 Control Plane 在发送前或发送失败后重启，锁过期后其他 worker 可以重新 claim。
 
-邮件服务商的 delivery/bounce/complaint/drop 事件可以通过 `POST /api/organizations/{organization_id}/invitation-email-events` 写入 `invitation_email_events`。其中 `bounced`、`complaint` 和 `dropped` 会把对应 outbox delivery 标记为 `bounced`，并把 provider 返回的原因写入 `last_error`；`delivered` 会把 delivery 标记为 `sent`。当前接口仍是 provider-neutral 的管理/回调入口，生产接入具体服务商 webhook 时需要在网关层完成签名校验和字段映射；管理后台重发按钮仍待后续补齐。
+邮件服务商的 delivery/bounce/complaint/drop 事件可以通过 `POST /api/organizations/{organization_id}/invitation-email-events` 写入 `invitation_email_events`。其中 `bounced`、`complaint` 和 `dropped` 会把对应 outbox delivery 标记为 `bounced`，并把 provider 返回的原因写入 `last_error`；`delivered` 会把 delivery 标记为 `sent`。
+
+生产接入邮件服务商 webhook 时，优先使用无登录态的 `POST /webhooks/invitation-email-events`，并配置：
+
+```bash
+INVITATION_EMAIL_WEBHOOK_SECRET=<random-secret>
+```
+
+调用方需要设置 `X-NiceAgent-Webhook-Signature: sha256=<hex>`，其中 `<hex>` 是 `hmac_sha256(secret, raw_body)`。未配置 secret 时 webhook 入口返回 404，签名错误返回 401。当前入口仍要求服务商回调先被转换成 NiceAgent 的 provider-neutral 事件格式；服务商原生签名校验、字段映射、停发策略和管理后台重发按钮仍可在后续 adapter 层继续补齐。
 
 run 配额是最小治理边界，默认关闭。env 配置是 fallback：
 
