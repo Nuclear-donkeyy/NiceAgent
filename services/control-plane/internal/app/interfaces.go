@@ -61,6 +61,7 @@ type Repository interface {
 	CountRunsCreatedSince(userID, projectID string, since time.Time) int
 	SumRunUsageTokensSince(userID, projectID string, since time.Time) int
 	SumRunUsageSince(userID, projectID string, since time.Time) protocol.RunUsage
+	ListRunUsageBucketsSince(projectID string, since time.Time) []protocol.RunUsageBucket
 	ProjectBelongsToOrganization(projectID, orgID string) bool
 	BindUserIdentity(identity protocol.UserIdentity) (protocol.UserIdentity, error)
 	ListOrganizationRoles(userID, orgID string) []string

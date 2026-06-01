@@ -810,6 +810,69 @@ func TestServerProjectQuotaManagementRequiresAdminRole(t *testing.T) {
 	}
 }
 
+func TestServerReturnsProjectUsageBuckets(t *testing.T) {
+	store := repository.NewStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := NewServerWithOptions(store, dispatchFunc(func(context.Context, protocol.Run, string) error { return nil }), log, ServerOptions{}).Handler()
+	chat, err := store.CreateChat(app.DemoUserID, app.DemoProjectID, "usage")
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	_, run, err := store.AddUserMessage(chat.ID, app.DemoUserID, "hello")
+	if err != nil {
+		t.Fatalf("add message: %v", err)
+	}
+	if _, err := store.SaveRunUsage(run.ID, protocol.RunUsage{
+		Provider:              "openai-compatible",
+		Model:                 "deepseek-chat",
+		InputTokens:           10,
+		OutputTokens:          7,
+		Estimated:             true,
+		TokenEstimator:        "heuristic_rune_div4",
+		Cost:                  0.001,
+		Currency:              "USD",
+		ToolCalls:             1,
+		SandboxDurationMillis: 1200,
+		ArtifactBytes:         128,
+	}); err != nil {
+		t.Fatalf("save usage: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/projects/"+app.DemoProjectID+"/usage?window=24h", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("usage status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var output protocol.ProjectUsageResponse
+	decodeJSON(t, response.Body, &output)
+	if output.ProjectID != app.DemoProjectID || output.Window != "24h" || len(output.Buckets) != 1 {
+		t.Fatalf("usage output = %#v", output)
+	}
+	bucket := output.Buckets[0]
+	if bucket.Provider != "openai-compatible" || bucket.Model != "deepseek-chat" ||
+		bucket.RunCount != 1 || bucket.TotalTokens != 17 || bucket.ToolCalls != 1 ||
+		bucket.TokenEstimator != "heuristic_rune_div4" || !bucket.Estimated {
+		t.Fatalf("usage bucket = %#v, want grouped provider/model usage", bucket)
+	}
+	if output.Total.RunCount != 1 || output.Total.TotalTokens != 17 || output.Total.ArtifactBytes != 128 {
+		t.Fatalf("usage total = %#v, want summed totals", output.Total)
+	}
+}
+
+func TestServerProjectUsageRequiresAdminRole(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectRole("viewer-user", "project-a", "viewer")
+
+	request := httptest.NewRequest(http.MethodGet, "/api/projects/project-a/usage", nil)
+	setTrustedActorWithoutRoles(request, "viewer-user", "project-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("viewer usage status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestServerEnforcesRunQuota(t *testing.T) {
 	store := repository.NewStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

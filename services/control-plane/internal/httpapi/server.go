@@ -638,6 +638,14 @@ func (s *Server) projectSubroutes(w http.ResponseWriter, r *http.Request) {
 		platform.WriteError(w, http.StatusNotFound, "project route not found")
 		return
 	}
+	if parts[1] == "usage" {
+		if len(parts) == 2 && r.Method == http.MethodGet {
+			s.projectUsage(w, r, projectID)
+			return
+		}
+		platform.WriteError(w, http.StatusNotFound, "project route not found")
+		return
+	}
 	if parts[1] != "members" {
 		platform.WriteError(w, http.StatusNotFound, "project route not found")
 		return
@@ -671,6 +679,34 @@ func (s *Server) projectSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platform.WriteError(w, http.StatusNotFound, "project route not found")
+}
+
+func (s *Server) projectUsage(w http.ResponseWriter, r *http.Request, projectID string) {
+	if !s.requireProjectAdminRole(w, r, "project.usage.read", "project", projectID, "") {
+		return
+	}
+	window, since, err := parseUsageWindow(r.URL.Query().Get("window"))
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if sinceQuery := strings.TrimSpace(r.URL.Query().Get("since")); sinceQuery != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, sinceQuery)
+		if parseErr != nil {
+			platform.WriteError(w, http.StatusBadRequest, "since must be an RFC3339 timestamp")
+			return
+		}
+		since = parsed.UTC()
+		window = "custom"
+	}
+	buckets := s.repo.ListRunUsageBucketsSince(projectID, since)
+	platform.WriteJSON(w, http.StatusOK, protocol.ProjectUsageResponse{
+		ProjectID: projectID,
+		Window:    window,
+		Since:     since,
+		Buckets:   buckets,
+		Total:     totalUsageBucket(buckets),
+	})
 }
 
 func (s *Server) invitationSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -1577,6 +1613,51 @@ func (s *Server) effectiveQuotaPolicy(projectID string) protocol.ProjectQuotaPol
 func startOfUTCDay(t time.Time) time.Time {
 	t = t.UTC()
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func parseUsageWindow(value string) (string, time.Time, error) {
+	window := strings.ToLower(strings.TrimSpace(value))
+	if window == "" {
+		window = "24h"
+	}
+	now := time.Now().UTC()
+	switch window {
+	case "24h":
+		return window, now.Add(-24 * time.Hour), nil
+	case "7d":
+		return window, now.Add(-7 * 24 * time.Hour), nil
+	case "30d":
+		return window, now.Add(-30 * 24 * time.Hour), nil
+	default:
+		return "", time.Time{}, fmt.Errorf("window must be one of 24h, 7d, 30d")
+	}
+}
+
+func totalUsageBucket(buckets []protocol.RunUsageBucket) protocol.RunUsageBucket {
+	var total protocol.RunUsageBucket
+	for _, bucket := range buckets {
+		total.RunCount += bucket.RunCount
+		total.InputTokens += bucket.InputTokens
+		total.OutputTokens += bucket.OutputTokens
+		total.ReasoningTokens += bucket.ReasoningTokens
+		total.CachedTokens += bucket.CachedTokens
+		total.TotalTokens += bucket.TotalTokens
+		total.Cost += bucket.Cost
+		total.LatencyMillis += bucket.LatencyMillis
+		total.RetryCount += bucket.RetryCount
+		total.ToolCalls += bucket.ToolCalls
+		total.ToolErrors += bucket.ToolErrors
+		total.SandboxCommands += bucket.SandboxCommands
+		total.SandboxDurationMillis += bucket.SandboxDurationMillis
+		total.SandboxOutputBytes += bucket.SandboxOutputBytes
+		total.SandboxCPUMillis += bucket.SandboxCPUMillis
+		if bucket.SandboxMemoryMaxBytes > total.SandboxMemoryMaxBytes {
+			total.SandboxMemoryMaxBytes = bucket.SandboxMemoryMaxBytes
+		}
+		total.ArtifactCount += bucket.ArtifactCount
+		total.ArtifactBytes += bucket.ArtifactBytes
+	}
+	return total
 }
 
 func normalizeTokenReservationOptions(opts TokenReservationOptions) TokenReservationOptions {

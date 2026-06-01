@@ -321,6 +321,42 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 }
 ```
 
+`GET /api/projects/{project_id}/usage?window=24h|7d|30d`
+
+按 provider、model、currency、`estimated` 和 `token_estimator` 聚合当前项目的 run usage，只允许 `owner/admin`。`project_id` 必须等于当前 actor 所在项目。默认窗口为 `24h`；也可以传 `since=<RFC3339>` 做自定义起点，此时响应中的 `window` 为 `custom`。该接口面向用量看板和账单维度分析，不改变 quota 判定逻辑。
+
+```json
+{
+  "project_id": "demo-project",
+  "window": "24h",
+  "since": "2026-06-01T00:00:00Z",
+  "buckets": [
+    {
+      "provider": "openai-compatible",
+      "model": "deepseek-chat",
+      "currency": "USD",
+      "estimated": true,
+      "token_estimator": "heuristic_rune_div4",
+      "run_count": 3,
+      "input_tokens": 1200,
+      "output_tokens": 800,
+      "total_tokens": 2000,
+      "cost": 0.01,
+      "tool_calls": 4,
+      "sandbox_duration_millis": 1500,
+      "artifact_bytes": 4096
+    }
+  ],
+  "total": {
+    "run_count": 3,
+    "total_tokens": 2000,
+    "cost": 0.01,
+    "tool_calls": 4,
+    "artifact_bytes": 4096
+  }
+}
+```
+
 `GET /api/audit/events`
 
 列出当前 actor 在当前项目下最近的 audit events。支持 `limit`、`request_id`、`run_id`、`action`、`resource_id` 过滤，`limit` 最大 100。audit metadata 会按敏感 key 脱敏，API key、Authorization header、token、secret、password 和 cookie 不应出现在响应中。

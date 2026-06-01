@@ -240,10 +240,14 @@ func TestStoreSumsRunUsageTokensSince(t *testing.T) {
 		t.Fatalf("add user message: %v", err)
 	}
 	if _, err := store.SaveRunUsage(run.ID, protocol.RunUsage{
+		Provider:              "openai-compatible",
+		Model:                 "deepseek-chat",
 		InputTokens:           7,
 		OutputTokens:          5,
 		Estimated:             true,
 		TokenEstimator:        "heuristic_rune_div4",
+		Cost:                  0.0012,
+		Currency:              "USD",
 		ToolCalls:             2,
 		ToolErrors:            1,
 		SandboxCommands:       1,
@@ -280,6 +284,15 @@ func TestStoreSumsRunUsageTokensSince(t *testing.T) {
 	totals := store.SumRunUsageSince("demo-user", app.DemoProjectID, time.Now().UTC().Add(-time.Hour))
 	if totals.TotalTokens != 12 || totals.ToolCalls != 2 || totals.SandboxCommands != 1 || totals.ArtifactBytes != 4096 {
 		t.Fatalf("usage totals = %#v, want token/tool/sandbox totals", totals)
+	}
+	buckets := store.ListRunUsageBucketsSince(app.DemoProjectID, time.Now().UTC().Add(-time.Hour))
+	if len(buckets) != 1 {
+		t.Fatalf("usage bucket count = %d, want 1", len(buckets))
+	}
+	if bucket := buckets[0]; bucket.Provider != "openai-compatible" || bucket.Model != "deepseek-chat" ||
+		bucket.Currency != "USD" || !bucket.Estimated || bucket.TokenEstimator != "heuristic_rune_div4" ||
+		bucket.RunCount != 1 || bucket.TotalTokens != 12 || bucket.ToolCalls != 2 || bucket.ArtifactBytes != 4096 {
+		t.Fatalf("usage bucket = %#v, want provider/model billing bucket", bucket)
 	}
 }
 

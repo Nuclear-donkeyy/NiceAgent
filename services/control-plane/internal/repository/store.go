@@ -343,6 +343,42 @@ func (s *Store) SumRunUsageSince(userID, projectID string, since time.Time) prot
 	return total
 }
 
+func (s *Store) ListRunUsageBucketsSince(projectID string, since time.Time) []protocol.RunUsageBucket {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	bucketsByKey := map[string]*protocol.RunUsageBucket{}
+	for runID, usage := range s.runUsage {
+		run, ok := s.runs[runID]
+		if !ok || run.CreatedAt.Before(since) {
+			continue
+		}
+		chat, ok := s.chats[run.ChatID]
+		if !ok || chat.ProjectID != projectID {
+			continue
+		}
+		normalized := protocol.NormalizeRunUsage(usage)
+		key := usageBucketKey(normalized)
+		bucket := bucketsByKey[key]
+		if bucket == nil {
+			bucket = &protocol.RunUsageBucket{
+				Provider:       normalized.Provider,
+				Model:          normalized.Model,
+				Currency:       normalized.Currency,
+				Estimated:      normalized.Estimated,
+				TokenEstimator: normalized.TokenEstimator,
+			}
+			bucketsByKey[key] = bucket
+		}
+		addUsageToBucket(bucket, normalized)
+	}
+	buckets := make([]protocol.RunUsageBucket, 0, len(bucketsByKey))
+	for _, bucket := range bucketsByKey {
+		buckets = append(buckets, *bucket)
+	}
+	sortRunUsageBuckets(buckets)
+	return buckets
+}
+
 func (s *Store) ProjectBelongsToOrganization(projectID, orgID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1160,6 +1196,58 @@ func splitProjectRoleKey(key string) (string, string, bool) {
 		return "", "", false
 	}
 	return parts[0], parts[1], true
+}
+
+func usageBucketKey(usage protocol.RunUsage) string {
+	return usage.Provider + "\x00" + usage.Model + "\x00" + usage.Currency + "\x00" + formatBool(usage.Estimated) + "\x00" + usage.TokenEstimator
+}
+
+func addUsageToBucket(bucket *protocol.RunUsageBucket, usage protocol.RunUsage) {
+	bucket.RunCount++
+	bucket.InputTokens += usage.InputTokens
+	bucket.OutputTokens += usage.OutputTokens
+	bucket.ReasoningTokens += usage.ReasoningTokens
+	bucket.CachedTokens += usage.CachedTokens
+	bucket.TotalTokens += usage.TotalTokens
+	bucket.Cost += usage.Cost
+	bucket.LatencyMillis += usage.LatencyMillis
+	bucket.RetryCount += usage.RetryCount
+	bucket.ToolCalls += usage.ToolCalls
+	bucket.ToolErrors += usage.ToolErrors
+	bucket.SandboxCommands += usage.SandboxCommands
+	bucket.SandboxDurationMillis += usage.SandboxDurationMillis
+	bucket.SandboxOutputBytes += usage.SandboxOutputBytes
+	bucket.SandboxCPUMillis += usage.SandboxCPUMillis
+	if usage.SandboxMemoryMaxBytes > bucket.SandboxMemoryMaxBytes {
+		bucket.SandboxMemoryMaxBytes = usage.SandboxMemoryMaxBytes
+	}
+	bucket.ArtifactCount += usage.ArtifactCount
+	bucket.ArtifactBytes += usage.ArtifactBytes
+}
+
+func sortRunUsageBuckets(buckets []protocol.RunUsageBucket) {
+	sort.Slice(buckets, func(i, j int) bool {
+		if buckets[i].Provider != buckets[j].Provider {
+			return buckets[i].Provider < buckets[j].Provider
+		}
+		if buckets[i].Model != buckets[j].Model {
+			return buckets[i].Model < buckets[j].Model
+		}
+		if buckets[i].Currency != buckets[j].Currency {
+			return buckets[i].Currency < buckets[j].Currency
+		}
+		if buckets[i].Estimated != buckets[j].Estimated {
+			return !buckets[i].Estimated
+		}
+		return buckets[i].TokenEstimator < buckets[j].TokenEstimator
+	})
+}
+
+func formatBool(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
 }
 
 func normalizeMemberRole(role string) string {

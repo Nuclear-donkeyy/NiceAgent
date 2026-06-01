@@ -69,9 +69,12 @@ Redis quota 支持两种模型 token 预占模式。`QUOTA_MODEL_TOKEN_RESERVATI
 ```bash
 GET /api/projects/{project_id}/quota
 PATCH /api/projects/{project_id}/quota
+GET /api/projects/{project_id}/usage?window=24h|7d|30d
 ```
 
-如果 `project_quota_policies` 中存在当前项目配置，Control Plane 会优先使用持久 policy；如果不存在，则使用上述 env fallback。policy 字段 `max_concurrent_runs`、`max_runs_per_hour`、`max_model_tokens_per_day`、`max_tool_calls_per_day`、`max_sandbox_seconds_per_day` 都是非负整数，`0` 表示关闭对应限制。Redis 计数缓存、并发/小时窗口预占、固定或动态模型 token 预扣/结算，以及 Runtime 调 tool 前的 tool/sandbox 最小预占已有闭环；分布式强一致 token bucket、真实 tokenizer 和账单维度 quota 仍是后续工作。
+如果 `project_quota_policies` 中存在当前项目配置，Control Plane 会优先使用持久 policy；如果不存在，则使用上述 env fallback。policy 字段 `max_concurrent_runs`、`max_runs_per_hour`、`max_model_tokens_per_day`、`max_tool_calls_per_day`、`max_sandbox_seconds_per_day` 都是非负整数，`0` 表示关闭对应限制。Redis 计数缓存、并发/小时窗口预占、固定或动态模型 token 预扣/结算，以及 Runtime 调 tool 前的 tool/sandbox 最小预占已有闭环。
+
+`GET /api/projects/{project_id}/usage` 提供最小账单维度统计：按 provider、model、currency、是否估算和 token estimator 聚合 run usage，并返回窗口总计。当前支持 `window=24h|7d|30d` 或 `since=<RFC3339>`，只允许 `owner/admin` 访问。这个接口可以用于运营看板、成本排查和后续账单导出，但还不是强一致计费系统；真实 tokenizer、按租户/模型的分布式 token bucket 和外部告警仍是后续工作。
 
 三服务内部 API 使用同一个 bearer token：
 
