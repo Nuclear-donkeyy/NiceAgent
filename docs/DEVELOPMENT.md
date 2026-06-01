@@ -146,6 +146,15 @@ MODEL_PRICE_CURRENCY=USD
 
 Runtime 会把 token usage、tool usage 和可选费用写入 `RunUsage`，Control Plane 会随 `GET /api/runs/{run_id}` 返回。tool/sandbox 在调用前会先写入预占 usage，run 完成时再以实际 `RunUsage` 覆盖预占快照。
 
+如需在本地避免误打过多真实模型请求，可以加 Runtime 进程内保护阀：
+
+```bash
+MODEL_REQUESTS_PER_MINUTE=30
+MODEL_MAX_CONCURRENT_REQUESTS=2
+```
+
+命中 `MODEL_REQUESTS_PER_MINUTE` 会被归类为 `rate_limited`，如果配置了 `MODEL_FALLBACK_PROVIDER`，会走已有 fallback 策略。该限流只在当前 Runtime 进程内生效，不替代供应商账号级限流。
+
 Postgres 持久化路径：
 
 ```bash

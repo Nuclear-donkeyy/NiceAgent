@@ -111,6 +111,16 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: MODEL_PRICE_CURRENCY
+            - name: MODEL_REQUESTS_PER_MINUTE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_REQUESTS_PER_MINUTE
+            - name: MODEL_MAX_CONCURRENT_REQUESTS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_MAX_CONCURRENT_REQUESTS
             - name: MODEL_HEALTH_PROBE_ENABLED
               valueFrom:
                 configMapKeyRef:

@@ -57,7 +57,8 @@ func NewOpenAICompatibleChatModel(ctx context.Context, config OpenAICompatiblePr
 	if err != nil {
 		return nil, err
 	}
-	return NewOperationalChatModel(chatModel, ProviderMetadata{Provider: config.ID, Model: config.Model}, tracker, redactor), nil
+	limiter := NewLocalRateLimiter(config.RateLimit)
+	return NewOperationalChatModelWithRateLimiter(chatModel, ProviderMetadata{Provider: config.ID, Model: config.Model}, tracker, redactor, limiter), nil
 }
 
 func ValidateOpenAICompatibleConfig(config OpenAICompatibleProviderConfig) error {

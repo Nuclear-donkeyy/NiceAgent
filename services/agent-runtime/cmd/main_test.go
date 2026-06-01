@@ -89,6 +89,22 @@ func TestModelProviderFromEnvBuildsMockFallback(t *testing.T) {
 	}
 }
 
+func TestModelProviderFromEnvBuildsOpenAICompatibleWithRateLimit(t *testing.T) {
+	t.Setenv("MODEL_PROVIDER", "openai-compatible")
+	t.Setenv("MODEL_BASE_URL", "http://example.test/")
+	t.Setenv("MODEL_API_KEY", "secret")
+	t.Setenv("MODEL_NAME", "model")
+	t.Setenv("MODEL_REQUESTS_PER_MINUTE", "1")
+
+	provider, err := modelProviderFromEnv(config.FromEnv(), discardLogger())
+	if err != nil {
+		t.Fatalf("model provider: %v", err)
+	}
+	if _, ok := provider.(modelprovider.UsageReporter); !ok {
+		t.Fatalf("provider = %T, want operational provider with usage tracking", provider)
+	}
+}
+
 func TestModelProviderFromEnvRejectsInvalidOpenAICompatibleConfig(t *testing.T) {
 	t.Setenv("MODEL_PROVIDER", "openai-compatible")
 	t.Setenv("MODEL_BASE_URL", "")

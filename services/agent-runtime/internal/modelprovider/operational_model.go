@@ -22,9 +22,14 @@ type OperationalChatModel struct {
 	meta     ProviderMetadata
 	tracker  *UsageTracker
 	redactor Redactor
+	limiter  *LocalRateLimiter
 }
 
 func NewOperationalChatModel(inner model.ToolCallingChatModel, meta ProviderMetadata, tracker *UsageTracker, redactor Redactor) *OperationalChatModel {
+	return NewOperationalChatModelWithRateLimiter(inner, meta, tracker, redactor, nil)
+}
+
+func NewOperationalChatModelWithRateLimiter(inner model.ToolCallingChatModel, meta ProviderMetadata, tracker *UsageTracker, redactor Redactor, limiter *LocalRateLimiter) *OperationalChatModel {
 	if tracker == nil {
 		tracker = NewUsageTracker(meta.Provider, meta.Model)
 	}
@@ -33,6 +38,7 @@ func NewOperationalChatModel(inner model.ToolCallingChatModel, meta ProviderMeta
 		meta:     meta,
 		tracker:  tracker,
 		redactor: redactor,
+		limiter:  limiter,
 	}
 }
 
@@ -42,6 +48,14 @@ func (m *OperationalChatModel) Generate(ctx context.Context, input []*schema.Mes
 		"model":    m.meta.Model,
 	})
 	start := time.Now()
+	release, err := m.acquire(ctx)
+	if err != nil {
+		m.tracker.ObserveCall(time.Since(start), err)
+		err = m.redactError(err)
+		endSpan(err, nil)
+		return nil, err
+	}
+	defer release()
 	msg, err := m.inner.Generate(ctx, input, opts...)
 	m.tracker.ObserveCall(time.Since(start), err)
 	if err != nil {
@@ -60,6 +74,14 @@ func (m *OperationalChatModel) Stream(ctx context.Context, input []*schema.Messa
 		"model":    m.meta.Model,
 	})
 	start := time.Now()
+	release, err := m.acquire(ctx)
+	if err != nil {
+		m.tracker.ObserveCall(time.Since(start), err)
+		err = m.redactError(err)
+		endSpan(err, nil)
+		return nil, err
+	}
+	defer release()
 	reader, err := m.inner.Stream(ctx, input, opts...)
 	m.tracker.ObserveCall(time.Since(start), err)
 	if err != nil {
@@ -77,7 +99,15 @@ func (m *OperationalChatModel) Probe(ctx context.Context) error {
 		"model":    m.meta.Model,
 	})
 	start := time.Now()
-	_, err := m.inner.Generate(ctx, []*schema.Message{schema.UserMessage("health check: reply with ok")})
+	release, err := m.acquire(ctx)
+	if err != nil {
+		err = m.redactError(err)
+		m.tracker.ObserveProbe(time.Since(start), err)
+		endSpan(err, nil)
+		return err
+	}
+	defer release()
+	_, err = m.inner.Generate(ctx, []*schema.Message{schema.UserMessage("health check: reply with ok")})
 	if err != nil {
 		err = m.redactError(err)
 	}
@@ -95,7 +125,7 @@ func (m *OperationalChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCa
 	if err != nil {
 		return nil, m.redactError(err)
 	}
-	return NewOperationalChatModel(nextInner, m.meta, m.tracker, m.redactor), nil
+	return NewOperationalChatModelWithRateLimiter(nextInner, m.meta, m.tracker, m.redactor, m.limiter), nil
 }
 
 func (m *OperationalChatModel) UsageSnapshot() protocol.RunUsage {
@@ -120,6 +150,13 @@ func (m *OperationalChatModel) redactError(err error) error {
 		return providerErr
 	}
 	return errors.New(m.redactor.RedactString(err.Error()))
+}
+
+func (m *OperationalChatModel) acquire(ctx context.Context) (func(), error) {
+	if m == nil || m.limiter == nil {
+		return func() {}, nil
+	}
+	return m.limiter.Acquire(ctx)
 }
 
 var _ model.ToolCallingChatModel = (*OperationalChatModel)(nil)

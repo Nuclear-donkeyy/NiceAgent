@@ -174,6 +174,10 @@ func newOpenAICompatibleModel(cfg config.Config, providerConfig modelprovider.Op
 		ReasoningOutputPer1M: cfg.ModelReasoningPricePer1M,
 		Currency:             cfg.ModelPriceCurrency,
 	}
+	providerConfig.RateLimit = modelprovider.RateLimitConfig{
+		RequestsPerMinute: cfg.ModelRequestsPerMinute,
+		MaxConcurrent:     cfg.ModelMaxConcurrentRequests,
+	}
 	return modelprovider.NewOpenAICompatibleChatModel(context.Background(), providerConfig)
 }
 

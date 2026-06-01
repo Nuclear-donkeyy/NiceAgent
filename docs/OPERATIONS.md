@@ -114,6 +114,8 @@ Agent Runtime 默认使用 `MODEL_PROVIDER=mock`，适合本地演示和 CI。�
 - `MODEL_PROVIDER_PROFILE`：可选 provider profile。当前支持 `deepseek`，会复用 OpenAI-compatible provider、默认 `MODEL_BASE_URL=https://api.deepseek.com`，并把 usage provider 标记为 `deepseek`；API key 和模型名仍必须显式配置。
 - `MODEL_INPUT_PRICE_PER_1M_TOKENS`、`MODEL_CACHED_INPUT_PRICE_PER_1M_TOKENS`、`MODEL_OUTPUT_PRICE_PER_1M_TOKENS`、`MODEL_REASONING_PRICE_PER_1M_TOKENS`：可选价格配置，单位是每 100 万 token 的价格；默认都是 0，不提交任何厂商实时价格。
 - `MODEL_PRICE_CURRENCY`：价格币种，默认 `USD`。
+- `MODEL_REQUESTS_PER_MINUTE`：Runtime 进程内模型请求固定窗口限流，默认 0 表示关闭。命中后返回 `rate_limited`，可触发已配置的 fallback。
+- `MODEL_MAX_CONCURRENT_REQUESTS`：Runtime 进程内模型请求并发上限，默认 0 表示关闭。它用于保护本地进程和 provider 连接池，不替代供应商账号级限流。
 - `MODEL_HEALTH_PROBE_ENABLED`：是否开启主动模型健康探针，默认 `false`，避免本地和 CI 无意产生真实模型调用。
 - `MODEL_HEALTH_PROBE_INTERVAL_SECONDS`：主动探针间隔，默认 60 秒。
 - `MODEL_HEALTH_PROBE_TIMEOUT_SECONDS`：单次探针超时，默认 10 秒。
@@ -134,6 +136,8 @@ Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCal
 `RunUsage` 也会记录 run 级工具/sandbox 聚合：tool 调用数、tool 错误数、sandbox 命令数、sandbox 执行耗时、stdout/stderr 输出字节数、sandbox CPU/内存使用摘要以及 artifact 数量/大小。它们来自 Eino tool observation 和 `SandboxResult`，用于排障、审计和配额/账单聚合。Runtime 执行 tool 前会先向 Control Plane 预占一次 `tool_calls`；`cli.exec` 还会按 timeout 预占 `sandbox_seconds`。如果预占被拒绝，Runtime 不会执行真实 tool，而是把中文 quota deny 作为 tool observation 交给模型。run 完成时会用实际 `RunUsage` 覆盖预占快照。当前还没有更细的按 skill/provider 计费和分布式强一致 token bucket。
 
 模型错误会按运营类目归一化：401 为 `auth_error`，402 为 `billing_error`，400/422 为 `request_error`，429 为 `rate_limited`，500/503/网关错误为 `provider_unavailable`，超时和连接错误为 `network_error`。429、5xx 和网络瞬时错误会按指数退避重试并尊重 `Retry-After`；401、402、400、422 不重试。开启 `MODEL_FALLBACK_PROVIDER` 后，Runtime 只会对 `rate_limited`、`provider_unavailable`、`network_error` 触发后备 provider；成功后会在 `RunUsage.fallback_from`、`RunUsage.fallback_to` 和 `RunUsage.error_class` 记录切换原因。provider 错误、日志和 run error 会经过 redactor，默认不输出 API key、Authorization、token、secret、password 或 cookie。
+
+`MODEL_REQUESTS_PER_MINUTE` 和 `MODEL_MAX_CONCURRENT_REQUESTS` 是 Runtime 进程内保护阀：它们会覆盖普通模型请求、streaming 请求和主动 probe，但不会跨多个 Runtime 副本做强一致配额。生产环境仍应结合 provider 控制台限流、网关限流和多副本容量规划。
 
 Agent Runtime 的 `GET /healthz` 会包含 `model_provider` 快照，展示 provider/model、最近请求计数、成功/失败计数、错误分类、最近延迟、fallback 状态和可选主动 probe 状态。默认不开启主动 probe；生产环境可以打开 `MODEL_HEALTH_PROBE_ENABLED=true`，让 Runtime 周期性调用当前 Eino ChatModel。该探针不会把 token 计入 run usage，但会产生真实模型请求和供应商侧费用，应结合告警阈值谨慎启用。
 

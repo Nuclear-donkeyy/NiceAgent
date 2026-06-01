@@ -44,6 +44,8 @@ type Config struct {
 	ModelOutputPricePer1M        float64
 	ModelReasoningPricePer1M     float64
 	ModelPriceCurrency           string
+	ModelRequestsPerMinute       int
+	ModelMaxConcurrentRequests   int
 	ModelHealthProbeEnabled      bool
 	ModelHealthProbeInterval     time.Duration
 	ModelHealthProbeTimeout      time.Duration
@@ -96,6 +98,8 @@ func FromEnv() Config {
 		ModelOutputPricePer1M:        floatFromEnv("MODEL_OUTPUT_PRICE_PER_1M_TOKENS", 0),
 		ModelReasoningPricePer1M:     floatFromEnv("MODEL_REASONING_PRICE_PER_1M_TOKENS", 0),
 		ModelPriceCurrency:           strings.TrimSpace(env("MODEL_PRICE_CURRENCY", "USD")),
+		ModelRequestsPerMinute:       nonNegativeIntFromEnv("MODEL_REQUESTS_PER_MINUTE", 0),
+		ModelMaxConcurrentRequests:   nonNegativeIntFromEnv("MODEL_MAX_CONCURRENT_REQUESTS", 0),
 		ModelHealthProbeEnabled:      boolFromEnv("MODEL_HEALTH_PROBE_ENABLED", false),
 		ModelHealthProbeInterval:     secondsDuration("MODEL_HEALTH_PROBE_INTERVAL_SECONDS", time.Minute),
 		ModelHealthProbeTimeout:      secondsDuration("MODEL_HEALTH_PROBE_TIMEOUT_SECONDS", 10*time.Second),
@@ -124,6 +128,12 @@ func (c Config) Validate() error {
 		if c.ModelHealthProbeTimeout <= 0 {
 			return fmt.Errorf("MODEL_HEALTH_PROBE_TIMEOUT_SECONDS must be positive when MODEL_HEALTH_PROBE_ENABLED=true")
 		}
+	}
+	if c.ModelRequestsPerMinute < 0 {
+		return fmt.Errorf("MODEL_REQUESTS_PER_MINUTE must be greater than or equal to 0")
+	}
+	if c.ModelMaxConcurrentRequests < 0 {
+		return fmt.Errorf("MODEL_MAX_CONCURRENT_REQUESTS must be greater than or equal to 0")
 	}
 	return nil
 }
@@ -195,6 +205,18 @@ func intFromEnv(key string, fallback int) int {
 	value, err := strconv.Atoi(raw)
 	if err != nil || value <= 0 {
 		log.Fatalf("%s must be a positive integer, got %q", key, raw)
+	}
+	return value
+}
+
+func nonNegativeIntFromEnv(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		log.Fatalf("%s must be a non-negative integer, got %q", key, raw)
 	}
 	return value
 }
