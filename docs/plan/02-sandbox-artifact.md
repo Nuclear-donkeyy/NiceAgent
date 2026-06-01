@@ -28,7 +28,7 @@ Kubernetes 生产层可用 Job/Pod 承载 sandbox task，并通过 requests/limi
 
 `packages/common/sandbox/executor.go` 已有 local executor，包含 allowlist/dangerous 策略、超时、workspace 目录创建、环境变量过滤和输出截断。allowlist 目前包括 `curl`、`wget`、`dig`、`nslookup`、`date`、`echo`、`pwd`、`ls`；危险命令会按系统 CLI 只读策略拒绝。
 
-`packages/common/sandbox/container.go` 已有 Docker `ContainerExecutor`，支持 `--cpus`、`--memory`、`--pids-limit`、`--read-only`、`--cap-drop ALL`、`no-new-privileges`、`tmpfs`、workspace volume 和可选 `--network none`。`services/sandbox-executor` 支持 `EXECUTOR_MODE=local|container`，但 Compose 里默认仍是 `local`，container 还没有成为默认生产路径，也没有 K8s RuntimeClass/NetworkPolicy 加固示例。
+`packages/common/sandbox/container.go` 已有 Docker `ContainerExecutor`，支持 `--cpus`、`--memory`、`--pids-limit`、`--read-only`、`--cap-drop ALL`、`no-new-privileges`、`tmpfs`、workspace volume 和可选 `--network none`。`services/sandbox-executor` 支持 `EXECUTOR_MODE=local|container`，但 Compose 里默认仍是 `local`，container 还没有成为默认生产路径。K8s 已有第一版加固模板：`sandbox-hardening.yaml` 提供 `LimitRange`、`ResourceQuota` 和 Sandbox Executor ingress `NetworkPolicy`，`sandbox-executor.yaml` 已设置非 root、禁止提权、drop capabilities、`RuntimeDefault` seccomp 和只读 rootfs。RuntimeClass、独立节点池和更严格 egress policy 仍待后续补齐。
 
 `services/sandbox-executor` 已独立成服务，并按配置装配 local 或 container executor，通过内部 HTTP API 暴露执行能力。Agent Runtime 如果配置了 `SANDBOX_EXECUTOR_URL` 会走 HTTP executor；否则回退到进程内 local executor。
 
@@ -45,7 +45,7 @@ Sandbox 执行后会扫描 workspace `output/` 下的新增或修改文件，生
 - Control Plane 增加 `artifacts` 表、artifact repository、list/download API。
 - Runtime 在 tool 调用后根据 Sandbox result 写入 `artifact.created`。
 - `workspace.read` 继续扩展更多 workspace 元数据，但仍只能读取已登记 artifact 或经过 Control Plane 校验的只读资源。
-- K8s 增加 NetworkPolicy、ResourceQuota、LimitRange、securityContext、RuntimeClass 示例。
+- K8s 已有基础 NetworkPolicy、ResourceQuota、LimitRange 和 securityContext；后续补 RuntimeClass、独立节点池、egress policy 和镜像白名单示例。
 
 ## 技术架构
 
@@ -104,7 +104,7 @@ Artifact 元数据建议包括：
 1. 持久化与只读闭环：`artifacts` 表、workspace 记录、artifact list/download API、`artifact.created` event、`workspace.read` artifact list/text read。
 2. 容器默认执行：Sandbox Executor 接入 ContainerExecutor，加资源、网络和 security flags。
 3. Artifact 产品化：前端展示、下载、失败提示、过期状态、run replay 恢复。
-4. K8s 加固：NetworkPolicy、ResourceQuota、LimitRange、securityContext、RuntimeClass。
+4. K8s 加固：基础 NetworkPolicy、ResourceQuota、LimitRange 和 Sandbox Executor securityContext 已落地；后续继续补 RuntimeClass、独立节点池、egress policy 和镜像白名单。
 5. 强隔离选型：gVisor/Kata 作为可选 profile，Firecracker 放长期专用执行池。
 
 ## 风险与验收

@@ -76,6 +76,7 @@ kind-load:
 k8s-apply:
 	kubectl apply -f deployments/k8s/namespace.yaml
 	kubectl apply -f deployments/k8s/configmap.yaml
+	kubectl apply -f deployments/k8s/sandbox-hardening.yaml
 	kubectl apply -f deployments/k8s/redis.yaml
 	kubectl apply -f deployments/k8s/sandbox-executor.yaml
 	kubectl apply -f deployments/k8s/agent-runtime.yaml

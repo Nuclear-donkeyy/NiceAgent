@@ -143,12 +143,15 @@ make docker-build IMAGE_REGISTRY=niceagent IMAGE_TAG=dev
 ```text
 namespace.yaml
 configmap.yaml
+sandbox-hardening.yaml
 control-plane.yaml
 agent-runtime.yaml
 sandbox-executor.yaml
 redis.yaml
 secrets.example.yaml
 ```
+
+`sandbox-hardening.yaml` 包含基础 `LimitRange`、`ResourceQuota` 和只允许 Agent Runtime 访问 Sandbox Executor 的 `NetworkPolicy`。它是最小 K8s 加固边界，不等同于强隔离 sandbox；更强隔离仍需要 RuntimeClass、独立节点池或 microVM worker。
 
 `control-plane` 的 Service 第一版使用 `LoadBalancer`，在 ACK 上可能创建云负载均衡资源。正式环境建议后续改为 Ingress、HTTPS 证书和域名接入。
 

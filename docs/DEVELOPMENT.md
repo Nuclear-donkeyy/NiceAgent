@@ -315,6 +315,8 @@ make kind-create
 make kind-deploy
 ```
 
+`make k8s-apply` 会同时应用 `deployments/k8s/sandbox-hardening.yaml`，为 namespace 设置默认资源限制/配额，并限制只有 Agent Runtime Pod 可以访问 Sandbox Executor Service。
+
 查看状态：
 
 ```bash

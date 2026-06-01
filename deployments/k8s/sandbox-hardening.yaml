@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: niceagent-default-limits
+  namespace: niceagent
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+        ephemeral-storage: 256Mi
+      default:
+        cpu: 500m
+        memory: 512Mi
+        ephemeral-storage: 1Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: niceagent-namespace-quota
+  namespace: niceagent
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "4"
+    requests.memory: 4Gi
+    requests.ephemeral-storage: 10Gi
+    limits.cpu: "8"
+    limits.memory: 8Gi
+    limits.ephemeral-storage: 20Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: niceagent-sandbox-executor-ingress
+  namespace: niceagent
+spec:
+  podSelector:
+    matchLabels:
+      app: niceagent-sandbox-executor
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: niceagent-agent-runtime
+      ports:
+        - protocol: TCP
+          port: 8082

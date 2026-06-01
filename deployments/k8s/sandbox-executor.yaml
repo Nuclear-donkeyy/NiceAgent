@@ -13,12 +13,25 @@ spec:
       labels:
         app: niceagent-sandbox-executor
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: sandbox-executor
           image: registry.example.com/niceagent/niceagent-sandbox-executor:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8082
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: SANDBOX_EXECUTOR_ADDR
               value: ":8082"
@@ -67,6 +80,8 @@ spec:
           volumeMounts:
             - name: workspaces
               mountPath: /app/workspaces
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /healthz
@@ -89,6 +104,9 @@ spec:
       volumes:
         - name: workspaces
           emptyDir: {}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
 ---
 apiVersion: v1
 kind: Service
