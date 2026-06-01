@@ -270,7 +270,7 @@ python3 scripts/smoke_three_services.py --dispatch-mode redis --redis-addr 127.0
 make smoke-three-services-redis
 ```
 
-该命令会使用唯一 stream/group，执行两次 `/cli echo ...`，并在输出中打印每个 run 的 `claimed_by`。
+该命令会使用唯一 stream/group，执行两次 `/cli echo ...`，并校验每个 run 的 `claimed_by` 都来自预期 Runtime consumer；当启动多个 Runtime 时，还会确认至少两个 consumer 实际 claim 到工作。
 
 需要验证真实浏览器 UI 与三服务联动时运行：
 
