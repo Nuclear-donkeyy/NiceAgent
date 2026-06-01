@@ -49,6 +49,13 @@ type AuditEventListOptions struct {
 	ResourceID string
 }
 
+type SkillInvocationListOptions struct {
+	Limit   int
+	RunID   string
+	SkillID string
+	Status  string
+}
+
 type InvitationEmailEventListOptions struct {
 	InvitationID string
 	DeliveryID   string
@@ -108,6 +115,8 @@ type Repository interface {
 	CreateHTTPSkill(userID, projectID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
 	UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
 	SetSkillEnabled(userID, skillID string, enabled bool) (protocol.Skill, error)
+	RecordSkillInvocation(input protocol.SkillInvocationRecordInput) (protocol.SkillInvocationRecord, error)
+	ListSkillInvocations(actor ActorContext, opts SkillInvocationListOptions) []protocol.SkillInvocationRecord
 	AddAuditEvent(input protocol.AuditEventInput) (protocol.AuditEvent, error)
 	ListAuditEvents(actor ActorContext, opts AuditEventListOptions) []protocol.AuditEvent
 }
