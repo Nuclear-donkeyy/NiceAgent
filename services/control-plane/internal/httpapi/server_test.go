@@ -1573,6 +1573,81 @@ func TestServerPersistsListsAndDownloadsArtifacts(t *testing.T) {
 	}
 }
 
+func TestArtifactAPIsIsolateUsersAndProjects(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	t.Setenv("SANDBOX_WORKSPACE_ROOT", workspaceRoot)
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	chat, err := store.CreateChat("user-a", "project-a", "artifact isolation")
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	_, run, err := store.AddUserMessage(chat.ID, "user-a", "make artifact")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	outputDir := filepath.Join(workspaceRoot, run.WorkspaceID, "output")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "report.txt"), []byte("private report"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	artifact, err := store.AddArtifact(protocol.Artifact{
+		RunID:          run.ID,
+		Path:           "output/report.txt",
+		Name:           "report.txt",
+		MimeType:       "text/plain",
+		SizeBytes:      14,
+		StorageBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("add artifact: %v", err)
+	}
+
+	ownerList := httptest.NewRequest(http.MethodGet, "/api/runs/"+run.ID+"/artifacts", nil)
+	setTrustedActor(ownerList, "user-a", "project-a")
+	ownerListResponse := httptest.NewRecorder()
+	handler.ServeHTTP(ownerListResponse, ownerList)
+	if ownerListResponse.Code != http.StatusOK {
+		t.Fatalf("owner list status = %d, body = %s", ownerListResponse.Code, ownerListResponse.Body.String())
+	}
+
+	for _, tc := range []struct {
+		name      string
+		userID    string
+		projectID string
+	}{
+		{name: "other user", userID: "user-b", projectID: "project-a"},
+		{name: "other project", userID: "user-a", projectID: "project-b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			list := httptest.NewRequest(http.MethodGet, "/api/runs/"+run.ID+"/artifacts", nil)
+			setTrustedActor(list, tc.userID, tc.projectID)
+			listResponse := httptest.NewRecorder()
+			handler.ServeHTTP(listResponse, list)
+			if listResponse.Code != http.StatusNotFound {
+				t.Fatalf("cross-scope list status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+			}
+
+			get := httptest.NewRequest(http.MethodGet, "/api/artifacts/"+artifact.ID, nil)
+			setTrustedActor(get, tc.userID, tc.projectID)
+			getResponse := httptest.NewRecorder()
+			handler.ServeHTTP(getResponse, get)
+			if getResponse.Code != http.StatusNotFound {
+				t.Fatalf("cross-scope get status = %d, body = %s", getResponse.Code, getResponse.Body.String())
+			}
+
+			download := httptest.NewRequest(http.MethodGet, "/api/artifacts/"+artifact.ID+"/download", nil)
+			setTrustedActor(download, tc.userID, tc.projectID)
+			downloadResponse := httptest.NewRecorder()
+			handler.ServeHTTP(downloadResponse, download)
+			if downloadResponse.Code != http.StatusNotFound {
+				t.Fatalf("cross-scope download status = %d, body = %s", downloadResponse.Code, downloadResponse.Body.String())
+			}
+		})
+	}
+}
+
 func TestArtifactDownloadRejectsTraversalAndSymlinkEscape(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	t.Setenv("SANDBOX_WORKSPACE_ROOT", workspaceRoot)
