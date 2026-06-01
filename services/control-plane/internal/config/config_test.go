@@ -92,6 +92,7 @@ func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	t.Setenv("INVITATION_EMAIL_QUEUE_WORKERS", "2")
 	t.Setenv("INVITATION_EMAIL_RETRY_ATTEMPTS", "3")
 	t.Setenv("INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS", "10")
+	t.Setenv("INVITATION_EMAIL_WEBHOOK_SECRET", "webhook-secret")
 
 	cfg := FromEnv()
 
@@ -106,6 +107,9 @@ func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	}
 	if cfg.InvitationEmailQueueMode != "memory" || cfg.InvitationEmailQueueSize != 25 || cfg.InvitationEmailQueueWorkers != 2 || cfg.InvitationEmailRetryAttempts != 3 || cfg.InvitationEmailRetryInitialDelay != 10 {
 		t.Fatalf("invitation queue config = mode:%q size:%d workers:%d attempts:%d delay:%d", cfg.InvitationEmailQueueMode, cfg.InvitationEmailQueueSize, cfg.InvitationEmailQueueWorkers, cfg.InvitationEmailRetryAttempts, cfg.InvitationEmailRetryInitialDelay)
+	}
+	if cfg.InvitationEmailWebhookSecret != "webhook-secret" {
+		t.Fatalf("invitation webhook secret = %q", cfg.InvitationEmailWebhookSecret)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected smtp config to validate: %v", err)

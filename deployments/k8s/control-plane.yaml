@@ -159,6 +159,12 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS
+            - name: INVITATION_EMAIL_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-smtp
+                  key: webhook-secret
+                  optional: true
             - name: SMTP_HOST
               valueFrom:
                 configMapKeyRef:
