@@ -49,6 +49,12 @@ type AuditEventListOptions struct {
 	ResourceID string
 }
 
+type InvitationEmailEventListOptions struct {
+	InvitationID string
+	DeliveryID   string
+	Limit        int
+}
+
 type Repository interface {
 	ListChats(userID, projectID string, opts ChatListOptions) []protocol.ChatSession
 	CreateChat(userID, projectID, title string) (protocol.ChatSession, error)
@@ -76,6 +82,8 @@ type Repository interface {
 	ClaimDueInvitationEmails(limit int, lockedBy string, lockUntil time.Time) []protocol.InvitationEmailDelivery
 	MarkInvitationEmailSent(deliveryID string) error
 	MarkInvitationEmailFailed(deliveryID, lastError string, nextAttemptAt *time.Time, terminal bool) error
+	RecordInvitationEmailEvent(input protocol.InvitationEmailEventInput) (protocol.InvitationEmailEvent, error)
+	ListInvitationEmailEvents(orgID string, opts InvitationEmailEventListOptions) []protocol.InvitationEmailEvent
 	ListProjectMembers(projectID string) []protocol.ProjectMember
 	UpsertProjectMember(projectID string, input protocol.ProjectMemberInput) (protocol.ProjectMember, error)
 	RemoveProjectMember(projectID, userID string) (protocol.ProjectMember, error)

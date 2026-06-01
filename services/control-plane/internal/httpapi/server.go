@@ -613,6 +613,18 @@ func (s *Server) organizationSubroutes(w http.ResponseWriter, r *http.Request) {
 		platform.WriteError(w, http.StatusNotFound, "organization route not found")
 		return
 	}
+	if parts[1] == "invitation-email-events" {
+		if len(parts) == 2 && r.Method == http.MethodGet {
+			s.listInvitationEmailEvents(w, r, orgID)
+			return
+		}
+		if len(parts) == 2 && r.Method == http.MethodPost {
+			s.recordInvitationEmailEvent(w, r, orgID)
+			return
+		}
+		platform.WriteError(w, http.StatusNotFound, "organization route not found")
+		return
+	}
 	if parts[1] != "members" {
 		platform.WriteError(w, http.StatusNotFound, "organization route not found")
 		return
@@ -820,6 +832,61 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request, orgID 
 		}
 	}
 	platform.WriteJSON(w, http.StatusCreated, protocol.InvitationResponse{Invitation: invitation})
+}
+
+func (s *Server) listInvitationEmailEvents(w http.ResponseWriter, r *http.Request, orgID string) {
+	if !s.requireOrganizationAdminRole(w, r, "invitation.email_event.list", "organization", orgID, "") {
+		return
+	}
+	opts := app.InvitationEmailEventListOptions{
+		InvitationID: strings.TrimSpace(r.URL.Query().Get("invitation_id")),
+		DeliveryID:   strings.TrimSpace(r.URL.Query().Get("delivery_id")),
+		Limit:        parseLimit(r.URL.Query().Get("limit"), 100),
+	}
+	platform.WriteJSON(w, http.StatusOK, protocol.InvitationEmailEventsResponse{
+		Events: s.repo.ListInvitationEmailEvents(orgID, opts),
+	})
+}
+
+func (s *Server) recordInvitationEmailEvent(w http.ResponseWriter, r *http.Request, orgID string) {
+	if !s.requireOrganizationAdminRole(w, r, "invitation.email_event.record", "organization", orgID, "") {
+		return
+	}
+	var input protocol.InvitationEmailEventInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	input.InvitationID = strings.TrimSpace(input.InvitationID)
+	if input.InvitationID == "" {
+		platform.WriteError(w, http.StatusBadRequest, "invitation_id is required")
+		return
+	}
+	if !invitationBelongsToOrg(s.repo, orgID, input.InvitationID) {
+		s.auditDeny(r, "invitation.email_event.record", "invitation", input.InvitationID, "", "event invitation is outside actor organization", nil)
+		platform.WriteError(w, http.StatusNotFound, "not found")
+		return
+	}
+	event, err := s.repo.RecordInvitationEmailEvent(input)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	s.auditAllow(r, "invitation.email_event.record", "invitation", event.InvitationID, "", map[string]any{
+		"delivery_id": event.DeliveryID,
+		"type":        event.Type,
+		"provider":    event.Provider,
+	})
+	platform.WriteJSON(w, http.StatusCreated, protocol.InvitationEmailEventResponse{Event: event})
+}
+
+func invitationBelongsToOrg(repo app.Repository, orgID, invitationID string) bool {
+	for _, invitation := range repo.ListInvitations(orgID) {
+		if invitation.ID == invitationID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) upsertOrganizationMember(w http.ResponseWriter, r *http.Request, orgID, pathUserID string) {

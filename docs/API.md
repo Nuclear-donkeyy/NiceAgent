@@ -291,7 +291,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 }
 ```
 
-创建响应会额外包含一次性可见的 `token`。如果 Control Plane 配置 `INVITATION_EMAIL_MODE=smtp`，服务会同时向邀请邮箱发送包含 `/?invitation_token={token}` 链接的邮件，并写入 `invitation.email.send` audit event；邮件 subject/body 可通过 `INVITATION_EMAIL_SUBJECT_TEMPLATE` 和 `INVITATION_EMAIL_BODY_TEMPLATE` 配置。`INVITATION_EMAIL_QUEUE_MODE=memory` 时，接口只保证邮件已进入当前 Control Plane 进程的内存队列；后台 worker 会按配置重试发送。`INVITATION_EMAIL_QUEUE_MODE=outbox` 时，接口会先把邮件投递任务写入 `invitation_email_outbox`，再由后台 worker claim due jobs、重试并标记 `sent/failed`，Control Plane 重启后仍可继续处理未完成任务。SMTP 发送、内存入队或 outbox 入队失败不会回滚已创建的邀请。
+创建响应会额外包含一次性可见的 `token`。如果 Control Plane 配置 `INVITATION_EMAIL_MODE=smtp`，服务会同时向邀请邮箱发送包含 `/?invitation_token={token}` 链接的邮件，并写入 `invitation.email.send` audit event；邮件 subject/body 可通过 `INVITATION_EMAIL_SUBJECT_TEMPLATE` 和 `INVITATION_EMAIL_BODY_TEMPLATE` 配置。`INVITATION_EMAIL_QUEUE_MODE=memory` 时，接口只保证邮件已进入当前 Control Plane 进程的内存队列；后台 worker 会按配置重试发送。`INVITATION_EMAIL_QUEUE_MODE=outbox` 时，接口会先把邮件投递任务写入 `invitation_email_outbox`，再由后台 worker claim due jobs、重试并标记 `sent/failed`，Control Plane 重启后仍可继续处理未完成任务。SMTP 发送、内存入队或 outbox 入队失败不会回滚已创建的邀请。邮件服务商的投递、退信、投诉和丢弃回调可通过 `invitation-email-events` 接口记录，便于后续运营排查和停发策略。
 
 ```json
 {
@@ -315,6 +315,45 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 ```json
 { "name": "User" }
+```
+
+`GET /api/organizations/{organization_id}/invitation-email-events`
+
+查询当前组织的邀请邮件事件，只允许 `owner/admin`。支持 `invitation_id`、`delivery_id` 和 `limit` 查询参数。事件按 `occurred_at` 倒序返回。
+
+```json
+{
+  "events": [
+    {
+      "id": "invmailevt_xxx",
+      "invitation_id": "inv_xxx",
+      "delivery_id": "invmail_xxx",
+      "provider": "smtp-provider",
+      "provider_message_id": "message-123",
+      "type": "bounced",
+      "reason": "mailbox unavailable",
+      "payload": { "smtp_code": "550" },
+      "occurred_at": "2026-06-01T00:00:00Z",
+      "created_at": "2026-06-01T00:00:01Z"
+    }
+  ]
+}
+```
+
+`POST /api/organizations/{organization_id}/invitation-email-events`
+
+记录 provider-neutral 的邀请邮件事件，只允许 `owner/admin`。`invitation_id` 必填且必须属于当前组织；`delivery_id` 可选，如果填写必须属于同一邀请。`type` 支持 `delivered`、`bounced`、`complaint`、`dropped`。记录 `delivered` 会把对应 outbox delivery 标记为 `sent`；记录 `bounced`、`complaint` 或 `dropped` 会把对应 delivery 标记为 `bounced`，并保存 `reason` 到 `last_error`。
+
+```json
+{
+  "invitation_id": "inv_xxx",
+  "delivery_id": "invmail_xxx",
+  "provider": "smtp-provider",
+  "provider_message_id": "message-123",
+  "type": "bounced",
+  "reason": "mailbox unavailable",
+  "payload": { "smtp_code": "550" }
+}
 ```
 
 `GET /api/projects/{project_id}/members`

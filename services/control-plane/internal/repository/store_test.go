@@ -507,6 +507,25 @@ func TestStoreManagesInvitations(t *testing.T) {
 	if claimed = store.ClaimDueInvitationEmails(1, "worker-c", time.Now().UTC().Add(time.Minute)); len(claimed) != 0 {
 		t.Fatalf("sent delivery was claimed again: %#v", claimed)
 	}
+	emailEvent, err := store.RecordInvitationEmailEvent(protocol.InvitationEmailEventInput{
+		InvitationID:      orgInvitation.ID,
+		DeliveryID:        delivery.ID,
+		Provider:          "smtp-test",
+		ProviderMessageID: "message-a",
+		Type:              string(protocol.InvitationEmailEventBounced),
+		Reason:            "mailbox unavailable",
+		Payload:           map[string]any{"smtp_code": "550"},
+	})
+	if err != nil {
+		t.Fatalf("record invitation email event: %v", err)
+	}
+	if emailEvent.Type != protocol.InvitationEmailEventBounced || emailEvent.InvitationID != orgInvitation.ID {
+		t.Fatalf("email event = %#v, want bounced event", emailEvent)
+	}
+	emailEvents := store.ListInvitationEmailEvents(app.DemoOrgID, app.InvitationEmailEventListOptions{InvitationID: orgInvitation.ID})
+	if len(emailEvents) != 1 || emailEvents[0].Reason != "mailbox unavailable" {
+		t.Fatalf("listed email events = %#v, want recorded bounce", emailEvents)
+	}
 	invitations := store.ListInvitations(app.DemoOrgID)
 	if len(invitations) != 1 || invitations[0].Token != "" {
 		t.Fatalf("listed invitations = %#v, want redacted token", invitations)

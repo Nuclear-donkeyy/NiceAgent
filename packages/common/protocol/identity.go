@@ -110,6 +110,7 @@ const (
 	InvitationEmailSending InvitationEmailDeliveryStatus = "sending"
 	InvitationEmailSent    InvitationEmailDeliveryStatus = "sent"
 	InvitationEmailFailed  InvitationEmailDeliveryStatus = "failed"
+	InvitationEmailBounced InvitationEmailDeliveryStatus = "bounced"
 )
 
 type InvitationEmailDelivery struct {
@@ -126,6 +127,47 @@ type InvitationEmailDelivery struct {
 	SentAt        *time.Time                    `json:"sent_at,omitempty"`
 	CreatedAt     time.Time                     `json:"created_at"`
 	UpdatedAt     time.Time                     `json:"updated_at"`
+}
+
+type InvitationEmailEventType string
+
+const (
+	InvitationEmailEventDelivered InvitationEmailEventType = "delivered"
+	InvitationEmailEventBounced   InvitationEmailEventType = "bounced"
+	InvitationEmailEventComplaint InvitationEmailEventType = "complaint"
+	InvitationEmailEventDropped   InvitationEmailEventType = "dropped"
+)
+
+type InvitationEmailEventInput struct {
+	InvitationID      string         `json:"invitation_id,omitempty"`
+	DeliveryID        string         `json:"delivery_id,omitempty"`
+	Provider          string         `json:"provider,omitempty"`
+	ProviderMessageID string         `json:"provider_message_id,omitempty"`
+	Type              string         `json:"type"`
+	Reason            string         `json:"reason,omitempty"`
+	Payload           map[string]any `json:"payload,omitempty"`
+	OccurredAt        *time.Time     `json:"occurred_at,omitempty"`
+}
+
+type InvitationEmailEvent struct {
+	ID                string                   `json:"id"`
+	InvitationID      string                   `json:"invitation_id"`
+	DeliveryID        string                   `json:"delivery_id,omitempty"`
+	Provider          string                   `json:"provider,omitempty"`
+	ProviderMessageID string                   `json:"provider_message_id,omitempty"`
+	Type              InvitationEmailEventType `json:"type"`
+	Reason            string                   `json:"reason,omitempty"`
+	Payload           map[string]any           `json:"payload,omitempty"`
+	OccurredAt        time.Time                `json:"occurred_at"`
+	CreatedAt         time.Time                `json:"created_at"`
+}
+
+type InvitationEmailEventResponse struct {
+	Event InvitationEmailEvent `json:"event"`
+}
+
+type InvitationEmailEventsResponse struct {
+	Events []InvitationEmailEvent `json:"events"`
 }
 
 type ProjectMember struct {
