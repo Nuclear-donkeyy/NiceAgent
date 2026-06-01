@@ -20,7 +20,7 @@
 - Runtime 的模型层已经切到 Eino 原生 ChatModel，下一步仍需继续压实真实模型 tool calling 的端到端覆盖，并减少 provider-specific 兼容风险。
 - Skill registry 已有 metadata、version、grant、secret 存储模型，HTTP Skill schema/runtime_config 校验、结构化错误、SSRF 防护、retry/rate limit 和 OpenAPI JSON/YAML preview 已有最小闭环；secret backend 原生接入、MCP 导入、完整导入保存向导和跨副本强一致 rate limit 仍待补齐。
 - Sandbox 还不是强隔离生产沙箱。当前 CLI 策略偏本地开发可用，K8s 已有基础 ingress/egress NetworkPolicy、ResourceQuota、LimitRange 和 securityContext；仍需容器默认执行路径、workspace 隔离、artifact 归档、RuntimeClass/独立节点池和云侧出口控制。
-- 前端已经隐藏原始事件面板，并支持 artifact 展示、下载以及图片/PDF/音频/视频预览；skill 配置校验、端到端测试、表格预览和错误恢复体验还需要补强。
+- 前端已经隐藏原始事件面板，并支持 artifact 展示、下载、图片/PDF/音频/视频预览以及 CSV/TSV 表格内容预览；skill 配置校验、端到端测试和错误恢复体验还需要补强。
 - Control Plane 仍缺 NiceAgent 内置 OIDC/session/JWT、强一致账单级 quota、真实值班系统接入和容量看板；邀请创建/接受、可信身份绑定、可选 SMTP 邮件、投递模板、进程内内存队列和重试已有最小闭环，但 durable outbox 和退信处理仍待补；Redis Runtime worker、重试/lease、跨副本 event fanout、审计、结构化 request log、基础 metrics/tracing、Prometheus 告警规则、Alertmanager 路由样例、Redis 低层命令 spans 和 Postgres repository spans 已有最小闭环。
 - 云部署目前适合作为近云验证，不应把 memory demo 或未完成 sandbox 当作生产方案直接发布。
 
@@ -69,7 +69,7 @@
 - 让 Sandbox Executor 默认走容器执行路径，local executor 只作为测试和 fallback。
 - 按 run/workspace 隔离工作目录，记录命令、退出码、耗时、输出截断状态和文件变更摘要。
 - 将生成文件登记为 `Artifact`，由 Control Plane 保存元数据并通过前端展示。
-- `workspace.read` 已能返回 artifact summary/list/text read，前端已支持图片/PDF/音频/视频预览；后续继续补增量 artifact 可见性和表格内容预览。
+- `workspace.read` 已能返回 artifact summary/list/text read，前端已支持图片/PDF/音频/视频和 CSV/TSV 表格预览；后续继续补增量 artifact 可见性和更多预览类型。
 - 强化策略：只读网络型命令白名单、写磁盘范围限制、资源限制、超时和环境变量过滤。
 
 验收标准：

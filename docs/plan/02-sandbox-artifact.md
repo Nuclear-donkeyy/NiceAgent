@@ -51,7 +51,7 @@ Sandbox 执行后会扫描 workspace `output/` 下的新增或修改文件，生
 仍待落地能力：
 
 - Compose 和生产部署默认切到 container executor，并补更完整资源容量建议。
-- artifact 增量可见性、表格内容预览、过期清理和外部对象存储归档。
+- artifact 增量可见性、更多文件类型预览、过期清理和外部对象存储归档。
 - RuntimeClass、独立节点池、gVisor/Kata/Firecracker 等更强隔离 profile。
 
 ## 扩展点
@@ -107,7 +107,7 @@ Artifact 元数据建议包括：
 当前最小闭环已经具备，不追求一步到位的微虚拟机；下一步重点是把默认执行路径和产物治理继续推向生产化：
 
 - `artifacts` 表、repository、workspace 记录、artifact list/download API 和前端展示已落地。
-- Sandbox Executor 已能扫描 output 目录并生成 artifact metadata；前端已支持图片、PDF、音频和视频内联预览；后续补增量可见性、表格内容预览、过期清理和对象存储归档。
+- Sandbox Executor 已能扫描 output 目录并生成 artifact metadata；前端已支持图片、PDF、音频、视频和 CSV/TSV 表格预览；后续补增量可见性、更多文件类型预览、过期清理和对象存储归档。
 - artifact path clean、symlink、`..`、绝对路径检查和 `output/` 限制已落地，后续继续扩展更多 preview 类型。
 - ContainerExecutor 已支持只读 rootfs、cap drop、no-new-privileges、pids limit、资源限制和环境变量白名单；后续把 Compose/生产默认执行路径切到 container profile。
 - 网络策略保持“默认关闭，按 skill/runtime_config 显式允许”。

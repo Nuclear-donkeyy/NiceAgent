@@ -370,7 +370,27 @@ func (s *Server) artifactSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.downloadArtifact(w, r, artifactID)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "content" && r.Method == http.MethodGet {
+		s.readArtifactContent(w, r, artifactID)
+		return
+	}
 	platform.WriteError(w, http.StatusNotFound, "artifact route not found")
+}
+
+func (s *Server) readArtifactContent(w http.ResponseWriter, r *http.Request, artifactID string) {
+	artifact, err := s.readAuthorizedArtifact(r, artifactID)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	maxBytes := parseIntBounded(r.URL.Query().Get("max_bytes"), 32*1024, 1, 128*1024)
+	response, err := s.readArtifactTextResponse(artifact, maxBytes)
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.auditAllow(r, "artifact.content.read", "artifact", artifact.ID, artifact.RunID, map[string]any{"path": artifact.Path, "bytes_read": response.BytesRead})
+	platform.WriteJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request, artifactID string) {
