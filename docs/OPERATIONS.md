@@ -329,13 +329,13 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 - `niceagent_redis_queue_dlq_length`：Agent Runtime 采样到的 DLQ stream 长度。
 - `niceagent_sandbox_exec_total`：Sandbox Executor 命令执行结果次数。
 
-这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。仓库提供了基础 Prometheus 告警规则文件：`deployments/monitoring/prometheus-alerts.yml`，覆盖 HTTP 5xx/延迟、runtime 失败、模型 provider 错误/探针失败/延迟、Redis queue error/pending/DLQ、quota denial 和 sandbox failure。可以用下面的仓库内检查做结构验证：
+这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。仓库提供了基础 Prometheus 告警规则文件：`deployments/monitoring/prometheus-alerts.yml`，覆盖 HTTP 5xx/延迟、runtime 失败、模型 provider 错误/探针失败/延迟、Redis queue error/pending/DLQ、quota denial 和 sandbox failure。仓库也提供了 Alertmanager 路由样例：`deployments/monitoring/alertmanager.example.yml`，按 `severity` 和 `component` 将告警分到 on-call、platform、model-ops、sandbox、quota 等接收组。可以用下面的仓库内检查做结构验证：
 
 ```bash
 make check-alerts
 ```
 
-生产环境建议再用 Prometheus 自带的 `promtool check rules deployments/monitoring/prometheus-alerts.yml` 做最终校验，并把告警路由到 Alertmanager、短信/电话/IM 或云监控。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span、主要 agent 执行内部 span、Redis 低层命令 span 和 Postgres repository `db.command` span；外部告警系统接入时优先把 `request_id`、`trace_id`、`run_id` 放入排障模板。
+`alertmanager.example.yml` 中的 webhook URL 都使用 `example.invalid` 占位，生产部署时应替换为真实的告警路由器、IM、短信/电话或云监控地址，并在 Alertmanager Secret 中管理真实 webhook token。生产环境建议再用 Prometheus 自带的 `promtool check rules deployments/monitoring/prometheus-alerts.yml` 和 Alertmanager 的 `amtool check-config deployments/monitoring/alertmanager.example.yml` 做最终校验。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span、主要 agent 执行内部 span、Redis 低层命令 span 和 Postgres repository `db.command` span；外部告警系统接入时优先把 `request_id`、`trace_id`、`run_id` 放入排障模板。
 
 ## Sandbox 安全边界
 

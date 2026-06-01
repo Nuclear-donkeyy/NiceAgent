@@ -153,13 +153,13 @@ artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也
 - 非本地或显式 required 模式强制 `INTERNAL_API_TOKEN` 已完成；后续仍需要把 token rotation 和 Secret backend 纳入运维流程。
 - 新增 membership/RBAC 表和基础角色已完成最小版本：`organization_members`、`project_members`、`invitations`、`user_identities`，并支持 trusted-header 缺少 roles 时从持久 membership 解析角色；当前组织/项目成员管理 API 已有最小闭环，组织成员 API 和同组织项目 API 可从 `organization_members` 解析持久角色；邀请创建/接受已有最小闭环，接受时会校验可信邮箱 claim；可信 `issuer + subject` 可持久绑定到内部用户并拒绝冲突；可选 SMTP 邀请邮件和 subject/body 模板已有最小闭环；NiceAgent 内置 OIDC 登录、退信/队列化和更细粒度 action policy 仍待补齐。
 - 增加最小 quota：`concurrent_runs`、`runs_per_hour`、`model_tokens_per_day`、`tool_calls_per_day`、`sandbox_seconds_per_day` 已完成；项目级持久配置模型已完成最小闭环；Redis 并发/小时窗口预占、固定/动态模型 token 预扣/结算、run 级 tool/sandbox/artifact 用量记录和 Runtime tool/sandbox 最小实时预占已完成；估算 token 已通过共享 `TokenEstimator` 边界和 `RunUsage.token_estimator` 标记来源；项目 usage 已支持按 provider/model/currency/估算来源聚合查询。真实 tokenizer/按模型动态估算和强一致账单级 quota 仍待补齐。
-- 三服务已接入轻量 `X-Trace-ID`、`X-Request-ID`、标准 `traceparent`、结构化 request log、`/metrics`、基础 Prometheus 告警规则、OpenTelemetry OTLP HTTP exporter、入站 HTTP server span、调度/回写、run/tool/model、HTTP Skill、Sandbox、Redis queue span、Redis 低层命令级 span 和 Postgres repository `db.command` span；后续仍需补告警路由/值班系统。
+- 三服务已接入轻量 `X-Trace-ID`、`X-Request-ID`、标准 `traceparent`、结构化 request log、`/metrics`、基础 Prometheus 告警规则、Alertmanager 路由样例、OpenTelemetry OTLP HTTP exporter、入站 HTTP server span、调度/回写、run/tool/model、HTTP Skill、Sandbox、Redis queue span、Redis 低层命令级 span 和 Postgres repository `db.command` span；后续仍需补真实值班系统接入。
 
 验收：
 
 - 不同用户/项目不能互相读 chat/run/artifact/skill/audit。
 - quota deny 可在前端显示中文错误。
-- 用 `run_id`、`request_id` 或 `trace_id` 能串起 request log、audit event 和跨服务调用；服务间调用能透传 `X-Request-ID`、`X-Trace-ID` 和 `traceparent`；配置 `OTEL_TRACES_EXPORTER=otlp` 后至少能看到三服务入站 HTTP、调度/回写、run/tool/model、HTTP Skill、Sandbox、Redis queue、Redis 低层命令级 span 和 Postgres repository `db.command` span；`make check-alerts` 能校验基础 Prometheus 告警规则。告警路由/值班系统仍是后续验收项。
+- 用 `run_id`、`request_id` 或 `trace_id` 能串起 request log、audit event 和跨服务调用；服务间调用能透传 `X-Request-ID`、`X-Trace-ID` 和 `traceparent`；配置 `OTEL_TRACES_EXPORTER=otlp` 后至少能看到三服务入站 HTTP、调度/回写、run/tool/model、HTTP Skill、Sandbox、Redis queue、Redis 低层命令级 span 和 Postgres repository `db.command` span；`make check-alerts` 能校验基础 Prometheus 告警规则和 Alertmanager 路由样例。真实值班系统接入仍是后续验收项。
 
 ### PR 6：前端策略一致性与三服务 E2E
 
@@ -199,7 +199,7 @@ PR 1 的文档状态收口后，近期更适合继续推进这些真实生产化
 1. DeepSeek 真实 API key 冒烟和模型运营记录：可选 smoke 脚本与 runbook 已落地，下一步是在本地或运维环境用真实 key 执行并保留脱敏结果。
 2. NiceAgent 内置 OIDC login/session/refresh token，补齐从 API resource server 到浏览器登录产品链路的缺口。
 3. 邀请邮件 subject/body 模板配置已落地；下一步补退信处理和队列化发送，让邀请流程从最小闭环走向可运营。
-4. 真实 tokenizer/按模型动态估算、强一致账单级 quota、外部告警路由和值班系统。
+4. 真实 tokenizer/按模型动态估算、强一致账单级 quota、真实值班系统接入和容量看板。
 5. Sandbox container 默认执行路径、egress policy、复杂 artifact 预览和更完整容量建议；镜像白名单与 healthz 可观测已落地。
 
 ## 最小验收命令

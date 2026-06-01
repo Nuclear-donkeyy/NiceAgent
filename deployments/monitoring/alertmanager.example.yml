@@ -1,0 +1,79 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: niceagent-default
+  group_by:
+    - alertname
+    - service
+    - component
+    - severity
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: niceagent-oncall
+      matchers:
+        - severity="critical"
+      repeat_interval: 30m
+      continue: true
+
+    - receiver: niceagent-model-ops
+      matchers:
+        - component="model-provider"
+
+    - receiver: niceagent-platform
+      matchers:
+        - component=~"http|agent-runtime|redis-queue"
+
+    - receiver: niceagent-sandbox
+      matchers:
+        - component="sandbox"
+
+    - receiver: niceagent-quota
+      matchers:
+        - component="quota"
+      repeat_interval: 12h
+
+receivers:
+  - name: niceagent-default
+    webhook_configs:
+      - url: http://alert-router.example.invalid/niceagent/default
+        send_resolved: true
+
+  - name: niceagent-oncall
+    webhook_configs:
+      - url: http://alert-router.example.invalid/niceagent/oncall
+        send_resolved: true
+
+  - name: niceagent-platform
+    webhook_configs:
+      - url: http://alert-router.example.invalid/niceagent/platform
+        send_resolved: true
+
+  - name: niceagent-model-ops
+    webhook_configs:
+      - url: http://alert-router.example.invalid/niceagent/model-ops
+        send_resolved: true
+
+  - name: niceagent-sandbox
+    webhook_configs:
+      - url: http://alert-router.example.invalid/niceagent/sandbox
+        send_resolved: true
+
+  - name: niceagent-quota
+    webhook_configs:
+      - url: http://alert-router.example.invalid/niceagent/quota
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal:
+      - alertname
+      - service
+      - component
+
+templates: []
