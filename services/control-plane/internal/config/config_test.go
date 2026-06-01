@@ -149,3 +149,18 @@ func TestValidateRejectsInvalidInvitationEmailQueueMode(t *testing.T) {
 		t.Fatal("expected invalid invitation email queue mode to fail validation")
 	}
 }
+
+func TestValidateAllowsInvitationEmailOutboxQueueMode(t *testing.T) {
+	t.Setenv("INVITATION_EMAIL_MODE", "smtp")
+	t.Setenv("SMTP_HOST", "smtp.example.test")
+	t.Setenv("SMTP_FROM", "noreply@example.test")
+	t.Setenv("INVITATION_EMAIL_QUEUE_MODE", "outbox")
+	t.Setenv("INVITATION_EMAIL_QUEUE_WORKERS", "1")
+	t.Setenv("INVITATION_EMAIL_RETRY_ATTEMPTS", "2")
+
+	cfg := FromEnv()
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected outbox queue mode to validate: %v", err)
+	}
+}

@@ -291,7 +291,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 }
 ```
 
-创建响应会额外包含一次性可见的 `token`。如果 Control Plane 配置 `INVITATION_EMAIL_MODE=smtp`，服务会同时向邀请邮箱发送包含 `/?invitation_token={token}` 链接的邮件，并写入 `invitation.email.send` audit event；邮件 subject/body 可通过 `INVITATION_EMAIL_SUBJECT_TEMPLATE` 和 `INVITATION_EMAIL_BODY_TEMPLATE` 配置。`INVITATION_EMAIL_QUEUE_MODE=memory` 时，接口只保证邮件已进入当前 Control Plane 进程的内存队列；后台 worker 会按配置重试发送。SMTP 发送或入队失败不会回滚已创建的邀请。
+创建响应会额外包含一次性可见的 `token`。如果 Control Plane 配置 `INVITATION_EMAIL_MODE=smtp`，服务会同时向邀请邮箱发送包含 `/?invitation_token={token}` 链接的邮件，并写入 `invitation.email.send` audit event；邮件 subject/body 可通过 `INVITATION_EMAIL_SUBJECT_TEMPLATE` 和 `INVITATION_EMAIL_BODY_TEMPLATE` 配置。`INVITATION_EMAIL_QUEUE_MODE=memory` 时，接口只保证邮件已进入当前 Control Plane 进程的内存队列；后台 worker 会按配置重试发送。`INVITATION_EMAIL_QUEUE_MODE=outbox` 时，接口会先把邮件投递任务写入 `invitation_email_outbox`，再由后台 worker claim due jobs、重试并标记 `sent/failed`，Control Plane 重启后仍可继续处理未完成任务。SMTP 发送、内存入队或 outbox 入队失败不会回滚已创建的邀请。
 
 ```json
 {

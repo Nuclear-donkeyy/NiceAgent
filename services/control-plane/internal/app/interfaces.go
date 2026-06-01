@@ -72,6 +72,10 @@ type Repository interface {
 	ListInvitations(orgID string) []protocol.Invitation
 	CreateInvitation(orgID, invitedByUserID string, input protocol.InvitationInput) (protocol.Invitation, error)
 	AcceptInvitation(token, userID, email, name string) (protocol.Invitation, error)
+	EnqueueInvitationEmail(invitation protocol.Invitation, maxAttempts int) (protocol.InvitationEmailDelivery, error)
+	ClaimDueInvitationEmails(limit int, lockedBy string, lockUntil time.Time) []protocol.InvitationEmailDelivery
+	MarkInvitationEmailSent(deliveryID string) error
+	MarkInvitationEmailFailed(deliveryID, lastError string, nextAttemptAt *time.Time, terminal bool) error
 	ListProjectMembers(projectID string) []protocol.ProjectMember
 	UpsertProjectMember(projectID string, input protocol.ProjectMemberInput) (protocol.ProjectMember, error)
 	RemoveProjectMember(projectID, userID string) (protocol.ProjectMember, error)

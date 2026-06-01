@@ -103,6 +103,31 @@ type InvitationResponse struct {
 	Invitation Invitation `json:"invitation"`
 }
 
+type InvitationEmailDeliveryStatus string
+
+const (
+	InvitationEmailPending InvitationEmailDeliveryStatus = "pending"
+	InvitationEmailSending InvitationEmailDeliveryStatus = "sending"
+	InvitationEmailSent    InvitationEmailDeliveryStatus = "sent"
+	InvitationEmailFailed  InvitationEmailDeliveryStatus = "failed"
+)
+
+type InvitationEmailDelivery struct {
+	ID            string                        `json:"id"`
+	InvitationID  string                        `json:"invitation_id"`
+	Invitation    Invitation                    `json:"invitation,omitempty"`
+	Status        InvitationEmailDeliveryStatus `json:"status"`
+	Attempts      int                           `json:"attempts"`
+	MaxAttempts   int                           `json:"max_attempts"`
+	NextAttemptAt time.Time                     `json:"next_attempt_at"`
+	LockedBy      string                        `json:"locked_by,omitempty"`
+	LockedUntil   *time.Time                    `json:"locked_until,omitempty"`
+	LastError     string                        `json:"last_error,omitempty"`
+	SentAt        *time.Time                    `json:"sent_at,omitempty"`
+	CreatedAt     time.Time                     `json:"created_at"`
+	UpdatedAt     time.Time                     `json:"updated_at"`
+}
+
 type ProjectMember struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`

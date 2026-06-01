@@ -81,7 +81,18 @@ INVITATION_EMAIL_RETRY_ATTEMPTS=3
 INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS=250
 ```
 
-`memory` 队列会先把邀请邮件放入 Control Plane 进程内队列，再由后台 worker 重试发送。队列满时创建邀请仍会成功，但邮件入队会失败并写入 `invitation.email.send` deny audit event。该队列不是 durable queue：Control Plane 重启会丢失尚未发送的队列项；生产环境后续仍应接入 Redis/数据库 outbox 或专门邮件服务，并补退信 webhook。
+`memory` 队列会先把邀请邮件放入 Control Plane 进程内队列，再由后台 worker 重试发送。队列满时创建邀请仍会成功，但邮件入队会失败并写入 `invitation.email.send` deny audit event。该队列不是 durable queue：Control Plane 重启会丢失尚未发送的队列项。
+
+Postgres 模式下更推荐使用 durable outbox：
+
+```bash
+INVITATION_EMAIL_QUEUE_MODE=outbox
+INVITATION_EMAIL_QUEUE_WORKERS=1
+INVITATION_EMAIL_RETRY_ATTEMPTS=3
+INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS=250
+```
+
+`outbox` 模式会把投递任务写入 `invitation_email_outbox` 表。后台 worker 会 claim due jobs、发送 SMTP、成功后标记 `sent`；失败时按指数退避重新置为 `pending`，超过最大次数后标记 `failed`。如果 Control Plane 在发送前或发送失败后重启，锁过期后其他 worker 可以重新 claim。当前 outbox 只覆盖投递重试和重启恢复，还没有接入退信 webhook、邮件服务商事件回调或管理后台重发按钮。
 
 run 配额是最小治理边界，默认关闭。env 配置是 fallback：
 

@@ -159,19 +159,22 @@ func (c Config) Validate() error {
 			return err
 		}
 		switch strings.ToLower(strings.TrimSpace(c.InvitationEmailQueueMode)) {
-		case "", "inline", "memory":
+		case "", "inline", "memory", "outbox":
 		default:
-			return fmt.Errorf("INVITATION_EMAIL_QUEUE_MODE must be inline or memory")
+			return fmt.Errorf("INVITATION_EMAIL_QUEUE_MODE must be inline, memory, or outbox")
 		}
-		if strings.EqualFold(strings.TrimSpace(c.InvitationEmailQueueMode), "memory") {
+		queueMode := strings.ToLower(strings.TrimSpace(c.InvitationEmailQueueMode))
+		if queueMode == "memory" {
 			if c.InvitationEmailQueueSize <= 0 {
 				return fmt.Errorf("INVITATION_EMAIL_QUEUE_SIZE must be greater than 0 when INVITATION_EMAIL_QUEUE_MODE=memory")
 			}
+		}
+		if queueMode == "memory" || queueMode == "outbox" {
 			if c.InvitationEmailQueueWorkers <= 0 {
-				return fmt.Errorf("INVITATION_EMAIL_QUEUE_WORKERS must be greater than 0 when INVITATION_EMAIL_QUEUE_MODE=memory")
+				return fmt.Errorf("INVITATION_EMAIL_QUEUE_WORKERS must be greater than 0 when INVITATION_EMAIL_QUEUE_MODE=memory or outbox")
 			}
 			if c.InvitationEmailRetryAttempts <= 0 {
-				return fmt.Errorf("INVITATION_EMAIL_RETRY_ATTEMPTS must be greater than 0 when INVITATION_EMAIL_QUEUE_MODE=memory")
+				return fmt.Errorf("INVITATION_EMAIL_RETRY_ATTEMPTS must be greater than 0 when INVITATION_EMAIL_QUEUE_MODE=memory or outbox")
 			}
 		}
 	}

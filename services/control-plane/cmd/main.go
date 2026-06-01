@@ -41,7 +41,7 @@ func main() {
 		store = quota.NewReleasingRepository(store, quotaLimiter, logger)
 	}
 	dispatcher := newDispatcher(cfg, store, logger)
-	invitationMailer := newInvitationMailer(cfg, logger)
+	invitationMailer := newInvitationMailer(cfg, store, logger)
 	server := httpapi.NewServerWithOptions(store, dispatcher, logger, httpapi.ServerOptions{
 		AuthMode:              cfg.AuthMode,
 		ControlPlanePublicURL: cfg.ControlPlanePublicURL,
@@ -80,7 +80,7 @@ func main() {
 	}
 }
 
-func newInvitationMailer(cfg config.Config, logger *slog.Logger) app.InvitationMailer {
+func newInvitationMailer(cfg config.Config, store app.Repository, logger *slog.Logger) app.InvitationMailer {
 	switch strings.ToLower(strings.TrimSpace(cfg.InvitationEmailMode)) {
 	case "", "disabled":
 		logger.Info("invitation email disabled")
@@ -110,6 +110,20 @@ func newInvitationMailer(cfg config.Config, logger *slog.Logger) app.InvitationM
 				Workers:           cfg.InvitationEmailQueueWorkers,
 				RetryAttempts:     cfg.InvitationEmailRetryAttempts,
 				RetryInitialDelay: time.Duration(cfg.InvitationEmailRetryInitialDelay) * time.Millisecond,
+			}, logger)
+		}
+		if strings.EqualFold(strings.TrimSpace(cfg.InvitationEmailQueueMode), "outbox") {
+			logger.Info(
+				"using durable invitation email outbox",
+				"workers", cfg.InvitationEmailQueueWorkers,
+				"retry_attempts", cfg.InvitationEmailRetryAttempts,
+				"retry_initial_delay_ms", cfg.InvitationEmailRetryInitialDelay,
+			)
+			return mailer.NewOutboxInvitationMailer(smtpMailer, store, mailer.DurableQueueConfig{
+				Workers:           cfg.InvitationEmailQueueWorkers,
+				RetryAttempts:     cfg.InvitationEmailRetryAttempts,
+				RetryInitialDelay: time.Duration(cfg.InvitationEmailRetryInitialDelay) * time.Millisecond,
+				WorkerID:          "control-plane",
 			}, logger)
 		}
 		return smtpMailer
