@@ -66,11 +66,42 @@
   width: 56px;
 }
 
-.preview img {
+.preview img,
+.preview video,
+.pdfPreview iframe {
   display: block;
   height: 100%;
   object-fit: cover;
   width: 100%;
+}
+
+.pdfPreview iframe {
+  border: 0;
+  pointer-events: none;
+}
+
+.mediaPreview {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-width: 160px;
+  width: 180px;
+}
+
+.mediaPreview audio {
+  max-width: 160px;
+}
+
+.filePreview {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+}
+
+.filePreview span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .meta {

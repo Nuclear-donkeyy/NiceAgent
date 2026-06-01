@@ -12,7 +12,7 @@
 | 主线 | 当前对齐度 | 已对上的能力 | 没对上的能力 |
 | --- | --- | --- | --- |
 | Skill 执行生产化 | 部分对齐 | HTTP Skill schema/runtime_config 校验、Runtime 入参/出参校验、SSRF 基础拦截、DNS 解析后私网地址拦截、SecretResolver 接口、本地 secret/redaction、`env://` secret_ref、结构化 observation、per-skill retry、Runtime 进程内 rate limit、OpenAPI JSON/YAML preview dry-run；Redis queue worker 可通过 execution context materialize 完整 `RuntimeSkill` | KMS/Vault/External Secrets 原生 backend 未接；OpenAPI 完整保存向导和 MCP 导入未做；跨副本强一致 skill rate limit 和更细审计未做 |
-| Sandbox 与 Artifact | 中度对齐 | workspace 登记、artifact 表/API/download、前端 artifact 展示、图片 artifact 缩略预览、sandbox 输出扫描、path/symlink 越界检查、container executor 可配置；`workspace.read` 可列出当前 run artifacts、读取已登记文本 artifact 摘要，并返回 workspace/artifact 元数据摘要；K8s 已有基础 `NetworkPolicy` ingress/egress、`ResourceQuota`、`LimitRange` 和 Sandbox Executor `securityContext` | Compose 默认仍是 local executor；artifact 只在 run complete 时持久化和发事件；K8s RuntimeClass、独立节点池、云侧出口控制和强隔离方案未落地；PDF/音视频等复杂非文本预览未落地 |
+| Sandbox 与 Artifact | 中度对齐 | workspace 登记、artifact 表/API/download、前端 artifact 展示、图片/PDF/音频/视频内联预览、sandbox 输出扫描、path/symlink 越界检查、container executor 可配置；`workspace.read` 可列出当前 run artifacts、读取已登记文本 artifact 摘要，并返回 workspace/artifact 元数据摘要；K8s 已有基础 `NetworkPolicy` ingress/egress、`ResourceQuota`、`LimitRange` 和 Sandbox Executor `securityContext` | Compose 默认仍是 local executor；artifact 只在 run complete 时持久化和发事件；K8s RuntimeClass、独立节点池、云侧出口控制和强隔离方案未落地；表格内容预览未落地 |
 | 平台认证、权限与可观测 | 部分对齐 | `AUTH_MODE=demo|trusted-header|oidc` 边界、`ActorContext`、OIDC bearer JWT 资源服务器校验、RS256 JWKS、issuer/audience/exp/nbf 校验、可信邮箱/name header、可信 `issuer + subject` 到 `user_identities` 的绑定、读写路径基础隔离、`X-Request-ID` 三服务传播、三服务结构化 request log、轻量 `X-Trace-ID` 传播、标准 `traceparent` 传播、三服务 `/metrics`、基础 Prometheus 告警规则、可选 OpenTelemetry OTLP HTTP exporter、入站 HTTP server span、Control Plane 调度/回写 span、Runtime run/tool/model span、HTTP Skill span、Sandbox HTTP/exec span、Redis queue 处理 span、Redis Streams / PubSub / quota counter 低层命令级 span、Postgres repository `db.command` span、audit_events 表/API、audit redaction、trusted-header 最小 RBAC、`organization_members`/`project_members` 持久成员表、当前组织/项目成员管理 API、邀请创建/接受最小闭环、邀请接受邮箱 claim 匹配、邀请邮件 subject/body 模板、进程内内存队列和重试、组织成员 API 的持久角色解析、同组织项目 API 继承组织角色、项目级持久 quota policy、最小 run quota、Redis 并发/小时窗口 quota 预占、固定或动态模型 token 预扣/结算；`RunUsage` 已记录 tool/sandbox/artifact 聚合用量；估算 token 会持久化 `token_estimator=heuristic_rune_div4`；每日模型 token、tool calls、sandbox seconds quota 已落地，Runtime 调用 tool 前也会做最小 tool/sandbox 实时预占；项目 usage 可按 provider/model/currency/估算来源聚合查询；非本地或显式 required 模式会强制 `INTERNAL_API_TOKEN` | OIDC 浏览器登录 callback/session/refresh token 未接；邀请邮件内存队列还不是 durable outbox，退信处理未接；quota 仍缺真实 tokenizer/按模型动态估算和强一致账单级 quota；真实值班系统未接 |
 | 多实例队列与事件流 | 高度对齐但仍有小偏差 | SSE `id`、`Last-Event-ID`、`?after=`、前端 seq 去重；Redis Streams `XADD/XREADGROUP/XACK` adapter；`DISPATCH_MODE=redis` 入队；`RUNTIME_QUEUE_MODE=redis` Runtime worker；queue payload 最小化；execution context 内部 API；attempt claim、lease 字段和 callback fencing；worker heartbeat 续租、`XAUTOCLAIM` 回收 idle pending、DLQ；主 queue stream 和 DLQ stream 支持可配置近似裁剪；Redis worker 暴露 message/reclaim/ack/error/DLQ counter，并采样 pending entries 与 DLQ length gauges；Redis nudge fanout 已能唤醒多 Control Plane SSE 副本；`make smoke-three-services-redis` 会启动临时 Redis 和两个 Runtime consumer，并自动校验 run 被不同 consumer claim；`make smoke-control-plane-fanout` 会启动临时 Postgres/Redis 和两个 Control Plane 进程，验证第二个 Control Plane 能收到第一个 Control Plane 写入的 run SSE 事件；上述两个 Redis smoke 已纳入 CI 默认门禁 | 生产级 Redis 高可用、外部告警和容量压测仍待补 |
 | 前端产品体验与 E2E | 高度对齐但仍有小偏差 | React/TS/SCSS Modules、聊天优先、artifact 展示/下载、HTTP Skill 表单校验、保存状态、Playwright mock smoke、三服务真实 UI smoke、SSE replay 去重；断线重连中和恢复补齐状态已折叠进 agent 状态气泡；HTTP Skill URL 已同步为仅允许 `https`；`make smoke-three-services` 可启动三服务真实进程做 `/cli echo hello` 冒烟；`make smoke-three-services-ui` 可构建前端并由 Control Plane 托管静态产物，做真实浏览器 smoke | Redis dispatcher 冒烟需要外部 Redis；更复杂的 SSE 断线重连真实服务场景仍待补强 |
@@ -63,7 +63,7 @@
 
 artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也已支持列出当前 run artifacts、返回 workspace/artifact 元数据摘要，并可读取已登记文本 artifact 的内容摘要。读取走 Control Plane 内部 API，复用 artifact metadata、workspace path、`output/` 限制、MIME 限制和 symlink escape 检查。
 
-仍待修复：artifact 生成中的增量可见性、更丰富的 artifact 类型预览还没有完成；图片 artifact 已有最小缩略预览。
+仍待修复：artifact 生成中的增量可见性、表格内容预览还没有完成；图片、PDF、音频和视频 artifact 已有最小内联预览。
 
 ### 5. Auth/Observability 还只是平台边界，不是生产能力
 
@@ -137,11 +137,11 @@ artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也
 已补强验收：
 
 - 外部 artifact list/get/download API 已有跨用户和跨项目隔离回归测试，越权访问统一返回 `404`。
-- 前端对 `image/*` artifact 使用安全下载 URL 渲染缩略预览。
+- 前端对 `image/*`、`application/pdf`、`audio/*` 和 `video/*` artifact 使用安全 inline URL 渲染预览。
 
 仍待后续补强：
 
-- PDF、音视频、表格等复杂非文本 artifact 预览。
+- 表格内容预览。
 
 ### PR 5：Auth/RBAC/Quota/OTel 生产化补齐
 
@@ -200,7 +200,7 @@ PR 1 的文档状态收口后，近期更适合继续推进这些真实生产化
 2. NiceAgent 内置 OIDC login/session/refresh token，补齐从 API resource server 到浏览器登录产品链路的缺口。
 3. 邀请邮件 subject/body 模板和进程内内存队列已落地；下一步补 durable outbox 和退信处理，让邀请流程从最小闭环走向可运营。
 4. 真实 tokenizer/按模型动态估算、强一致账单级 quota、真实值班系统接入和容量看板。
-5. Sandbox container 默认执行路径、云侧出口控制、复杂 artifact 预览和更完整容量建议；K8s egress NetworkPolicy、镜像白名单与 healthz 可观测已落地。
+5. Sandbox container 默认执行路径、云侧出口控制、表格内容预览和更完整容量建议；图片/PDF/音视频内联预览、K8s egress NetworkPolicy、镜像白名单与 healthz 可观测已落地。
 
 ## 最小验收命令
 

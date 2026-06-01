@@ -1557,6 +1557,18 @@ func TestServerPersistsListsAndDownloadsArtifacts(t *testing.T) {
 	if !strings.Contains(downloadResponse.Header().Get("Content-Disposition"), "report.txt") {
 		t.Fatalf("content-disposition = %q", downloadResponse.Header().Get("Content-Disposition"))
 	}
+	if !strings.HasPrefix(downloadResponse.Header().Get("Content-Disposition"), "attachment;") {
+		t.Fatalf("content-disposition = %q, want attachment", downloadResponse.Header().Get("Content-Disposition"))
+	}
+	inlinePreview := httptest.NewRequest(http.MethodGet, "/api/artifacts/"+artifact.ID+"/download?disposition=inline", nil)
+	inlinePreviewResponse := httptest.NewRecorder()
+	handler.ServeHTTP(inlinePreviewResponse, inlinePreview)
+	if inlinePreviewResponse.Code != http.StatusOK {
+		t.Fatalf("inline preview status = %d, body = %s", inlinePreviewResponse.Code, inlinePreviewResponse.Body.String())
+	}
+	if !strings.HasPrefix(inlinePreviewResponse.Header().Get("Content-Disposition"), "inline;") {
+		t.Fatalf("inline content-disposition = %q, want inline", inlinePreviewResponse.Header().Get("Content-Disposition"))
+	}
 	if !containsEvent(store.ListEvents(run.ID, 0), protocol.EventArtifactCreated) {
 		t.Fatalf("events = %#v, want artifact.created", store.ListEvents(run.ID, 0))
 	}

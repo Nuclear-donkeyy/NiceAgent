@@ -428,7 +428,11 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request, artifa
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(stat.Size(), 10))
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	disposition := "attachment"
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("disposition")), "inline") {
+		disposition = "inline"
+	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": filename}))
 	http.ServeContent(w, r, filename, stat.ModTime(), file)
 }
 

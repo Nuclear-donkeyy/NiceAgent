@@ -97,9 +97,9 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 `GET /api/artifacts/{artifact_id}/download`
 
-下载 artifact 文件。当前只支持 `storage_backend=local` 的最小闭环；服务会按当前用户、run workspace、`output/` 相对路径和 symlink 解析结果做越界检查。
+下载 artifact 文件。当前只支持 `storage_backend=local` 的最小闭环；服务会按当前用户、run workspace、`output/` 相对路径和 symlink 解析结果做越界检查。默认响应使用 `Content-Disposition: attachment`，用于下载；前端预览可显式传 `?disposition=inline`，让浏览器以内联方式渲染图片、PDF、音频和视频等安全预览。
 
-前端会对 `image/*` artifact 使用同一个安全下载 URL 渲染缩略预览；其他非文本类型当前仍以下载为主。
+前端会对 `image/*`、`application/pdf`、`audio/*` 和 `video/*` artifact 使用 inline URL 渲染预览；其他类型仍以下载为主。
 
 `POST /api/runs/{run_id}/cancel`
 
