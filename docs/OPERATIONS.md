@@ -189,10 +189,14 @@ Kubernetes 模板包含 `deployments/k8s/sandbox-hardening.yaml`，由 `make k8s
 
 - `LimitRange`：为没有显式 requests/limits 的容器补默认 CPU、内存和 ephemeral-storage。
 - `ResourceQuota`：限制 `niceagent` namespace 的 Pod 数、CPU、内存和临时存储总量，避免 demo 环境被单个组件拖垮。
-- `NetworkPolicy`：只允许带 `app=niceagent-agent-runtime` label 的 Pod 访问 `niceagent-sandbox-executor` 的 8082 端口。
+- `NetworkPolicy`：只允许带 `app=niceagent-agent-runtime` label 的 Pod 访问 `niceagent-sandbox-executor` 的 8082 端口；Sandbox Executor 出站默认受控，只允许访问 kube-system DNS、同 namespace 内 OTLP 常用端口 `4317/4318`，以及排除 RFC1918、link-local、loopback、metadata、CGNAT 和 multicast 网段后的公网地址。
 - Sandbox Executor Pod/Container `securityContext`：非 root 运行、`RuntimeDefault` seccomp、禁止提权、drop Linux capabilities、只读 rootfs，并把 `/app/workspaces` 和 `/tmp` 作为可写 `emptyDir` 挂载。
 
-这只是 K8s 层的最小防线，不等同于强多租户安全沙箱。生产环境继续建议把 sandbox worker 放到独立节点池，并按风险等级评估 gVisor/Kata/Firecracker、RuntimeClass、egress policy、镜像白名单和更细的审计。
+这只是 K8s 层的最小防线，不等同于强多租户安全沙箱。生产环境继续建议把 sandbox worker 放到独立节点池，并按风险等级评估 gVisor/Kata/Firecracker、RuntimeClass、云防火墙/NAT 出口控制、镜像白名单和更细的审计。仓库内可用下面的轻量检查确认 sandbox 加固 manifest 仍包含 ingress/egress、资源限制和关键地址段排除：
+
+```bash
+make check-k8s-sandbox
+```
 
 Sandbox Executor 支持 `EXECUTOR_MODE=local|container`。本地和 Compose 默认仍是 `local`，避免没有 Docker CLI/socket 的开发容器直接失效；切到 `container` 前应先确保宿主 Docker 可用，并配置：
 
