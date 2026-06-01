@@ -51,6 +51,11 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: MODEL_PROVIDER
+            - name: MODEL_PROVIDER_PROFILE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: MODEL_PROVIDER_PROFILE
             - name: MODEL_BASE_URL
               valueFrom:
                 configMapKeyRef:

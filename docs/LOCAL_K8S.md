@@ -79,6 +79,8 @@ PATH="$PWD/.local/bin:$PATH" make kind-load
 make k8s-apply
 ```
 
+`k8s-apply` 会应用 `deployments/k8s/sandbox-hardening.yaml`。这份模板提供默认 `LimitRange`、namespace `ResourceQuota` 和 Sandbox Executor 的基础 `NetworkPolicy`，用于本地提前发现资源配置或服务访问边界问题。
+
 部署成功后查看状态：
 
 ```bash

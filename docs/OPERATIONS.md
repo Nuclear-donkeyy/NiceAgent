@@ -129,6 +129,17 @@ Agent Runtime 的 `GET /healthz` 会包含 `model_provider` 快照，展示 prov
 - `niceagent_model_health_probe_total{status="error"}` 在 5 分钟内持续增长。
 - `niceagent_model_health_probe_duration_seconds_sum / niceagent_model_health_probe_duration_seconds_count` 明显高于业务 SLO。
 
+## K8s Sandbox 加固
+
+Kubernetes 模板包含 `deployments/k8s/sandbox-hardening.yaml`，由 `make k8s-apply` 和 ACK CD 工作流自动应用。当前加固边界包括：
+
+- `LimitRange`：为没有显式 requests/limits 的容器补默认 CPU、内存和 ephemeral-storage。
+- `ResourceQuota`：限制 `niceagent` namespace 的 Pod 数、CPU、内存和临时存储总量，避免 demo 环境被单个组件拖垮。
+- `NetworkPolicy`：只允许带 `app=niceagent-agent-runtime` label 的 Pod 访问 `niceagent-sandbox-executor` 的 8082 端口。
+- Sandbox Executor Pod/Container `securityContext`：非 root 运行、`RuntimeDefault` seccomp、禁止提权、drop Linux capabilities、只读 rootfs，并把 `/app/workspaces` 和 `/tmp` 作为可写 `emptyDir` 挂载。
+
+这只是 K8s 层的最小防线，不等同于强多租户安全沙箱。生产环境继续建议把 sandbox worker 放到独立节点池，并按风险等级评估 gVisor/Kata/Firecracker、RuntimeClass、egress policy、镜像白名单和更细的审计。
+
 ## Skill 与 Secret 排查
 
 Skill 存储分为四层：
