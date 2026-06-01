@@ -111,7 +111,7 @@ E2E 第一版可以通过 fake backend 或网络 mock 先验证前端行为，�
 2. Skill 表单：客户端校验、字段级错误、服务端错误和保存状态。
 3. SSE replay 体验：last seq、断线提示、去重和恢复状态。
 4. Playwright smoke：本地 mock + CI Chromium。
-5. 集成 E2E：启动三服务，覆盖真实 `/cli echo hello` 和 HTTP Skill。
+5. 集成 E2E：`make smoke-three-services-ui` 已能构建前端、启动三服务，并由 Control Plane 托管静态产物，覆盖真实 `/cli echo hello`、artifact list API 和刷新恢复；后续继续补 HTTP Skill 真实后端流和 SSE 断线重连。
 
 ## 风险与验收
 
@@ -128,7 +128,7 @@ E2E 第一版可以通过 fake backend 或网络 mock 先验证前端行为，�
 - 用户不看原始事件，也能理解 agent 在排队、生成、调用 skill、生成 artifact、失败或取消。
 - HTTP Skill 空名称、非法 URL、Bearer 未填、后端 4xx/5xx 都有中文错误且不丢输入。
 - 刷新页面后恢复最近 run 状态和 artifact 元数据。
-- Playwright 覆盖会话、普通消息、CLI 状态、artifact、HTTP Skill 添加/启停、失败恢复。
+- Playwright mock smoke 覆盖会话、普通消息、CLI 状态、artifact、HTTP Skill 添加/启停、失败恢复；三服务 UI smoke 覆盖真实 `/cli echo`、artifact list API 和刷新恢复。
 - `make check-js`、Rspack build、Playwright smoke 在本地和 CI 通过。
 
 ## 参考资料

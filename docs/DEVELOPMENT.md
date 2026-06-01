@@ -253,6 +253,7 @@ WEB_DIST_DIR=/absolute/path/to/dist make run-control
 make test
 make check-js
 make smoke-three-services
+make smoke-three-services-ui
 make compose-config
 git diff --check
 ```
@@ -270,6 +271,14 @@ make smoke-three-services-redis
 ```
 
 该命令会使用唯一 stream/group，执行两次 `/cli echo ...`，并在输出中打印每个 run 的 `claimed_by`。
+
+需要验证真实浏览器 UI 与三服务联动时运行：
+
+```bash
+make smoke-three-services-ui
+```
+
+该命令会先构建前端，再启动 Sandbox Executor、Agent Runtime 和 Control Plane，由 Control Plane 托管 `frontend/dist`，最后用 Playwright 打开真实页面，发送 `/cli echo hello-ui-smoke`，验证 assistant 回复、run 终态、artifact list API 和刷新后的消息恢复。它依赖 `frontend/node_modules` 与 Playwright 浏览器已安装；如果只想验证前端交互而不启动真实后端，继续使用 `cd frontend && npm run smoke:e2e`。
 
 Postgres repository 测试默认跳过；如需运行，需要提供测试数据库：
 
