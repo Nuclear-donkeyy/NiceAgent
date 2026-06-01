@@ -34,7 +34,7 @@ Control Plane 已经支持：
 - `PATCH /api/skills/{id}` 更新 HTTP Skill。
 - `POST /api/skills/{id}/enable|disable` 启停用户 skill。
 
-创建/更新 HTTP Skill 时已经校验 `name`、`GET|POST`、`auth_type`、`https` URL、URL 不含 credentials、timeout 范围、`input_schema` 和 `output_schema`。`runtime_config` 会由 `HTTPSkillRuntimeConfig` 统一生成，避免 token 进入 runtime config。OpenAPI JSON preview dry-run 已有最小入口：`POST /api/skills/import/openapi/preview` 会把 `GET/POST` operation 转成 HTTP Skill 候选项，但不会创建 skill、不会保存 secret、暂不支持 YAML 和完整导入向导。MCP 导入仍未实现。
+创建/更新 HTTP Skill 时已经校验 `name`、`GET|POST`、`auth_type`、`https` URL、URL 不含 credentials、timeout 范围、`input_schema` 和 `output_schema`。`runtime_config` 会由 `HTTPSkillRuntimeConfig` 统一生成，避免 token 进入 runtime config。OpenAPI JSON/YAML preview dry-run 已有最小入口：`POST /api/skills/import/openapi/preview` 会把 `GET/POST` operation 转成 HTTP Skill 候选项，但不会创建 skill、不会保存 secret、暂不支持完整导入保存向导。MCP 导入仍未实现。
 
 Agent Runtime 的 `ToolBridge` 已能把 `RuntimeSkill` 转成 Eino tool。builtin skill 调 `cli.exec` 或 `workspace.read`；HTTP Skill 会按 `runtime_config` 构造请求，支持 bearer token，响应限制为 64KB。Runtime 调用 HTTP Skill 前会校验 arguments；返回后会按 `output_schema` 校验 structured output；非 2xx、DNS、TLS、timeout、响应过大、schema 错误会转成结构化 observation。HTTP Skill 默认只允许 `https`，禁用重定向，拒绝 loopback、`.local`、metadata host、字面量 private/link-local IP，并会在发出请求前解析域名，拒绝解析到 private/link-local/loopback/metadata 类地址的 host。HTTP Skill 还支持可选 `retry.max_attempts` 和 `rate_limit.requests_per_minute`，当前 rate limit 是 Agent Runtime 进程内固定窗口。当前仍缺 OpenAPI 完整保存向导、MCP 导入、跨副本强一致 skill rate limit 和更细审计能力。
 
@@ -46,7 +46,7 @@ HTTP dispatcher 已经把完整 `RuntimeSkill` 下发给 Runtime。Redis queue �
 - 增加 `SecretResolver` 接口，支持 `local_encrypted`、`env://` secret_ref、Vault、阿里云 KMS、Kubernetes Secret 引用。
 - 增加 `SkillMaterializer`：Control Plane 按 user/project/grant 读取当前版本 manifest，并只在内部请求中附带 Runtime 必需 secret。
 - 拆出 Runtime `SkillExecutionService` 和 HTTP Skill executor，统一校验、调用、错误分类、redaction 和事件输出。
-- 增加 OpenAPI/MCP importer：OpenAPI JSON preview/dry-run 已有最小后端入口；下一步补完整保存向导、secret 绑定、YAML 支持和 MCP 导入。
+- 增加 OpenAPI/MCP importer：OpenAPI JSON/YAML preview/dry-run 已有最小后端入口；下一步补完整保存向导、secret 绑定和 MCP 导入。
 - 继续加固 Redis queue 路径：当前 worker 已按 `run_id` 拉取当前授权后的 manifest，下一步需要配合 attempt fencing 固化授权快照和幂等边界。
 
 ## 技术架构
@@ -95,7 +95,7 @@ event/log 中只允许出现脱敏后的 endpoint、status、duration、size、e
 
 OpenAPI/MCP 导入放在下一层：
 
-- OpenAPI JSON preview 已先把 operation 转成 HTTP Skill 候选项，下一步再补 `HTTPSkillInput` 保存、用户选择 operation、auth secret binding 和 YAML 支持。
+- OpenAPI JSON/YAML preview 已先把 operation 转成 HTTP Skill 候选项，下一步再补 `HTTPSkillInput` 保存、用户选择 operation 和 auth secret binding。
 - MCP tool -> NiceAgent skill manifest，保留 MCP annotations。
 - 导入必须先生成 preview，由用户选择 operation 和绑定 secret，再保存。
 
@@ -103,7 +103,7 @@ OpenAPI/MCP 导入放在下一层：
 
 1. 最小生产闭环：schema validation、HTTP Skill 错误模型、secret redaction、Runtime 输入校验。
 2. Secret resolver：本地开发继续支持 `encrypted_value`，`env://` secret_ref 已可用；生产继续补阿里云 KMS/Vault/External Secrets 原生 resolver。
-3. 导入能力：OpenAPI JSON dry-run API 已落地；继续实现完整保存向导、YAML 支持、MCP manifest 转换器和前端导入体验。
+3. 导入能力：OpenAPI JSON/YAML dry-run API 已落地；继续实现完整保存向导、MCP manifest 转换器和前端导入体验。
 4. 治理能力：Runtime 进程内 per-skill rate limit 已有最小闭环；后续继续补跨副本强一致 skill rate limit、skill invocation 审计、风险策略和 metrics/tracing。
 
 ## 风险与验收
@@ -125,7 +125,7 @@ OpenAPI/MCP 导入放在下一层：
 - HTTP Skill 默认拒绝 private/link-local/metadata IP，并在 DNS 解析后再次拦截解析到私网/本机/metadata 类地址的 host。
 - HTTP Skill 对 429、5xx、网络/超时错误按配置重试，且 `retry_count` 可观测。
 - HTTP Skill 命中 per-skill rate limit 时返回 `rate_limited` observation 且不发起请求。
-- OpenAPI JSON preview 不创建 skill、不保存 secret，只返回可供用户选择的 HTTP Skill 候选项。
+- OpenAPI JSON/YAML preview 不创建 skill、不保存 secret，只返回可供用户选择的 HTTP Skill 候选项。
 - HTTP dispatcher 和未来 queue dispatcher 都能让 Runtime 拿到完整授权后的 skill manifest。
 
 ## 参考资料

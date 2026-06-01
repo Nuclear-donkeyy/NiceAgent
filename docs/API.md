@@ -141,7 +141,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 `POST /api/skills/import/openapi/preview`
 
-预览 OpenAPI JSON 文档中可转换为 HTTP Skill 的 operation。该接口只做 dry-run，不创建 skill、不保存 secret、不修改 grant。当前支持 OpenAPI JSON，不支持 YAML；只转换 `GET` 和 `POST` operation，并要求最终 base URL 为 `https`。
+预览 OpenAPI JSON/YAML 文档中可转换为 HTTP Skill 的 operation。该接口只做 dry-run，不创建 skill、不保存 secret、不修改 grant。当前只转换 `GET` 和 `POST` operation，并要求最终 base URL 为 `https`。
 
 请求体：
 
