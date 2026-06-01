@@ -562,6 +562,50 @@ X-NiceAgent-Webhook-Signature: sha256=...
 }
 ```
 
+`GET /api/skill-invocations`
+
+列出当前 actor 在当前项目下最近的 skill invocation 记录。支持 `limit`、`run_id`、`skill_id`、`status` 过滤，`limit` 最大 100。该接口用于排查 agent 调用了哪些 skill、调用是否成功以及对应 run event id/seq；它不返回 tool 原始 input/output，也不返回 secret。
+
+`status` 取值：
+
+- `started`
+- `succeeded`
+- `failed`
+
+响应体：
+
+```json
+{
+  "invocations": [
+    {
+      "id": "skillinv_xxx",
+      "run_id": "run_xxx",
+      "chat_id": "chat_xxx",
+      "user_id": "demo-user",
+      "project_id": "demo-project",
+      "skill_id": "cli.exec",
+      "tool_name": "cli_exec",
+      "status": "succeeded",
+      "decision": "allow",
+      "request_id": "req_xxx",
+      "trace_id": "trc_xxx",
+      "started_event_id": "evt_start",
+      "started_event_seq": 2,
+      "finished_event_id": "evt_finish",
+      "finished_event_seq": 4,
+      "duration_ms": 180,
+      "metadata": {
+        "tool": "cli_exec",
+        "ok": true
+      },
+      "started_at": "2026-05-31T00:00:00Z",
+      "finished_at": "2026-05-31T00:00:01Z",
+      "updated_at": "2026-05-31T00:00:01Z"
+    }
+  ]
+}
+```
+
 ## 内部 API
 
 `POST /internal/runs/execute`

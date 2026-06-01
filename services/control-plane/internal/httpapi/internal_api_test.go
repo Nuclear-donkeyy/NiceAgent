@@ -272,6 +272,36 @@ func TestInternalToolEventsWriteRedactedSkillAuditEvents(t *testing.T) {
 	if audits[0].Metadata["output"] != nil || audits[1].Metadata["input"] != nil {
 		t.Fatalf("audit metadata leaked tool input/output: %#v %#v", audits[0].Metadata, audits[1].Metadata)
 	}
+
+	invocations := store.ListSkillInvocations(app.DemoActor(), app.SkillInvocationListOptions{RunID: run.ID})
+	if len(invocations) != 1 {
+		t.Fatalf("skill invocations = %#v, want one invocation", invocations)
+	}
+	invocation := invocations[0]
+	if invocation.SkillID != "cli.exec" || invocation.ToolName != "cli_exec" {
+		t.Fatalf("skill invocation identity = %#v", invocation)
+	}
+	if invocation.Status != protocol.SkillInvocationFailed || invocation.Decision != protocol.AuditDecisionDeny {
+		t.Fatalf("skill invocation status = %#v", invocation)
+	}
+	if invocation.StartedEventID == "" || invocation.FinishedEventID == "" || invocation.FinishedEventSeq <= invocation.StartedEventSeq {
+		t.Fatalf("skill invocation event linkage = %#v", invocation)
+	}
+	if invocation.Metadata["output"] != nil || invocation.Metadata["input"] != nil {
+		t.Fatalf("skill invocation metadata leaked tool input/output: %#v", invocation.Metadata)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/skill-invocations?run_id="+run.ID+"&status=failed", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, listRequest)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("skill invocation list status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+	var listed protocol.SkillInvocationsResponse
+	decodeJSON(t, listResponse.Body, &listed)
+	if len(listed.Invocations) != 1 || listed.Invocations[0].ID != invocation.ID {
+		t.Fatalf("listed skill invocations = %#v, want %#v", listed.Invocations, invocation)
+	}
 }
 
 func TestInternalRunQuotaReservePersistsUsageAndDeniesLimits(t *testing.T) {

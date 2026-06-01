@@ -2132,6 +2132,127 @@ func (s *PostgresStore) SetSkillEnabled(userID, skillID string, enabled bool) (p
 	return s.getOwnedHTTPSkill(userID, skillID)
 }
 
+func (s *PostgresStore) RecordSkillInvocation(input protocol.SkillInvocationRecordInput) (protocol.SkillInvocationRecord, error) {
+	record := skillInvocationFromInput(input)
+	metadataJSON, err := json.Marshal(record.Metadata)
+	if err != nil {
+		return protocol.SkillInvocationRecord{}, err
+	}
+	if record.Status == protocol.SkillInvocationStarted {
+		_, err = s.exec(`
+			INSERT INTO skill_invocations (
+				id, run_id, chat_id, user_id, project_id, skill_id, tool_name, status, decision,
+				reason, request_id, trace_id, started_event_id, started_event_seq, duration_ms,
+				metadata, started_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9,
+			        NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, 0), $15,
+			        $16::jsonb, $17, $18)
+			ON CONFLICT (started_event_id) WHERE started_event_id IS NOT NULL DO NOTHING`,
+			record.ID, record.RunID, record.ChatID, record.UserID, record.ProjectID, record.SkillID, record.ToolName,
+			record.Status, record.Decision, record.Reason, record.RequestID, record.TraceID, record.StartedEventID,
+			record.StartedEventSeq, record.DurationMs, string(metadataJSON), record.StartedAt, record.UpdatedAt)
+		if err != nil {
+			return protocol.SkillInvocationRecord{}, err
+		}
+		return record, nil
+	}
+
+	finishedAt := record.StartedAt
+	result, err := s.exec(`
+		WITH target AS (
+			SELECT id
+			FROM skill_invocations
+			WHERE run_id = $1
+			  AND skill_id = $2
+			  AND finished_at IS NULL
+			  AND ($3 = '' OR tool_name = $3 OR tool_name IS NULL)
+			ORDER BY started_at DESC
+			LIMIT 1
+		)
+		UPDATE skill_invocations si
+		SET status = $4,
+		    decision = $5,
+		    reason = NULLIF($6, ''),
+		    request_id = COALESCE(NULLIF($7, ''), si.request_id),
+		    trace_id = COALESCE(NULLIF($8, ''), si.trace_id),
+		    finished_event_id = NULLIF($9, ''),
+		    finished_event_seq = NULLIF($10, 0),
+		    duration_ms = CASE
+		      WHEN $11 > 0 THEN $11
+		      ELSE GREATEST(0, (EXTRACT(EPOCH FROM ($13 - si.started_at)) * 1000)::bigint)
+		    END,
+		    metadata = si.metadata || $12::jsonb,
+		    finished_at = $13,
+		    updated_at = $14
+		FROM target
+		WHERE si.id = target.id`,
+		record.RunID, record.SkillID, record.ToolName, record.Status, record.Decision, record.Reason,
+		record.RequestID, record.TraceID, record.FinishedEventID, record.FinishedEventSeq, record.DurationMs,
+		string(metadataJSON), finishedAt, record.UpdatedAt)
+	if err != nil {
+		return protocol.SkillInvocationRecord{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return protocol.SkillInvocationRecord{}, err
+	}
+	if affected == 0 {
+		_, err = s.exec(`
+			INSERT INTO skill_invocations (
+				id, run_id, chat_id, user_id, project_id, skill_id, tool_name, status, decision,
+				reason, request_id, trace_id, finished_event_id, finished_event_seq, duration_ms,
+				metadata, started_at, finished_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9,
+			        NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, 0), $15,
+			        $16::jsonb, $17, $18, $19)`,
+			record.ID, record.RunID, record.ChatID, record.UserID, record.ProjectID, record.SkillID, record.ToolName,
+			record.Status, record.Decision, record.Reason, record.RequestID, record.TraceID, record.FinishedEventID,
+			record.FinishedEventSeq, record.DurationMs, string(metadataJSON), record.StartedAt, finishedAt, record.UpdatedAt)
+		if err != nil {
+			return protocol.SkillInvocationRecord{}, err
+		}
+		return record, nil
+	}
+	return s.getSkillInvocationByFinishedEvent(record.FinishedEventID)
+}
+
+func (s *PostgresStore) ListSkillInvocations(actor app.ActorContext, opts app.SkillInvocationListOptions) []protocol.SkillInvocationRecord {
+	limit := opts.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	rows, err := s.query(`
+		SELECT id, run_id, chat_id, user_id, project_id, skill_id, COALESCE(tool_name, ''),
+		       status, decision, COALESCE(reason, ''), COALESCE(request_id, ''), COALESCE(trace_id, ''),
+		       COALESCE(started_event_id, ''), COALESCE(started_event_seq, 0),
+		       COALESCE(finished_event_id, ''), COALESCE(finished_event_seq, 0),
+		       duration_ms, metadata, started_at, finished_at, updated_at
+		FROM skill_invocations
+		WHERE user_id = $1
+		  AND project_id = $2
+		  AND ($3 = '' OR run_id = $3)
+		  AND ($4 = '' OR skill_id = $4)
+		  AND ($5 = '' OR status = $5)
+		ORDER BY started_at DESC
+		LIMIT $6`,
+		actor.UserID, actor.ProjectID, opts.RunID, opts.SkillID, opts.Status, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	records := make([]protocol.SkillInvocationRecord, 0)
+	for rows.Next() {
+		record, err := scanSkillInvocation(rows)
+		if err != nil {
+			return records
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
 func (s *PostgresStore) AddAuditEvent(input protocol.AuditEventInput) (protocol.AuditEvent, error) {
 	event := auditEventFromInput(input)
 	metadataJSON, err := json.Marshal(event.Metadata)
@@ -2221,6 +2342,53 @@ func (s *PostgresStore) getProjectMember(projectID, userID string) (protocol.Pro
 		return protocol.ProjectMember{}, err
 	}
 	return member, nil
+}
+
+func (s *PostgresStore) getSkillInvocationByFinishedEvent(eventID string) (protocol.SkillInvocationRecord, error) {
+	if eventID == "" {
+		return protocol.SkillInvocationRecord{}, app.ErrNotFound
+	}
+	row := s.queryRow(`
+		SELECT id, run_id, chat_id, user_id, project_id, skill_id, COALESCE(tool_name, ''),
+		       status, decision, COALESCE(reason, ''), COALESCE(request_id, ''), COALESCE(trace_id, ''),
+		       COALESCE(started_event_id, ''), COALESCE(started_event_seq, 0),
+		       COALESCE(finished_event_id, ''), COALESCE(finished_event_seq, 0),
+		       duration_ms, metadata, started_at, finished_at, updated_at
+		FROM skill_invocations
+		WHERE finished_event_id = $1`, eventID)
+	return scanSkillInvocation(row)
+}
+
+type skillInvocationScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanSkillInvocation(scanner skillInvocationScanner) (protocol.SkillInvocationRecord, error) {
+	var record protocol.SkillInvocationRecord
+	var status string
+	var decision string
+	var rawMetadata []byte
+	err := scanner.Scan(
+		&record.ID, &record.RunID, &record.ChatID, &record.UserID, &record.ProjectID, &record.SkillID, &record.ToolName,
+		&status, &decision, &record.Reason, &record.RequestID, &record.TraceID,
+		&record.StartedEventID, &record.StartedEventSeq, &record.FinishedEventID, &record.FinishedEventSeq,
+		&record.DurationMs, &rawMetadata, &record.StartedAt, &record.FinishedAt, &record.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.SkillInvocationRecord{}, app.ErrNotFound
+		}
+		return protocol.SkillInvocationRecord{}, err
+	}
+	record.Status = protocol.SkillInvocationStatus(status)
+	record.Decision = protocol.AuditDecision(decision)
+	if len(rawMetadata) > 0 && string(rawMetadata) != "null" {
+		var metadata map[string]any
+		if err := json.Unmarshal(rawMetadata, &metadata); err == nil {
+			record.Metadata = metadata
+		}
+	}
+	return record, nil
 }
 
 func (s *PostgresStore) getOrganizationMember(orgID, userID string) (protocol.OrganizationMember, error) {

@@ -13,58 +13,60 @@ import (
 )
 
 type Store struct {
-	mu              sync.RWMutex
-	users           map[string]protocol.User
-	identities      map[string]protocol.UserIdentity
-	userIdentities  map[string]string
-	projects        map[string]protocol.Project
-	chats           map[string]protocol.ChatSession
-	messages        map[string][]protocol.Message
-	runs            map[string]protocol.Run
-	runUsage        map[string]protocol.RunUsage
-	events          map[string][]protocol.RunEvent
-	auditEvents     []protocol.AuditEvent
-	workspaces      map[string]protocol.Workspace
-	artifacts       map[string]protocol.Artifact
-	invitations     map[string]protocol.Invitation
-	emailDeliveries map[string]protocol.InvitationEmailDelivery
-	emailEvents     []protocol.InvitationEmailEvent
-	skills          map[string]protocol.Skill
-	skillGrants     map[string][]string
-	skillSecrets    map[string]map[string]protocol.RuntimeSecret
-	orgRoles        map[string][]string
-	projectRoles    map[string][]string
-	quotaPolicies   map[string]protocol.ProjectQuotaPolicy
-	subscribers     map[string]map[chan protocol.RunEvent]struct{}
-	seq             map[string]int64
+	mu               sync.RWMutex
+	users            map[string]protocol.User
+	identities       map[string]protocol.UserIdentity
+	userIdentities   map[string]string
+	projects         map[string]protocol.Project
+	chats            map[string]protocol.ChatSession
+	messages         map[string][]protocol.Message
+	runs             map[string]protocol.Run
+	runUsage         map[string]protocol.RunUsage
+	events           map[string][]protocol.RunEvent
+	auditEvents      []protocol.AuditEvent
+	skillInvocations []protocol.SkillInvocationRecord
+	workspaces       map[string]protocol.Workspace
+	artifacts        map[string]protocol.Artifact
+	invitations      map[string]protocol.Invitation
+	emailDeliveries  map[string]protocol.InvitationEmailDelivery
+	emailEvents      []protocol.InvitationEmailEvent
+	skills           map[string]protocol.Skill
+	skillGrants      map[string][]string
+	skillSecrets     map[string]map[string]protocol.RuntimeSecret
+	orgRoles         map[string][]string
+	projectRoles     map[string][]string
+	quotaPolicies    map[string]protocol.ProjectQuotaPolicy
+	subscribers      map[string]map[chan protocol.RunEvent]struct{}
+	seq              map[string]int64
 }
 
 func NewStore() *Store {
 	now := time.Now().UTC()
 	store := &Store{
-		users:           map[string]protocol.User{},
-		identities:      map[string]protocol.UserIdentity{},
-		userIdentities:  map[string]string{},
-		projects:        map[string]protocol.Project{},
-		chats:           map[string]protocol.ChatSession{},
-		messages:        map[string][]protocol.Message{},
-		runs:            map[string]protocol.Run{},
-		runUsage:        map[string]protocol.RunUsage{},
-		events:          map[string][]protocol.RunEvent{},
-		auditEvents:     []protocol.AuditEvent{},
-		workspaces:      map[string]protocol.Workspace{},
-		artifacts:       map[string]protocol.Artifact{},
-		invitations:     map[string]protocol.Invitation{},
-		emailDeliveries: map[string]protocol.InvitationEmailDelivery{},
-		emailEvents:     []protocol.InvitationEmailEvent{},
-		skills:          map[string]protocol.Skill{},
-		skillGrants:     map[string][]string{},
-		skillSecrets:    map[string]map[string]protocol.RuntimeSecret{},
-		orgRoles:        map[string][]string{},
-		projectRoles:    map[string][]string{},
-		quotaPolicies:   map[string]protocol.ProjectQuotaPolicy{},
-		subscribers:     map[string]map[chan protocol.RunEvent]struct{}{},
-		seq:             map[string]int64{},
+		users:            map[string]protocol.User{},
+		identities:       map[string]protocol.UserIdentity{},
+		userIdentities:   map[string]string{},
+		projects:         map[string]protocol.Project{},
+		chats:            map[string]protocol.ChatSession{},
+		messages:         map[string][]protocol.Message{},
+		runs:             map[string]protocol.Run{},
+		runUsage:         map[string]protocol.RunUsage{},
+		events:           map[string][]protocol.RunEvent{},
+		auditEvents:      []protocol.AuditEvent{},
+		skillInvocations: []protocol.SkillInvocationRecord{},
+		workspaces:       map[string]protocol.Workspace{},
+		artifacts:        map[string]protocol.Artifact{},
+		invitations:      map[string]protocol.Invitation{},
+		emailDeliveries:  map[string]protocol.InvitationEmailDelivery{},
+		emailEvents:      []protocol.InvitationEmailEvent{},
+		skills:           map[string]protocol.Skill{},
+		skillGrants:      map[string][]string{},
+		skillSecrets:     map[string]map[string]protocol.RuntimeSecret{},
+		orgRoles:         map[string][]string{},
+		projectRoles:     map[string][]string{},
+		quotaPolicies:    map[string]protocol.ProjectQuotaPolicy{},
+		subscribers:      map[string]map[chan protocol.RunEvent]struct{}{},
+		seq:              map[string]int64{},
 	}
 	store.users["demo-user"] = protocol.User{
 		ID:        "demo-user",
@@ -1444,6 +1446,62 @@ func (s *Store) SetSkillEnabled(userID, skillID string, enabled bool) (protocol.
 	return redactSkill(skill), nil
 }
 
+func (s *Store) RecordSkillInvocation(input protocol.SkillInvocationRecordInput) (protocol.SkillInvocationRecord, error) {
+	record := skillInvocationFromInput(input)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if record.Status == protocol.SkillInvocationStarted {
+		s.skillInvocations = append(s.skillInvocations, record)
+		return record, nil
+	}
+	for i := len(s.skillInvocations) - 1; i >= 0; i-- {
+		current := s.skillInvocations[i]
+		if current.RunID != record.RunID || current.SkillID != record.SkillID || current.FinishedAt != nil {
+			continue
+		}
+		if record.ToolName != "" && current.ToolName != "" && record.ToolName != current.ToolName {
+			continue
+		}
+		current.Status = record.Status
+		current.Decision = record.Decision
+		current.Reason = record.Reason
+		current.FinishedEventID = record.FinishedEventID
+		current.FinishedEventSeq = record.FinishedEventSeq
+		current.DurationMs = record.DurationMs
+		if current.DurationMs == 0 && record.FinishedAt != nil {
+			current.DurationMs = maxInt64(0, record.FinishedAt.Sub(current.StartedAt).Milliseconds())
+		}
+		current.FinishedAt = record.FinishedAt
+		current.UpdatedAt = record.UpdatedAt
+		current.Metadata = mergeMetadata(current.Metadata, record.Metadata)
+		s.skillInvocations[i] = current
+		return current, nil
+	}
+	s.skillInvocations = append(s.skillInvocations, record)
+	return record, nil
+}
+
+func (s *Store) ListSkillInvocations(actor app.ActorContext, opts app.SkillInvocationListOptions) []protocol.SkillInvocationRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	limit := opts.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	records := make([]protocol.SkillInvocationRecord, 0, limit)
+	for i := len(s.skillInvocations) - 1; i >= 0 && len(records) < limit; i-- {
+		record := s.skillInvocations[i]
+		if record.UserID != actor.UserID || record.ProjectID != actor.ProjectID {
+			continue
+		}
+		if !skillInvocationMatches(record, opts) {
+			continue
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
 func (s *Store) AddAuditEvent(input protocol.AuditEventInput) (protocol.AuditEvent, error) {
 	event := auditEventFromInput(input)
 	s.mu.Lock()
@@ -1652,6 +1710,80 @@ func auditEventFromInput(input protocol.AuditEventInput) protocol.AuditEvent {
 		Metadata:       platform.RedactMap(input.Metadata),
 		CreatedAt:      time.Now().UTC(),
 	}
+}
+
+func skillInvocationFromInput(input protocol.SkillInvocationRecordInput) protocol.SkillInvocationRecord {
+	now := time.Now().UTC()
+	eventTime := input.EventCreatedAt
+	if eventTime.IsZero() {
+		eventTime = now
+	}
+	status := input.Status
+	if status == "" {
+		status = protocol.SkillInvocationStarted
+	}
+	decision := input.Decision
+	if decision == "" {
+		decision = protocol.AuditDecisionAllow
+	}
+	record := protocol.SkillInvocationRecord{
+		ID:               platform.NewID("skillinv"),
+		RunID:            input.RunID,
+		ChatID:           input.ChatID,
+		UserID:           input.UserID,
+		ProjectID:        input.ProjectID,
+		SkillID:          input.SkillID,
+		ToolName:         input.ToolName,
+		Status:           status,
+		Decision:         decision,
+		Reason:           input.Reason,
+		RequestID:        input.RequestID,
+		TraceID:          input.TraceID,
+		StartedEventID:   input.StartedEventID,
+		StartedEventSeq:  input.StartedEventSeq,
+		FinishedEventID:  input.FinishedEventID,
+		FinishedEventSeq: input.FinishedEventSeq,
+		DurationMs:       input.DurationMs,
+		Metadata:         platform.RedactMap(input.Metadata),
+		StartedAt:        eventTime,
+		UpdatedAt:        now,
+	}
+	if status != protocol.SkillInvocationStarted {
+		finishedAt := eventTime
+		record.FinishedAt = &finishedAt
+	}
+	return record
+}
+
+func skillInvocationMatches(record protocol.SkillInvocationRecord, opts app.SkillInvocationListOptions) bool {
+	if opts.RunID != "" && record.RunID != opts.RunID {
+		return false
+	}
+	if opts.SkillID != "" && record.SkillID != opts.SkillID {
+		return false
+	}
+	if opts.Status != "" && string(record.Status) != opts.Status {
+		return false
+	}
+	return true
+}
+
+func mergeMetadata(base, next map[string]any) map[string]any {
+	merged := map[string]any{}
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range next {
+		merged[key] = value
+	}
+	return platform.RedactMap(merged)
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func auditEventMatches(event protocol.AuditEvent, opts app.AuditEventListOptions) bool {

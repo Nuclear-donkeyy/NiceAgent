@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/skills", platform.Method(http.MethodGet, s.skills))
 	mux.HandleFunc("/api/skills/", s.skillSubroutes)
 	mux.HandleFunc("/api/audit/events", platform.Method(http.MethodGet, s.auditEvents))
+	mux.HandleFunc("/api/skill-invocations", platform.Method(http.MethodGet, s.skillInvocations))
 	mux.HandleFunc("/webhooks/invitation-email-events", platform.Method(http.MethodPost, s.invitationEmailWebhook))
 	mux.HandleFunc("/internal/runs/", s.internalRunSubroutes)
 	mux.HandleFunc("/internal/artifacts/", s.internalArtifactSubroutes)
@@ -620,6 +621,19 @@ func (s *Server) auditEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	platform.WriteJSON(w, http.StatusOK, protocol.AuditEventsResponse{
 		Events: s.repo.ListAuditEvents(actor, opts),
+	})
+}
+
+func (s *Server) skillInvocations(w http.ResponseWriter, r *http.Request) {
+	actor := actorFromRequest(r)
+	opts := app.SkillInvocationListOptions{
+		Limit:   parseLimit(r.URL.Query().Get("limit"), 100),
+		RunID:   strings.TrimSpace(r.URL.Query().Get("run_id")),
+		SkillID: strings.TrimSpace(r.URL.Query().Get("skill_id")),
+		Status:  strings.TrimSpace(r.URL.Query().Get("status")),
+	}
+	platform.WriteJSON(w, http.StatusOK, protocol.SkillInvocationsResponse{
+		Invocations: s.repo.ListSkillInvocations(actor, opts),
 	})
 }
 
@@ -1684,6 +1698,7 @@ func (s *Server) auditInternalToolEvent(r *http.Request, runID string, event pro
 	if skillID == "" {
 		skillID = "unknown"
 	}
+	status := protocol.SkillInvocationStarted
 	action := "skill.invoke.start"
 	decision := protocol.AuditDecisionAllow
 	reason := ""
@@ -1696,9 +1711,11 @@ func (s *Server) auditInternalToolEvent(r *http.Request, runID string, event pro
 	}
 	if event.Type == protocol.EventToolFinished {
 		action = "skill.invoke.finish"
+		status = protocol.SkillInvocationSucceeded
 		if okValue, exists := boolValue(payloadMap["ok"]); exists {
 			metadata["ok"] = okValue
 			if !okValue {
+				status = protocol.SkillInvocationFailed
 				decision = protocol.AuditDecisionDeny
 				reason = "skill invocation finished unsuccessfully"
 			}
@@ -1708,7 +1725,48 @@ func (s *Server) auditInternalToolEvent(r *http.Request, runID string, event pro
 		UserID:    run.UserID,
 		ProjectID: chat.ProjectID,
 	}
+	s.recordSkillInvocation(r, actor, runID, chat.ID, skillID, toolName, event, status, decision, reason, metadata)
 	s.writeAuditEvent(r, actor, action, "skill", skillID, runID, decision, reason, metadata)
+}
+
+func (s *Server) recordSkillInvocation(
+	r *http.Request,
+	actor app.ActorContext,
+	runID, chatID, skillID, toolName string,
+	event protocol.RunEvent,
+	status protocol.SkillInvocationStatus,
+	decision protocol.AuditDecision,
+	reason string,
+	metadata map[string]any,
+) {
+	if s.repo == nil {
+		return
+	}
+	input := protocol.SkillInvocationRecordInput{
+		RunID:          runID,
+		ChatID:         chatID,
+		UserID:         actor.UserID,
+		ProjectID:      actor.ProjectID,
+		SkillID:        skillID,
+		ToolName:       toolName,
+		Status:         status,
+		Decision:       decision,
+		Reason:         reason,
+		RequestID:      requestIDFromRequest(r),
+		TraceID:        firstNonEmpty(platform.TraceIDFromContext(r.Context()), firstHeader(r, "X-Trace-ID", "Traceparent")),
+		Metadata:       metadata,
+		EventCreatedAt: event.CreatedAt,
+	}
+	if event.Type == protocol.EventToolStarted {
+		input.StartedEventID = event.ID
+		input.StartedEventSeq = event.Seq
+	} else {
+		input.FinishedEventID = event.ID
+		input.FinishedEventSeq = event.Seq
+	}
+	if _, err := s.repo.RecordSkillInvocation(input); err != nil && s.log != nil {
+		s.log.Warn("skill_invocation_write_failed", "request_id", requestIDFromRequest(r), "run_id", runID, "skill_id", skillID, "error", err.Error())
+	}
 }
 
 func (s *Server) internalCompleteRun(w http.ResponseWriter, r *http.Request, runID string) {
