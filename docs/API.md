@@ -16,7 +16,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 所有 Control Plane 请求都会返回 `X-Request-ID`。如果请求头已提供合法 `X-Request-ID`，服务会透传；否则服务会生成一个新的 request id。request log 和 audit event 会记录同一个 request id，便于串联排障。
 
-三服务都会返回 `X-Trace-ID`。如果请求带 `X-Trace-ID` 或标准 `Traceparent`，服务会复用其中的 trace id；否则生成新的 trace id。Control Plane 调 Agent Runtime、Agent Runtime 回写 Control Plane、Agent Runtime 调 Sandbox Executor 时会继续透传 `X-Trace-ID` 和标准 `traceparent`。默认 `OTEL_TRACES_EXPORTER=none`；配置 `OTEL_TRACES_EXPORTER=otlp` 后，三服务会初始化 OpenTelemetry tracer provider，并通过 OTLP HTTP exporter 上报 spans。当前 OTel 覆盖 HTTP 服务入口、Control Plane 调度/回写、Redis run queue、Runtime run/tool/model、HTTP Skill、Sandbox HTTP/exec 和标准 trace context 传播；DB repository 与 Redis 低层命令级 span 仍是后续工作。
+三服务都会返回 `X-Trace-ID`。如果请求带 `X-Trace-ID` 或标准 `Traceparent`，服务会复用其中的 trace id；否则生成新的 trace id。Control Plane 调 Agent Runtime、Agent Runtime 回写 Control Plane、Agent Runtime 调 Sandbox Executor 时会继续透传 `X-Trace-ID` 和标准 `traceparent`。默认 `OTEL_TRACES_EXPORTER=none`；配置 `OTEL_TRACES_EXPORTER=otlp` 后，三服务会初始化 OpenTelemetry tracer provider，并通过 OTLP HTTP exporter 上报 spans。当前 OTel 覆盖 HTTP 服务入口、Control Plane 调度/回写、Redis run queue、Redis 命令、Postgres repository 命令、Runtime run/tool/model、HTTP Skill、Sandbox HTTP/exec 和标准 trace context 传播。
 
 三服务都提供 `GET /metrics`，返回 Prometheus text exposition 风格的基础指标，包括 HTTP 请求总数/耗时，以及部分领域计数，例如 run 创建、quota deny、runtime run 结果和 sandbox exec 退出码。`/metrics` 当前不改变外部业务 API；生产部署时应通过网关或内网策略限制访问。
 
@@ -192,7 +192,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 `GET /api/organizations/{organization_id}/invitations`
 
-列出当前组织的邀请记录，只允许 `owner/admin`。列表不会返回完整 token；创建邀请时才会在响应中返回 token，便于本地开发或后续邮件服务发送邀请链接。
+列出当前组织的邀请记录，只允许 `owner/admin`。列表不会返回完整 token；创建邀请时才会在响应中返回 token，便于本地开发或 SMTP 邮件服务发送邀请链接。
 
 ```json
 {
@@ -224,7 +224,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 }
 ```
 
-创建响应会额外包含一次性可见的 `token`：
+创建响应会额外包含一次性可见的 `token`。如果 Control Plane 配置 `INVITATION_EMAIL_MODE=smtp`，服务会同时向邀请邮箱发送包含 `/?invitation_token={token}` 链接的邮件，并写入 `invitation.email.send` audit event；SMTP 发送失败不会回滚已创建的邀请。
 
 ```json
 {
@@ -242,7 +242,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 `POST /api/invitations/{token}/accept`
 
-当前登录 actor 接受邀请。该接口允许尚未有组织/项目成员关系的已认证用户调用；接受组织邀请会写入 `organization_members`，接受项目邀请会写入 `project_members`。在 `trusted-header`/`oidc` 边界下，请求必须携带 `X-NiceAgent-User-Email`，且该邮箱必须与邀请邮箱一致。当前尚未做邮件发送或 NiceAgent 内置 OIDC identity binding，因此生产环境应放在可信身份网关之后，并在后续补齐 `issuer + sub + email` 绑定。
+当前登录 actor 接受邀请。该接口允许尚未有组织/项目成员关系的已认证用户调用；接受组织邀请会写入 `organization_members`，接受项目邀请会写入 `project_members`。在 `trusted-header`/`oidc` 边界下，请求必须携带 `X-NiceAgent-User-Email`，且该邮箱必须与邀请邮箱一致。当前已支持可选 SMTP 邀请邮件和可信 `issuer + sub + email` 绑定，但 NiceAgent 内置 OIDC 登录/JWT/session 仍未落地，因此生产环境仍应放在可信身份网关之后。
 
 如果上游同时传入 `X-NiceAgent-Identity-Issuer` 和 `X-NiceAgent-Identity-Subject`，接受邀请前也会经过 `user_identities` 绑定校验；如果只传其中一个会返回 401，发生身份冲突会返回 409。
 

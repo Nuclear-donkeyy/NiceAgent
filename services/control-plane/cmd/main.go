@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"niceagent/common/platform"
@@ -14,6 +15,7 @@ import (
 	"niceagent/control-plane/internal/dispatch"
 	"niceagent/control-plane/internal/events"
 	"niceagent/control-plane/internal/httpapi"
+	"niceagent/control-plane/internal/mailer"
 	"niceagent/control-plane/internal/quota"
 	"niceagent/control-plane/internal/repository"
 
@@ -39,10 +41,12 @@ func main() {
 		store = quota.NewReleasingRepository(store, quotaLimiter, logger)
 	}
 	dispatcher := newDispatcher(cfg, store, logger)
+	invitationMailer := newInvitationMailer(cfg, logger)
 	server := httpapi.NewServerWithOptions(store, dispatcher, logger, httpapi.ServerOptions{
 		AuthMode:              cfg.AuthMode,
 		ControlPlanePublicURL: cfg.ControlPlanePublicURL,
 		InternalAPIToken:      cfg.InternalAPIToken,
+		InvitationMailer:      invitationMailer,
 		RunQuota: httpapi.RunQuota{
 			MaxConcurrentRuns:       cfg.MaxConcurrentRuns,
 			MaxRunsPerHour:          cfg.MaxRunsPerHour,
@@ -60,6 +64,27 @@ func main() {
 	logger.Info("starting control plane", "addr", cfg.Addr, "auth_mode", cfg.AuthMode)
 	if err := http.ListenAndServe(cfg.Addr, server.Handler()); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func newInvitationMailer(cfg config.Config, logger *slog.Logger) app.InvitationMailer {
+	switch strings.ToLower(strings.TrimSpace(cfg.InvitationEmailMode)) {
+	case "", "disabled":
+		logger.Info("invitation email disabled")
+		return nil
+	case "smtp":
+		logger.Info("using smtp invitation email", "host", cfg.SMTPHost, "port", cfg.SMTPPort, "from", cfg.SMTPFrom)
+		return mailer.NewSMTPInvitationMailer(mailer.SMTPConfig{
+			Host:          cfg.SMTPHost,
+			Port:          cfg.SMTPPort,
+			Username:      cfg.SMTPUsername,
+			Password:      cfg.SMTPPassword,
+			From:          cfg.SMTPFrom,
+			PublicBaseURL: cfg.InvitationPublicBaseURL,
+		})
+	default:
+		logger.Warn("unknown INVITATION_EMAIL_MODE; invitation email disabled", "mode", cfg.InvitationEmailMode)
+		return nil
 	}
 }
 

@@ -21,7 +21,7 @@
 - Skill registry 已有 metadata、version、grant、secret 存储模型，但 schema validation、HTTP Skill 错误模型、secret backend 抽象、OpenAPI/MCP 导入还不完整。
 - Sandbox 还不是强隔离生产沙箱。当前 CLI 策略偏本地开发可用，仍需容器默认执行路径、workspace 隔离、artifact 归档、网络策略和资源配额。
 - 前端已经隐藏原始事件面板，但 artifact 展示、skill 配置校验、端到端测试和错误恢复体验还需要补强。
-- Control Plane 仍缺 NiceAgent 内置 OIDC/session/JWT、邮件发送、强一致账单级 quota 和告警路由/值班系统；Redis Runtime worker、重试/lease、跨副本 event fanout、审计、结构化 request log、基础 metrics/tracing、Prometheus 告警规则、Redis 低层命令 spans 和 Postgres repository spans 已有最小闭环。
+- Control Plane 仍缺 NiceAgent 内置 OIDC/session/JWT、强一致账单级 quota 和告警路由/值班系统；邀请创建/接受、可信身份绑定和可选 SMTP 邮件已有最小闭环，但投递模板、退信处理和队列化发送仍待补；Redis Runtime worker、重试/lease、跨副本 event fanout、审计、结构化 request log、基础 metrics/tracing、Prometheus 告警规则、Redis 低层命令 spans 和 Postgres repository spans 已有最小闭环。
 - 云部署目前适合作为近云验证，不应把 memory demo 或未完成 sandbox 当作生产方案直接发布。
 
 ## 下一阶段优先级

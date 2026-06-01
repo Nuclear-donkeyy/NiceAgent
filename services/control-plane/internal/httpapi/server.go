@@ -32,6 +32,7 @@ type Server struct {
 	authMode         string
 	controlPlaneURL  string
 	internalToken    string
+	invitationMailer app.InvitationMailer
 	runQuota         RunQuota
 	quotaLimiter     quotapkg.Limiter
 	tokenReservation TokenReservationOptions
@@ -41,6 +42,7 @@ type ServerOptions struct {
 	AuthMode              string
 	ControlPlanePublicURL string
 	InternalAPIToken      string
+	InvitationMailer      app.InvitationMailer
 	RunQuota              RunQuota
 	QuotaLimiter          quotapkg.Limiter
 	TokenReservation      TokenReservationOptions
@@ -74,6 +76,7 @@ func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log
 		authMode:         normalizeAuthMode(opts.AuthMode),
 		controlPlaneURL:  strings.TrimRight(opts.ControlPlanePublicURL, "/"),
 		internalToken:    internalToken(opts.InternalAPIToken),
+		invitationMailer: opts.InvitationMailer,
 		runQuota:         opts.RunQuota,
 		quotaLimiter:     opts.QuotaLimiter,
 		tokenReservation: normalizeTokenReservationOptions(opts.TokenReservation),
@@ -765,6 +768,21 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request, orgID 
 		"project_id":      invitation.ProjectID,
 		"role":            invitation.Role,
 	})
+	if s.invitationMailer != nil {
+		if err := s.invitationMailer.SendInvitation(r.Context(), invitation); err != nil {
+			s.log.Warn("invitation email send failed", "invitation_id", invitation.ID, "organization_id", invitation.OrganizationID, "project_id", invitation.ProjectID, "error", err)
+			s.auditDeny(r, "invitation.email.send", "invitation", invitation.ID, "", "email send failed", map[string]any{
+				"organization_id": invitation.OrganizationID,
+				"project_id":      invitation.ProjectID,
+				"error_class":     "smtp_send_failed",
+			})
+		} else {
+			s.auditAllow(r, "invitation.email.send", "invitation", invitation.ID, "", map[string]any{
+				"organization_id": invitation.OrganizationID,
+				"project_id":      invitation.ProjectID,
+			})
+		}
+	}
 	platform.WriteJSON(w, http.StatusCreated, protocol.InvitationResponse{Invitation: invitation})
 }
 

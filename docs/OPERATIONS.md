@@ -41,7 +41,21 @@ PATCH /api/projects/{project_id}/members/{user_id}
 DELETE /api/projects/{project_id}/members/{user_id}
 ```
 
-这些 API 只管理当前 actor 所在项目的 `project_members`，不会跨项目修改成员；第一版也不允许修改或删除自己的成员关系，避免把自己锁出项目。organization 级成员管理、邀请流程、身份绑定和更细粒度 action policy 仍是后续工作。
+这些 API 只管理当前 actor 所在项目的 `project_members`，不会跨项目修改成员；第一版也不允许修改或删除自己的成员关系，避免把自己锁出项目。organization 级成员管理、邀请创建/接受、可信身份绑定和可选 SMTP 邀请邮件已有最小闭环；NiceAgent 内置 OIDC 登录和更细粒度 action policy 仍是后续工作。
+
+邀请邮件默认关闭，适合本地开发。需要由 Control Plane 直接发送邀请邮件时配置：
+
+```bash
+INVITATION_EMAIL_MODE=smtp
+INVITATION_PUBLIC_BASE_URL=https://app.example.com
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=niceagent
+SMTP_PASSWORD=<secret>
+SMTP_FROM="NiceAgent <noreply@example.com>"
+```
+
+`INVITATION_PUBLIC_BASE_URL` 用于生成邮件中的 `/?invitation_token={token}` 链接。SMTP 发送失败不会回滚已创建的邀请，排查时查看 `invitation.email.send` audit event 和 Control Plane 日志。生产环境不要把 `SMTP_PASSWORD` 放入 ConfigMap 或仓库；K8s 模板通过 `niceagent-smtp` Secret 注入该值。
 
 run 配额是最小治理边界，默认关闭。env 配置是 fallback：
 
