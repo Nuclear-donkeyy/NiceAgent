@@ -197,6 +197,40 @@ func TestServerReplaysRunEventsAfterLastEventID(t *testing.T) {
 	}
 }
 
+func TestServerRecordsSSEConnectionMetrics(t *testing.T) {
+	store, handler := newTestHandler()
+	chat := mustCreateChat(t, store, "demo-user", "sse metrics")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "events")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodGet, "/api/runs/"+run.ID+"/events", nil).WithContext(ctx)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("events status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	metricsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(metricsResponse, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	metrics := metricsResponse.Body.String()
+	if !strings.Contains(metrics, `niceagent_sse_connections_total{service="control_plane",event="opened",stream="run_events"} 1`) {
+		t.Fatalf("metrics missing opened SSE counter:\n%s", metrics)
+	}
+	if !strings.Contains(metrics, `niceagent_sse_connections_total{service="control_plane",event="closed",stream="run_events"} 1`) {
+		t.Fatalf("metrics missing closed SSE counter:\n%s", metrics)
+	}
+	if !strings.Contains(metrics, `niceagent_sse_active_connections{service="control_plane",stream="run_events"} 0.000000`) {
+		t.Fatalf("metrics missing active SSE gauge:\n%s", metrics)
+	}
+	if !strings.Contains(metrics, `niceagent_sse_connection_duration_seconds_count{service="control_plane",stream="run_events"} 1`) {
+		t.Fatalf("metrics missing SSE duration summary:\n%s", metrics)
+	}
+}
+
 func TestServerTrustedHeaderModeRequiresActorAndIsolatesUsers(t *testing.T) {
 	_, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
 
