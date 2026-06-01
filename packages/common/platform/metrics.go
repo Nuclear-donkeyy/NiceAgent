@@ -17,6 +17,7 @@ type Metrics struct {
 	httpRequests map[httpMetricKey]requestMetric
 	counters     map[counterMetricKey]float64
 	durations    map[durationMetricKey]durationMetric
+	gauges       map[gaugeMetricKey]float64
 }
 
 type httpMetricKey struct {
@@ -40,6 +41,11 @@ type durationMetricKey struct {
 	Labels string
 }
 
+type gaugeMetricKey struct {
+	Name   string
+	Labels string
+}
+
 type durationMetric struct {
 	Count uint64
 	Sum   float64
@@ -53,6 +59,7 @@ func NewMetrics(service string) *Metrics {
 		httpRequests: map[httpMetricKey]requestMetric{},
 		counters:     map[counterMetricKey]float64{},
 		durations:    map[durationMetricKey]durationMetric{},
+		gauges:       map[gaugeMetricKey]float64{},
 	}
 }
 
@@ -92,6 +99,15 @@ func (m *Metrics) ObserveDuration(name string, labels Labels, duration time.Dura
 	metric.Count++
 	metric.Sum += duration.Seconds()
 	m.durations[key] = metric
+	m.mu.Unlock()
+}
+
+func (m *Metrics) SetGauge(name string, labels Labels, value float64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.gauges[gaugeMetricKey{Name: sanitizeMetricName(name), Labels: encodeLabels(labels)}] = value
 	m.mu.Unlock()
 }
 
@@ -163,6 +179,19 @@ func (m *Metrics) Render() string {
 		metric := m.durations[key]
 		fmt.Fprintf(&out, "%s_count{%s} %d\n", key.Name, labels, metric.Count)
 		fmt.Fprintf(&out, "%s_sum{%s} %.6f\n", key.Name, labels, metric.Sum)
+	}
+	out.WriteString("# HELP niceagent_gauge_values Operational gauge values.\n")
+	out.WriteString("# TYPE niceagent_gauge_values gauge\n")
+	gaugeKeys := make([]gaugeMetricKey, 0, len(m.gauges))
+	for key := range m.gauges {
+		gaugeKeys = append(gaugeKeys, key)
+	}
+	sort.Slice(gaugeKeys, func(i, j int) bool {
+		return gaugeKeys[i].Name+gaugeKeys[i].Labels < gaugeKeys[j].Name+gaugeKeys[j].Labels
+	})
+	for _, key := range gaugeKeys {
+		labels := joinMetricLabels(serviceLabel, key.Labels)
+		fmt.Fprintf(&out, "%s{%s} %.6f\n", key.Name, labels, m.gauges[key])
 	}
 	return out.String()
 }

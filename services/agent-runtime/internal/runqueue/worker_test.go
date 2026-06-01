@@ -61,6 +61,10 @@ func TestRedisWorkerFetchesExecutionContextExecutesAndAcks(t *testing.T) {
 	defer controlPlane.Close()
 
 	client := &fakeRedisQueueClient{
+		pendingCount: 3,
+		streamLengths: map[string]int64{
+			"niceagent:runs:test:dlq": 2,
+		},
 		messages: []redisStreamMessage{{
 			ID: "1700000000000-0",
 			Values: map[string]any{
@@ -100,10 +104,16 @@ func TestRedisWorkerFetchesExecutionContextExecutesAndAcks(t *testing.T) {
 		t.Fatalf("user message = %q", engine.userMessage)
 	}
 	renderedMetrics := metrics.Render()
-	for _, want := range []string{"niceagent_redis_queue_messages_total", "niceagent_redis_queue_acked_total"} {
+	for _, want := range []string{"niceagent_redis_queue_messages_total", "niceagent_redis_queue_acked_total", "niceagent_redis_queue_pending_entries", "niceagent_redis_queue_dlq_length"} {
 		if !strings.Contains(renderedMetrics, want) {
 			t.Fatalf("metrics missing %s:\n%s", want, renderedMetrics)
 		}
+	}
+	if !strings.Contains(renderedMetrics, `niceagent_redis_queue_pending_entries{service="agent_runtime_test",consumer="runtime-a",group="workers",stream="niceagent:runs:test"} 3.000000`) {
+		t.Fatalf("pending gauge missing expected value:\n%s", renderedMetrics)
+	}
+	if !strings.Contains(renderedMetrics, `niceagent_redis_queue_dlq_length{service="agent_runtime_test",consumer="runtime-a",dlq_stream="niceagent:runs:test:dlq",group="workers",stream="niceagent:runs:test"} 2.000000`) {
+		t.Fatalf("dlq gauge missing expected value:\n%s", renderedMetrics)
 	}
 }
 
@@ -315,6 +325,8 @@ type fakeRedisQueueClient struct {
 	messages          []redisStreamMessage
 	autoClaimMessages []redisStreamMessage
 	pending           map[string]int64
+	pendingCount      int64
+	streamLengths     map[string]int64
 	adds              []fakeXAdd
 	acked             []string
 }
@@ -360,6 +372,17 @@ func (c *fakeRedisQueueClient) XPendingExt(_ context.Context, _, _, start, _ str
 		return nil, nil
 	}
 	return []redisPendingEntry{{ID: start, RetryCount: count}}, nil
+}
+
+func (c *fakeRedisQueueClient) XPendingCount(_ context.Context, _, _ string) (int64, error) {
+	return c.pendingCount, nil
+}
+
+func (c *fakeRedisQueueClient) XLen(_ context.Context, stream string) (int64, error) {
+	if c.streamLengths == nil {
+		return 0, nil
+	}
+	return c.streamLengths[stream], nil
 }
 
 func (c *fakeRedisQueueClient) XAdd(_ context.Context, stream string, values map[string]any, maxLen int64) (string, error) {

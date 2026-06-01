@@ -268,9 +268,11 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 - `niceagent_redis_queue_acked_total`：Agent Runtime 成功 ack queue message 的次数。
 - `niceagent_redis_queue_errors_total`：Agent Runtime Redis worker 在 `ensure_group/read/decode/pending/autoclaim/execute/ack/dead_letter` 等阶段的错误次数。
 - `niceagent_redis_queue_dlq_messages_total`：Agent Runtime 写入 DLQ 的消息数，按 `reason` 和 `dlq_stream` 标记。
+- `niceagent_redis_queue_pending_entries`：Agent Runtime 采样到的当前 consumer group pending entries 总量。
+- `niceagent_redis_queue_dlq_length`：Agent Runtime 采样到的 DLQ stream 长度。
 - `niceagent_sandbox_exec_total`：Sandbox Executor 命令执行结果次数。
 
-这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。Redis queue 告警可以先从 DLQ 写入速率、reclaimed 速率、worker errors 速率和 ack/message 比例开始；pending entries 总量仍需要后续通过 Redis 采样器或外部 Redis exporter 补齐。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span 和主要 agent 执行内部 span；后续还需要继续补 DB repository、Redis 低层命令 span，以及外部告警系统接入。
+这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。Redis queue 告警可以先从 DLQ 写入速率、reclaimed 速率、worker errors 速率、ack/message 比例、pending entries 总量和 DLQ 长度开始。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span 和主要 agent 执行内部 span；后续还需要继续补 DB repository、Redis 低层命令 span，以及外部告警系统接入。
 
 ## Sandbox 安全边界
 

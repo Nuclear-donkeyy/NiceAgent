@@ -12,6 +12,7 @@ import (
 
 func TestMetricsMiddlewareAndHandler(t *testing.T) {
 	metrics := NewMetrics("test-service")
+	metrics.SetGauge("niceagent_test_gauge", Labels{"kind": "demo"}, 42)
 	handler := MetricsMiddleware(metrics, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
@@ -25,6 +26,9 @@ func TestMetricsMiddlewareAndHandler(t *testing.T) {
 	body := metricsResponse.Body.String()
 	if !strings.Contains(body, `niceagent_http_requests_total{service="test-service",method="POST",path="/api/example",status="202"} 1`) {
 		t.Fatalf("metrics body = %s", body)
+	}
+	if !strings.Contains(body, `niceagent_test_gauge{service="test-service",kind="demo"} 42.000000`) {
+		t.Fatalf("metrics gauge missing from body = %s", body)
 	}
 }
 
