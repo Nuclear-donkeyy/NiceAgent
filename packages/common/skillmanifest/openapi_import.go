@@ -119,6 +119,68 @@ func PreviewOpenAPIHTTPSkills(document, baseURL string) ([]protocol.HTTPSkillImp
 	return candidates, nil
 }
 
+func BuildOpenAPIHTTPSkillInput(input protocol.OpenAPIImportCreateInput) (protocol.HTTPSkillInput, protocol.HTTPSkillImportCandidate, error) {
+	candidates, err := PreviewOpenAPIHTTPSkills(input.Document, input.BaseURL)
+	if err != nil {
+		return protocol.HTTPSkillInput{}, protocol.HTTPSkillImportCandidate{}, err
+	}
+	candidate, err := selectOpenAPIImportCandidate(candidates, input)
+	if err != nil {
+		return protocol.HTTPSkillInput{}, protocol.HTTPSkillImportCandidate{}, err
+	}
+	if candidate.UnsupportedAuth && strings.TrimSpace(input.AuthType) == "" {
+		return protocol.HTTPSkillInput{}, protocol.HTTPSkillImportCandidate{}, fmt.Errorf("operation %s %s uses unsupported OpenAPI security scheme %q", candidate.Method, candidate.Path, candidate.SecurityScheme)
+	}
+	authType := firstNonEmpty(input.AuthType, candidate.AuthType)
+	if authType == "" {
+		authType = "none"
+	}
+	if candidate.RequiresSecret && authType == "bearer" && strings.TrimSpace(input.BearerToken) == "" && strings.TrimSpace(input.BearerTokenSecretRef) == "" {
+		return protocol.HTTPSkillInput{}, protocol.HTTPSkillImportCandidate{}, errors.New("bearer_token or bearer_token_secret_ref is required for this OpenAPI operation")
+	}
+	skillInput := protocol.HTTPSkillInput{
+		Name:                 firstNonEmpty(input.Name, candidate.Name),
+		Description:          firstNonEmpty(input.Description, candidate.Description),
+		Method:               candidate.Method,
+		URL:                  candidate.URL,
+		InputSchema:          candidate.InputSchema,
+		OutputSchema:         candidate.OutputSchema,
+		TimeoutSeconds:       input.TimeoutSeconds,
+		RetryMaxAttempts:     input.RetryMaxAttempts,
+		RateLimitPerMinute:   input.RateLimitPerMinute,
+		AuthType:             authType,
+		BearerToken:          input.BearerToken,
+		BearerTokenSecretRef: input.BearerTokenSecretRef,
+	}
+	if err := ValidateHTTPSkillInput(skillInput); err != nil {
+		return protocol.HTTPSkillInput{}, protocol.HTTPSkillImportCandidate{}, err
+	}
+	return skillInput, candidate, nil
+}
+
+func selectOpenAPIImportCandidate(candidates []protocol.HTTPSkillImportCandidate, input protocol.OpenAPIImportCreateInput) (protocol.HTTPSkillImportCandidate, error) {
+	operationID := strings.TrimSpace(input.OperationID)
+	method := strings.ToUpper(strings.TrimSpace(input.Method))
+	path := strings.TrimSpace(input.Path)
+	matches := make([]protocol.HTTPSkillImportCandidate, 0, 1)
+	for _, candidate := range candidates {
+		if operationID != "" && candidate.OperationID == operationID {
+			matches = append(matches, candidate)
+			continue
+		}
+		if operationID == "" && method != "" && path != "" && candidate.Method == method && candidate.Path == path {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) == 0 {
+		return protocol.HTTPSkillImportCandidate{}, errors.New("selected OpenAPI operation was not found")
+	}
+	if len(matches) > 1 {
+		return protocol.HTTPSkillImportCandidate{}, errors.New("selected OpenAPI operation is ambiguous")
+	}
+	return matches[0], nil
+}
+
 func decodeOpenAPIDocument(document string) (openAPIDocument, error) {
 	var spec openAPIDocument
 	if err := json.Unmarshal([]byte(document), &spec); err == nil {

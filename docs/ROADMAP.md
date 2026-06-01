@@ -18,7 +18,7 @@
 当前系统已经具备可演示链路，但还不能被描述为生产可用的远端 agent 平台：
 
 - Runtime 的模型层已经切到 Eino 原生 ChatModel，下一步仍需继续压实真实模型 tool calling 的端到端覆盖，并减少 provider-specific 兼容风险。
-- Skill registry 已有 metadata、version、grant、secret 存储模型，HTTP Skill schema/runtime_config 校验、结构化错误、SSRF 防护、retry/rate limit 和 OpenAPI JSON/YAML preview 已有最小闭环；secret backend 原生接入、MCP 导入、完整导入保存向导和跨副本强一致 rate limit 仍待补齐。
+- Skill registry 已有 metadata、version、grant、secret 存储模型，HTTP Skill schema/runtime_config 校验、结构化错误、SSRF 防护、retry/rate limit、OpenAPI JSON/YAML preview 和选中 operation 保存为 HTTP Skill 的最小导入向导已有闭环；secret backend 原生接入、MCP 导入和跨副本强一致 rate limit 仍待补齐。
 - Sandbox 还不是强隔离生产沙箱。当前 CLI 策略偏本地开发可用，K8s 已有基础 ingress/egress NetworkPolicy、ResourceQuota、LimitRange 和 securityContext；仍需容器默认执行路径、workspace 隔离、artifact 归档、RuntimeClass/独立节点池和云侧出口控制。
 - 前端已经隐藏原始事件面板，并支持 artifact 展示、下载、图片/PDF/音频/视频预览以及 CSV/TSV 表格内容预览；skill 配置校验、端到端测试和错误恢复体验还需要补强。
 - Control Plane 仍缺 NiceAgent 内置 OIDC/session/JWT、强一致账单级 quota、真实值班系统接入和容量看板；邀请创建/接受、可信身份绑定、可选 SMTP 邮件、投递模板、进程内内存队列、durable outbox、重试、provider-neutral 退信/投诉/丢弃事件记录和 HMAC webhook 入口已有最小闭环；Redis Runtime worker、重试/lease、跨副本 event fanout、审计、结构化 request log、基础 metrics/tracing、Prometheus 告警规则、Alertmanager 路由样例、Redis 低层命令 spans 和 Postgres repository spans 已有最小闭环。
@@ -56,7 +56,7 @@
 - 标准化 HTTP Skill 错误输出：网络错误、超时、非 2xx、无效响应都转为 agent 可读 observation 和审计事件。
 - HTTP Skill SSRF 防护已覆盖静态 URL 校验和 DNS 解析后的私网地址拦截；per-skill retry 与 Runtime 进程内 rate limit 已有最小闭环，后续继续补跨副本强一致限流和更细审计。
 - 抽象 secret resolver：本地继续支持 `encrypted_value`，生产路径预留阿里云 KMS、Vault 或 External Secrets。
-- OpenAPI JSON/YAML preview 已有最小接口，能把 `GET/POST` operation 转成 HTTP Skill 候选项；后续继续补完整保存向导、secret 绑定 UI、MCP 导入和更细审计。
+- OpenAPI JSON/YAML preview 和保存接口已能把 `GET/POST` operation 转成 HTTP Skill；后续继续补更完整 secret 绑定 UI、MCP 导入和更细审计。
 
 验收标准：
 

@@ -104,6 +104,22 @@ type OpenAPIImportPreviewInput struct {
 	BaseURL  string `json:"base_url,omitempty"`
 }
 
+type OpenAPIImportCreateInput struct {
+	Document             string `json:"document"`
+	BaseURL              string `json:"base_url,omitempty"`
+	OperationID          string `json:"operation_id,omitempty"`
+	Method               string `json:"method,omitempty"`
+	Path                 string `json:"path,omitempty"`
+	Name                 string `json:"name,omitempty"`
+	Description          string `json:"description,omitempty"`
+	AuthType             string `json:"auth_type,omitempty"`
+	BearerToken          string `json:"bearer_token,omitempty"`
+	BearerTokenSecretRef string `json:"bearer_token_secret_ref,omitempty"`
+	TimeoutSeconds       int    `json:"timeout_seconds,omitempty"`
+	RetryMaxAttempts     int    `json:"retry_max_attempts,omitempty"`
+	RateLimitPerMinute   int    `json:"rate_limit_per_minute,omitempty"`
+}
+
 type HTTPSkillImportCandidate struct {
 	Name            string `json:"name"`
 	Description     string `json:"description,omitempty"`

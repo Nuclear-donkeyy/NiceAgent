@@ -3,6 +3,8 @@ package skillmanifest
 import (
 	"strings"
 	"testing"
+
+	"niceagent/common/protocol"
 )
 
 func TestPreviewOpenAPIHTTPSkills(t *testing.T) {
@@ -153,5 +155,78 @@ func TestPreviewOpenAPIHTTPSkillsRejectsInvalidInput(t *testing.T) {
 	}
 	if _, err := PreviewOpenAPIHTTPSkills(`{"openapi":"3.1.0","paths":{"/x":{"get":{"responses":{}}}}}`, "http://api.example.com"); err == nil {
 		t.Fatal("expected non-https base url error")
+	}
+}
+
+func TestBuildOpenAPIHTTPSkillInputSelectsOperationAndRequiresSecret(t *testing.T) {
+	document := `{
+		"openapi":"3.1.0",
+		"servers":[{"url":"https://api.example.com"}],
+		"components":{"securitySchemes":{"bearerAuth":{"type":"http","scheme":"bearer"}}},
+		"security":[{"bearerAuth":[]}],
+		"paths":{
+			"/weather":{
+				"post":{
+					"operationId":"getWeather",
+					"summary":"Get weather",
+					"requestBody":{"content":{"application/json":{"schema":{"type":"object","properties":{"city":{"type":"string"}}}}}},
+					"responses":{"200":{"content":{"application/json":{"schema":{"type":"object","properties":{"temp":{"type":"number"}}}}}}}
+				}
+			}
+		}
+	}`
+	_, _, err := BuildOpenAPIHTTPSkillInput(protocol.OpenAPIImportCreateInput{
+		Document:    document,
+		OperationID: "getWeather",
+	})
+	if err == nil {
+		t.Fatal("expected bearer token requirement")
+	}
+	input, candidate, err := BuildOpenAPIHTTPSkillInput(protocol.OpenAPIImportCreateInput{
+		Document:             document,
+		OperationID:          "getWeather",
+		Name:                 "Weather Lookup",
+		BearerTokenSecretRef: "env://WEATHER_TOKEN",
+		TimeoutSeconds:       20,
+		RetryMaxAttempts:     2,
+		RateLimitPerMinute:   30,
+	})
+	if err != nil {
+		t.Fatalf("build openapi skill input: %v", err)
+	}
+	if candidate.OperationID != "getWeather" || input.Name != "Weather Lookup" || input.URL != "https://api.example.com/weather" || input.Method != "POST" {
+		t.Fatalf("input=%#v candidate=%#v", input, candidate)
+	}
+	if input.AuthType != "bearer" || input.BearerTokenSecretRef != "env://WEATHER_TOKEN" {
+		t.Fatalf("auth input = %#v", input)
+	}
+	if input.TimeoutSeconds != 20 || input.RetryMaxAttempts != 2 || input.RateLimitPerMinute != 30 {
+		t.Fatalf("policy input = %#v", input)
+	}
+}
+
+func TestBuildOpenAPIHTTPSkillInputSelectsByMethodAndPath(t *testing.T) {
+	document := `{
+		"openapi":"3.1.0",
+		"servers":[{"url":"https://api.example.com"}],
+		"paths":{
+			"/status":{
+				"get":{
+					"summary":"Status",
+					"responses":{"200":{"content":{"application/json":{"schema":{"type":"object"}}}}}
+				}
+			}
+		}
+	}`
+	input, candidate, err := BuildOpenAPIHTTPSkillInput(protocol.OpenAPIImportCreateInput{
+		Document: document,
+		Method:   "get",
+		Path:     "/status",
+	})
+	if err != nil {
+		t.Fatalf("build openapi skill input: %v", err)
+	}
+	if candidate.Path != "/status" || input.Method != "GET" || input.AuthType != "none" {
+		t.Fatalf("input=%#v candidate=%#v", input, candidate)
 	}
 }

@@ -46,6 +46,8 @@ export default function App() {
         <SkillPanel
           groups={workspace.skillGroups}
           onCreateHTTPSkill={workspace.createHTTPSkill}
+          onCreateOpenAPIImportedSkill={workspace.createOpenAPIImportedSkill}
+          onPreviewOpenAPIImport={workspace.previewOpenAPIImport}
           onSetSkillEnabled={workspace.setSkillEnabled}
         />
       </aside>

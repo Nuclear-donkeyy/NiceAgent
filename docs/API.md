@@ -201,6 +201,35 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 如果 OpenAPI security scheme 不是当前 HTTP Skill 支持的 bearer 类型，响应会标记 `unsupported_auth=true`，由后续导入 UI 引导用户重新配置鉴权。
 
+`POST /api/skills/import/openapi`
+
+把预览中的某个 OpenAPI operation 保存为当前用户/项目下的 HTTP Skill。请求必须携带同一份 OpenAPI 文档，并用 `operation_id` 或 `method + path` 选择 operation；服务端会重新解析文档、生成 `HTTPSkillInput`、复用 HTTP Skill 校验和 secret redaction 存储路径。Bearer operation 必须提供 `bearer_token` 或 `bearer_token_secret_ref`。
+
+请求体：
+
+```json
+{
+  "document": "{\"openapi\":\"3.1.0\",\"servers\":[{\"url\":\"https://api.example.com\"}],\"paths\":{}}",
+  "operation_id": "getWeather",
+  "bearer_token_secret_ref": "env://WEATHER_TOKEN",
+  "timeout_seconds": 20,
+  "retry_max_attempts": 2,
+  "rate_limit_per_minute": 30
+}
+```
+
+也可以使用 `method` 和 `path` 选择没有 `operationId` 的 operation：
+
+```json
+{
+  "document": "...",
+  "method": "GET",
+  "path": "/status"
+}
+```
+
+响应体为创建后的 `Skill`。该接口会写入 `skill.import.create` audit event；secret 不会出现在 `Skill.runtime_config` 或前端响应中。
+
 `PATCH /api/skills/{skill_id}`
 
 更新当前用户拥有的 HTTP Skill。系统固定 skill 不允许通过该接口修改。
