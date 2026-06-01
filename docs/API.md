@@ -505,7 +505,7 @@ X-NiceAgent-Webhook-Signature: sha256=...
 
 `GET /api/audit/events`
 
-列出当前 actor 在当前项目下最近的 audit events。支持 `limit`、`request_id`、`run_id`、`action`、`resource_id` 过滤，`limit` 最大 100。audit metadata 会按敏感 key 脱敏，API key、Authorization header、token、secret、password 和 cookie 不应出现在响应中。
+列出当前 actor 在当前项目下最近的 audit events。支持 `limit`、`request_id`、`run_id`、`action`、`resource_id` 过滤，`limit` 最大 100。audit metadata 会按敏感 key 脱敏，API key、Authorization header、token、secret、password 和 cookie 不应出现在响应中。Agent Runtime 写入 `tool.started` 和 `tool.finished` run event 时，Control Plane 会额外写入 `skill.invoke.start` / `skill.invoke.finish` audit event；这些审计事件只包含 skill、tool、event id/seq 和完成状态，不包含 `tool.output` 原始内容。
 
 ```json
 {
