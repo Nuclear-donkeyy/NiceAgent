@@ -8,6 +8,7 @@ import type { Artifact } from "../domain/artifact";
 import type { ChatSession, Message } from "../domain/chat";
 import type {
   HTTPSkillInput,
+  MCPImportCreateInput,
   MCPImportPreviewInput,
   MCPImportPreviewResponse,
   OpenAPIImportCreateInput,
@@ -143,6 +144,18 @@ export function useNiceAgentWorkspace() {
     } catch (error) {
       const message = errorMessage(error);
       setNotice(`导入 OpenAPI Skill 失败：${message}`);
+      throw new Error(message, { cause: error });
+    }
+  }
+
+  async function createMCPImportedSkill(inputValue: MCPImportCreateInput) {
+    try {
+      await skillApi.createMCPImportedSkill(inputValue);
+      setNotice("MCP Skill 已导入");
+      await loadSkills();
+    } catch (error) {
+      const message = errorMessage(error);
+      setNotice(`导入 MCP Skill 失败：${message}`);
       throw new Error(message, { cause: error });
     }
   }
@@ -392,6 +405,7 @@ export function useNiceAgentWorkspace() {
     createHTTPSkill,
     previewOpenAPIImport,
     createOpenAPIImportedSkill,
+    createMCPImportedSkill,
     previewMCPImport,
     input,
     messageLoading,

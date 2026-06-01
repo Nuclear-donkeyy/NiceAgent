@@ -206,7 +206,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 `POST /api/skills/import/mcp/preview`
 
-预览 MCP `tools/list` 结果或等价 manifest 中可转换为 NiceAgent skill manifest 的 tool。该接口只做 dry-run，不创建 skill、不保存 secret、不修改 grant，也不表示当前 Runtime 已能直接执行 MCP server。当前支持两种 JSON 形态：
+预览 MCP `tools/list` 结果或等价 manifest 中可转换为 NiceAgent skill manifest 的 tool。该接口只做 dry-run，不创建 skill、不保存 secret、不修改 grant。当前支持两种 JSON 形态：
 
 - `{"tools":[...]}`
 - `{"result":{"tools":[...]}}`
@@ -237,7 +237,26 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 }
 ```
 
-MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。真正保存、授权和执行 MCP tool 仍需要后续 MCP client/runtime adapter。
+MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。
+
+`POST /api/skills/import/mcp`
+
+把预览中的某个 MCP tool 保存为当前用户/项目下的 MCP Skill。请求必须携带同一份 MCP `tools/list` JSON，并用 `tool_name` 选择 tool。当前实现的是最小 HTTP JSON-RPC adapter：Runtime 调用时会向 `server_url` 发送 `{"jsonrpc":"2.0","method":"tools/call"}`，并把模型传入的 tool arguments 放到 `params.arguments`。该路径不实现 MCP stdio transport、SSE transport、initialize/session negotiation 或 `tools/list_changed` 动态通知。
+
+```json
+{
+  "document": "{\"tools\":[{\"name\":\"weather.lookup\",\"inputSchema\":{\"type\":\"object\"}}]}",
+  "tool_name": "weather.lookup",
+  "server_url": "https://mcp.example.com/rpc",
+  "auth_type": "bearer",
+  "bearer_token_secret_ref": "env://MCP_TOKEN",
+  "timeout_seconds": 15,
+  "retry_max_attempts": 1,
+  "rate_limit_per_minute": 60
+}
+```
+
+`server_url` 必须是 `https`，且不能包含用户名或密码。Bearer token 只进入后端 secret 存储，不会出现在前端 API 响应中；`bearer_token` 和 `bearer_token_secret_ref` 只能填写一个。响应体为创建后的 `Skill`，`kind=mcp`，并写入 `skill.import.mcp.create` audit event。
 
 `POST /api/skills/import/openapi`
 
@@ -274,11 +293,11 @@ MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。真
 
 `POST /api/skills/{skill_id}/enable`
 
-启用当前用户拥有的 HTTP Skill。
+启用当前用户拥有的用户 Skill，包括 HTTP Skill 和 MCP Skill。
 
 `POST /api/skills/{skill_id}/disable`
 
-停用当前用户拥有的 HTTP Skill。
+停用当前用户拥有的用户 Skill，包括 HTTP Skill 和 MCP Skill。
 
 `POST /api/skills/{skill_id}/approve`
 
@@ -847,7 +866,7 @@ Sandbox Executor 支持 `EXECUTOR_MODE=local|container`。`container` 模式可�
 
 ## Skill 存储与模型输出
 
-Skill 元数据以 `skills` 和 `skill_versions` 为权威，`skill_grants` 表示用户/项目可用性，`skill_secrets` 只保存 secret 引用或本地开发密文。`input_schema`、`output_schema`、`annotations` 和 `runtime_config` 使用 JSON/JSONB；`annotations` 采用 MCP 风格字段，例如 `readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`。
+Skill 元数据以 `skills` 和 `skill_versions` 为权威，`skill_grants` 表示用户/项目可用性，`skill_secrets` 只保存 secret 引用或本地开发密文。`input_schema`、`output_schema`、`annotations` 和 `runtime_config` 使用 JSON/JSONB；`annotations` 采用 MCP 风格字段，例如 `readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`。当前用户 Skill 支持 `kind=http` 和 `kind=mcp`：HTTP Skill 直接调用配置的 HTTPS endpoint；MCP Skill 通过最小 HTTP JSON-RPC `tools/call` adapter 调用远端 MCP-compatible endpoint。
 
 Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。当前主执行路径通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 运行 agentic loop；模型输出仍通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端折叠成 assistant 消息。
 

@@ -1406,6 +1406,31 @@ func (s *Store) CreateHTTPSkill(userID, projectID string, input protocol.HTTPSki
 	return redactSkill(skill), nil
 }
 
+func (s *Store) CreateMCPSkill(userID, projectID string, input protocol.MCPImportCreateInput) (protocol.Skill, error) {
+	skill, _, secret, hasSecret, err := skillmanifest.BuildMCPSkillInput(input)
+	if err != nil {
+		return protocol.Skill{}, err
+	}
+	skill.ID = platform.NewID("skill")
+	skill.Slug = skill.ID
+	skill.Scope = protocol.SkillScopeUser
+	skill.Kind = protocol.SkillKindMCP
+	skill.OwnerUserID = userID
+	skill.ProjectID = projectID
+	skill.Status = protocol.SkillStatusEnabled
+	skill.CurrentVersionID = platform.NewID("skv")
+	skill.Enabled = true
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.skills[skill.ID] = skill
+	if hasSecret {
+		s.skillSecrets[skill.ID] = map[string]protocol.RuntimeSecret{"bearer_token": secret}
+	}
+	key := skillGrantKey(userID, projectID)
+	s.skillGrants[key] = appendUnique(s.skillGrants[key], skill.ID)
+	return redactSkill(skill), nil
+}
+
 func (s *Store) UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkillInput) (protocol.Skill, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -1416,6 +1416,56 @@ func TestServerPreviewsMCPImport(t *testing.T) {
 	}
 }
 
+func TestServerCreatesMCPImportedSkill(t *testing.T) {
+	store, handler := newTestHandler()
+	document := `{
+		"tools": [{
+			"name": "weather.lookup",
+			"description": "Look up weather.",
+			"inputSchema": {"type":"object","required":["city"],"properties":{"city":{"type":"string"}}},
+			"outputSchema": {"type":"object","properties":{"summary":{"type":"string"}}},
+			"annotations": {"readOnlyHint": true, "openWorldHint": true}
+		}]
+	}`
+	request := httptest.NewRequest(http.MethodPost, "/api/skills/import/mcp", jsonBody(t, protocol.MCPImportCreateInput{
+		Document:    document,
+		ToolName:    "weather.lookup",
+		ServerURL:   "https://mcp.example.com/rpc",
+		AuthType:    "bearer",
+		BearerToken: "secret-token",
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var skill protocol.Skill
+	decodeJSON(t, response.Body, &skill)
+	if skill.ID == "" || skill.Kind != protocol.SkillKindMCP || skill.OwnerUserID != "demo-user" {
+		t.Fatalf("skill = %#v", skill)
+	}
+	if !strings.Contains(skill.RuntimeConfig, `"tool_name":"weather.lookup"`) || strings.Contains(response.Body.String(), "secret-token") {
+		t.Fatalf("response = %s", response.Body.String())
+	}
+	runtimeSkills := store.ListRuntimeSkillsForUser("demo-user", "demo-project")
+	var found bool
+	for _, runtimeSkill := range runtimeSkills {
+		if runtimeSkill.Skill.ID == skill.ID {
+			found = true
+			if runtimeSkill.SecretMaterials["bearer_token"].EncryptedValue != "secret-token" {
+				t.Fatalf("runtime secret = %#v", runtimeSkill.SecretMaterials)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("runtime skill %s not found in %#v", skill.ID, runtimeSkills)
+	}
+	auditEvents := store.ListAuditEvents(app.DemoActor(), app.AuditEventListOptions{Action: "skill.import.mcp.create"})
+	if len(auditEvents) != 1 || auditEvents[0].Metadata["source"] != "mcp" {
+		t.Fatalf("audit events = %#v", auditEvents)
+	}
+}
+
 func TestServerCreatesOpenAPIImportedSkill(t *testing.T) {
 	store, handler := newTestHandler()
 	document := `{

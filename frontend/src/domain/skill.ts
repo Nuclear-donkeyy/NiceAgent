@@ -1,5 +1,5 @@
 export type SkillScope = "system" | "user";
-export type SkillKind = "builtin" | "http";
+export type SkillKind = "builtin" | "http" | "mcp";
 export type SkillStatus = "enabled" | "disabled" | "archived";
 export type SkillRisk = "low" | "medium" | "high";
 
@@ -91,16 +91,29 @@ export interface MCPImportPreviewInput {
   document: string;
 }
 
+export interface MCPImportCreateInput extends MCPImportPreviewInput {
+  tool_name: string;
+  server_url: string;
+  name?: string;
+  description?: string;
+  auth_type?: "none" | "bearer";
+  bearer_token?: string;
+  bearer_token_secret_ref?: string;
+  timeout_seconds?: number;
+  retry_max_attempts?: number;
+  rate_limit_per_minute?: number;
+}
+
 export interface MCPSkillImportCandidate {
   name: string;
   description?: string;
   input_schema?: string;
   output_schema?: string;
   annotations?: string;
-  read_only?: boolean;
-  destructive?: boolean;
-  idempotent?: boolean;
-  open_world?: boolean;
+  read_only_hint?: boolean;
+  destructive_hint?: boolean;
+  idempotent_hint?: boolean;
+  open_world_hint?: boolean;
 }
 
 export interface MCPImportPreviewResponse {

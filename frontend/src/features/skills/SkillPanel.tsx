@@ -5,6 +5,7 @@ import { SectionTitle } from "../../components/SectionTitle";
 import type {
   HTTPSkillImportCandidate,
   HTTPSkillInput,
+  MCPImportCreateInput,
   MCPImportPreviewInput,
   MCPImportPreviewResponse,
   MCPSkillImportCandidate,
@@ -30,7 +31,12 @@ type FieldName = "name" | "description" | "url" | "bearer_token" | "bearer_token
 type FieldErrors = Partial<Record<FieldName, string>>;
 type ImportFieldName = "document" | "selected" | "bearer_token" | "bearer_token_secret_ref";
 type ImportFieldErrors = Partial<Record<ImportFieldName, string>>;
-type MCPPreviewFieldName = "document";
+type MCPPreviewFieldName =
+  | "document"
+  | "selected"
+  | "server_url"
+  | "bearer_token"
+  | "bearer_token_secret_ref";
 type MCPPreviewFieldErrors = Partial<Record<MCPPreviewFieldName, string>>;
 
 interface ImportFormState {
@@ -51,16 +57,27 @@ const defaultImportForm: ImportFormState = {
 
 interface MCPPreviewFormState {
   document: string;
+  selected: string;
+  server_url: string;
+  auth_type: "none" | "bearer";
+  bearer_token: string;
+  bearer_token_secret_ref: string;
 }
 
 const defaultMCPPreviewForm: MCPPreviewFormState = {
   document: "",
+  selected: "",
+  server_url: "",
+  auth_type: "none",
+  bearer_token: "",
+  bearer_token_secret_ref: "",
 };
 
 interface SkillPanelProps {
   groups: SkillGroups;
   onCreateHTTPSkill: (input: HTTPSkillInput) => Promise<void>;
   onCreateOpenAPIImportedSkill: (input: OpenAPIImportCreateInput) => Promise<void>;
+  onCreateMCPImportedSkill: (input: MCPImportCreateInput) => Promise<void>;
   onPreviewOpenAPIImport: (
     input: OpenAPIImportPreviewInput,
   ) => Promise<OpenAPIImportPreviewResponse>;
@@ -72,6 +89,7 @@ export function SkillPanel({
   groups,
   onCreateHTTPSkill,
   onCreateOpenAPIImportedSkill,
+  onCreateMCPImportedSkill,
   onPreviewOpenAPIImport,
   onPreviewMCPImport,
   onSetSkillEnabled,
@@ -94,6 +112,7 @@ export function SkillPanel({
   const [mcpCandidates, setMCPCandidates] = useState<MCPSkillImportCandidate[]>([]);
   const [mcpPreviewError, setMCPPreviewError] = useState("");
   const [previewingMCP, setPreviewingMCP] = useState(false);
+  const [savingMCP, setSavingMCP] = useState(false);
   const [pendingSkillID, setPendingSkillID] = useState("");
   const [actionError, setActionError] = useState("");
 
@@ -204,10 +223,42 @@ export function SkillPanel({
         document: mcpPreviewForm.document,
       });
       setMCPCandidates(response.candidates || []);
+      setMCPPreviewForm((prev) => ({ ...prev, selected: response.candidates?.[0]?.name || "" }));
     } catch (error) {
       setMCPPreviewError(errorMessage(error));
     } finally {
       setPreviewingMCP(false);
+    }
+  }
+
+  async function saveMCPImport() {
+    const selected = selectedMCPCandidate(mcpCandidates, mcpPreviewForm.selected);
+    const errors = validateMCPPreviewForm(mcpPreviewForm, selected);
+    setMCPPreviewErrors(errors);
+    setMCPPreviewError("");
+    if (Object.keys(errors).length > 0 || !selected) return;
+    setSavingMCP(true);
+    try {
+      await onCreateMCPImportedSkill({
+        document: mcpPreviewForm.document,
+        tool_name: selected.name,
+        server_url: mcpPreviewForm.server_url.trim(),
+        auth_type: mcpPreviewForm.auth_type,
+        bearer_token:
+          mcpPreviewForm.auth_type === "bearer" ? mcpPreviewForm.bearer_token.trim() : undefined,
+        bearer_token_secret_ref:
+          mcpPreviewForm.auth_type === "bearer"
+            ? mcpPreviewForm.bearer_token_secret_ref.trim()
+            : undefined,
+      });
+      setMCPPreviewForm(defaultMCPPreviewForm);
+      setMCPCandidates([]);
+      setMCPPreviewErrors({});
+      setMCPPreviewOpen(false);
+    } catch (error) {
+      setMCPPreviewError(errorMessage(error));
+    } finally {
+      setSavingMCP(false);
     }
   }
 
@@ -510,33 +561,123 @@ export function SkillPanel({
             />
             {mcpPreviewErrors.document && <small>{mcpPreviewErrors.document}</small>}
           </label>
-          <button className={styles.secondaryButton} disabled={previewingMCP} type="submit">
+          <button
+            className={styles.secondaryButton}
+            disabled={previewingMCP || savingMCP}
+            type="submit"
+          >
             {previewingMCP ? "预览中..." : "预览 MCP 能力"}
           </button>
           <p className={styles.hint}>
-            当前只做 manifest dry-run，不保存 Skill，也不会连接 MCP server 或保存 secret。
+            先粘贴 MCP tools/list 结果，再保存为 HTTP JSON-RPC tools/call Skill。运行时才会连接 MCP
+            server。
           </p>
           {mcpCandidates.length > 0 && (
-            <div className={styles.previewList}>
-              {mcpCandidates.map((candidate) => (
-                <article className={styles.previewCard} key={candidate.name}>
-                  <div className={styles.head}>
-                    <strong>{candidate.name}</strong>
-                    <span>{candidate.open_world ? "开放世界" : "受限上下文"}</span>
-                  </div>
-                  <p>{candidate.description || "暂无说明"}</p>
-                  <div className={styles.tagRow}>
-                    <span>{candidate.read_only ? "只读" : "可写"}</span>
-                    {candidate.destructive && <span>破坏性</span>}
-                    {candidate.idempotent && <span>幂等</span>}
-                  </div>
-                  <details className={styles.schemaDetails}>
-                    <summary>查看 schema 摘要</summary>
-                    <pre>{formatMCPSchemaPreview(candidate)}</pre>
-                  </details>
-                </article>
-              ))}
-            </div>
+            <>
+              <label className={styles.field}>
+                <span>选择 MCP Tool</span>
+                <select
+                  aria-invalid={Boolean(mcpPreviewErrors.selected)}
+                  disabled={savingMCP}
+                  value={mcpPreviewForm.selected}
+                  onChange={(event) => updateMCPPreviewForm("selected", event.target.value)}
+                >
+                  {mcpCandidates.map((candidate) => (
+                    <option key={candidate.name} value={candidate.name}>
+                      {candidate.name}
+                    </option>
+                  ))}
+                </select>
+                {mcpPreviewErrors.selected && <small>{mcpPreviewErrors.selected}</small>}
+              </label>
+              <label className={styles.field}>
+                <span>MCP Server URL</span>
+                <input
+                  aria-invalid={Boolean(mcpPreviewErrors.server_url)}
+                  disabled={savingMCP}
+                  value={mcpPreviewForm.server_url}
+                  onChange={(event) => updateMCPPreviewForm("server_url", event.target.value)}
+                  placeholder="https://mcp.example.com/rpc"
+                />
+                {mcpPreviewErrors.server_url && <small>{mcpPreviewErrors.server_url}</small>}
+              </label>
+              <div className={styles.formRow}>
+                <select
+                  disabled={savingMCP}
+                  value={mcpPreviewForm.auth_type}
+                  onChange={(event) =>
+                    updateMCPPreviewForm(
+                      "auth_type",
+                      event.target.value as MCPPreviewFormState["auth_type"],
+                    )
+                  }
+                >
+                  <option value="none">无鉴权</option>
+                  <option value="bearer">Bearer</option>
+                </select>
+              </div>
+              {mcpPreviewForm.auth_type === "bearer" && (
+                <>
+                  <label className={styles.field}>
+                    <span>Bearer Token</span>
+                    <input
+                      aria-invalid={Boolean(mcpPreviewErrors.bearer_token)}
+                      disabled={savingMCP}
+                      value={mcpPreviewForm.bearer_token}
+                      onChange={(event) => updateMCPPreviewForm("bearer_token", event.target.value)}
+                      placeholder="直接填 token，适合本地开发"
+                      type="password"
+                    />
+                    {mcpPreviewErrors.bearer_token && (
+                      <small>{mcpPreviewErrors.bearer_token}</small>
+                    )}
+                  </label>
+                  <label className={styles.field}>
+                    <span>Secret Ref</span>
+                    <input
+                      aria-invalid={Boolean(mcpPreviewErrors.bearer_token_secret_ref)}
+                      disabled={savingMCP}
+                      value={mcpPreviewForm.bearer_token_secret_ref}
+                      onChange={(event) =>
+                        updateMCPPreviewForm("bearer_token_secret_ref", event.target.value)
+                      }
+                      placeholder="env://TOKEN_NAME 或 file:///var/run/secrets/token"
+                    />
+                    {mcpPreviewErrors.bearer_token_secret_ref && (
+                      <small>{mcpPreviewErrors.bearer_token_secret_ref}</small>
+                    )}
+                  </label>
+                </>
+              )}
+              <div className={styles.previewList}>
+                {mcpCandidates.map((candidate) => (
+                  <article className={styles.previewCard} key={candidate.name}>
+                    <div className={styles.head}>
+                      <strong>{candidate.name}</strong>
+                      <span>{candidate.open_world_hint ? "开放世界" : "受限上下文"}</span>
+                    </div>
+                    <p>{candidate.description || "暂无说明"}</p>
+                    <div className={styles.tagRow}>
+                      <span>{candidate.read_only_hint ? "只读" : "可写"}</span>
+                      {candidate.destructive_hint && <span>破坏性</span>}
+                      {candidate.idempotent_hint && <span>幂等</span>}
+                    </div>
+                    <details className={styles.schemaDetails}>
+                      <summary>查看 schema 摘要</summary>
+                      <pre>{formatMCPSchemaPreview(candidate)}</pre>
+                    </details>
+                  </article>
+                ))}
+              </div>
+              <button
+                className={styles.primaryButton}
+                disabled={savingMCP || previewingMCP}
+                onClick={() => void saveMCPImport()}
+                type="button"
+              >
+                {savingMCP ? "导入中..." : "保存选中的 MCP Skill"}
+              </button>
+            </>
           )}
           {mcpPreviewError && (
             <p className={styles.formError} role="alert">
@@ -606,9 +747,42 @@ function validateImportForm(
   return errors;
 }
 
-function validateMCPPreviewForm(form: MCPPreviewFormState): MCPPreviewFieldErrors {
+function validateMCPPreviewForm(
+  form: MCPPreviewFormState,
+  selected?: MCPSkillImportCandidate | null,
+): MCPPreviewFieldErrors {
   const errors: MCPPreviewFieldErrors = {};
   if (!form.document.trim()) errors.document = "请粘贴 MCP tools/list JSON";
+  if (selected === null && form.selected) errors.selected = "请选择有效的 MCP tool";
+  if (selected !== undefined) {
+    const serverURL = form.server_url.trim();
+    if (!serverURL) {
+      errors.server_url = "请输入 MCP server URL";
+    } else {
+      try {
+        const parsed = new URL(serverURL);
+        if (parsed.protocol !== "https:") {
+          errors.server_url = "MCP server URL 必须使用 https";
+        } else if (parsed.username || parsed.password) {
+          errors.server_url = "MCP server URL 不能包含用户名或密码";
+        }
+      } catch {
+        errors.server_url = "请输入有效的 MCP server URL";
+      }
+    }
+    if (form.auth_type === "bearer" && !hasMCPBearerSecret(form)) {
+      errors.bearer_token = "请输入 Bearer Token 或 Secret Ref";
+    }
+    if (form.bearer_token.trim() && form.bearer_token_secret_ref.trim()) {
+      errors.bearer_token_secret_ref = "Bearer Token 和 Secret Ref 只能填写一个";
+    }
+    if (
+      form.bearer_token_secret_ref.trim() &&
+      !isSupportedSecretRef(form.bearer_token_secret_ref)
+    ) {
+      errors.bearer_token_secret_ref = "Secret Ref 需使用 env:// 或 file://";
+    }
+  }
   return errors;
 }
 
@@ -695,10 +869,20 @@ function withoutMCPPreviewFieldError(
 ): MCPPreviewFieldErrors {
   const next = { ...current };
   if (field === "document") delete next.document;
+  if (field === "selected") delete next.selected;
+  if (field === "server_url") delete next.server_url;
+  if (field === "bearer_token") delete next.bearer_token;
+  if (field === "bearer_token_secret_ref") delete next.bearer_token_secret_ref;
   return next;
 }
 
 function hasBearerSecret(form: Pick<ImportFormState, "bearer_token" | "bearer_token_secret_ref">) {
+  return Boolean(form.bearer_token.trim() || form.bearer_token_secret_ref.trim());
+}
+
+function hasMCPBearerSecret(
+  form: Pick<MCPPreviewFormState, "bearer_token" | "bearer_token_secret_ref">,
+) {
   return Boolean(form.bearer_token.trim() || form.bearer_token_secret_ref.trim());
 }
 
@@ -717,6 +901,13 @@ function selectedImportCandidate(
   key: string,
 ): HTTPSkillImportCandidate | null {
   return candidates.find((candidate) => candidateKey(candidate) === key) || null;
+}
+
+function selectedMCPCandidate(
+  candidates: MCPSkillImportCandidate[],
+  name: string,
+): MCPSkillImportCandidate | null {
+  return candidates.find((candidate) => candidate.name === name) || null;
 }
 
 function formatMCPSchemaPreview(candidate: MCPSkillImportCandidate): string {
