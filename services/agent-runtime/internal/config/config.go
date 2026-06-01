@@ -29,6 +29,7 @@ type Config struct {
 	RunAttemptLeaseSeconds       int
 	RunAttemptHeartbeat          time.Duration
 	ModelProvider                string
+	ModelProviderProfile         string
 	ModelBaseURL                 string
 	ModelAPIKey                  string
 	ModelName                    string
@@ -50,7 +51,16 @@ type Config struct {
 
 func FromEnv() Config {
 	environment := strings.TrimSpace(env("NICEAGENT_ENV", "local"))
-	return Config{
+	profile := strings.TrimSpace(os.Getenv("MODEL_PROVIDER_PROFILE"))
+	modelProvider := strings.TrimSpace(os.Getenv("MODEL_PROVIDER"))
+	if modelProvider == "" {
+		if normalizeModelProviderProfile(profile) == "deepseek" {
+			modelProvider = "openai-compatible"
+		} else {
+			modelProvider = "mock"
+		}
+	}
+	cfg := Config{
 		Addr:                         env("AGENT_RUNTIME_ADDR", ":8081"),
 		Environment:                  environment,
 		RuntimeID:                    runtimeID(),
@@ -69,7 +79,8 @@ func FromEnv() Config {
 		RunQueueDLQStream:            os.Getenv("RUN_QUEUE_DLQ_STREAM"),
 		RunAttemptLeaseSeconds:       intFromEnv("RUN_ATTEMPT_LEASE_SECONDS", 600),
 		RunAttemptHeartbeat:          secondsDuration("RUN_ATTEMPT_HEARTBEAT_SECONDS", 60*time.Second),
-		ModelProvider:                strings.TrimSpace(env("MODEL_PROVIDER", "mock")),
+		ModelProvider:                modelProvider,
+		ModelProviderProfile:         profile,
 		ModelBaseURL:                 os.Getenv("MODEL_BASE_URL"),
 		ModelAPIKey:                  os.Getenv("MODEL_API_KEY"),
 		ModelName:                    os.Getenv("MODEL_NAME"),
@@ -88,11 +99,21 @@ func FromEnv() Config {
 		ModelHealthProbeTimeout:      secondsDuration("MODEL_HEALTH_PROBE_TIMEOUT_SECONDS", 10*time.Second),
 		ModelHealthProbeInitialDelay: secondsDuration("MODEL_HEALTH_PROBE_INITIAL_DELAY_SECONDS", 0),
 	}
+	return applyModelProviderProfile(cfg)
 }
 
 func (c Config) Validate() error {
 	if c.InternalTokenRequired && strings.TrimSpace(c.InternalAPIToken) == "" {
 		return fmt.Errorf("INTERNAL_API_TOKEN is required when INTERNAL_API_TOKEN_REQUIRED=true or NICEAGENT_ENV is non-local")
+	}
+	switch normalizeModelProviderProfile(c.ModelProviderProfile) {
+	case "":
+	case "deepseek":
+		if strings.TrimSpace(c.ModelProvider) != "openai-compatible" {
+			return fmt.Errorf("MODEL_PROVIDER_PROFILE=deepseek requires MODEL_PROVIDER=openai-compatible")
+		}
+	default:
+		return fmt.Errorf("unsupported MODEL_PROVIDER_PROFILE %q", c.ModelProviderProfile)
 	}
 	if c.ModelHealthProbeEnabled {
 		if c.ModelHealthProbeInterval <= 0 {
@@ -103,6 +124,23 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func applyModelProviderProfile(cfg Config) Config {
+	switch normalizeModelProviderProfile(cfg.ModelProviderProfile) {
+	case "deepseek":
+		cfg.ModelProviderProfile = "deepseek"
+		if strings.TrimSpace(cfg.ModelBaseURL) == "" {
+			cfg.ModelBaseURL = "https://api.deepseek.com"
+		}
+	default:
+		cfg.ModelProviderProfile = strings.TrimSpace(cfg.ModelProviderProfile)
+	}
+	return cfg
+}
+
+func normalizeModelProviderProfile(profile string) string {
+	return strings.ToLower(strings.TrimSpace(profile))
 }
 
 func runtimeID() string {

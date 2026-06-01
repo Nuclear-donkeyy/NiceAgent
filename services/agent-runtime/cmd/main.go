@@ -137,7 +137,12 @@ func modelProviderFromEnv(cfg config.Config, logger *slog.Logger) (model.ToolCal
 		logger.Info("using mock model provider")
 		return modelprovider.MockChatModel{}, nil
 	case "openai-compatible":
+		providerID := "openai-compatible"
+		if cfg.ModelProviderProfile != "" {
+			providerID = cfg.ModelProviderProfile
+		}
 		modelProvider, err := newOpenAICompatibleModel(cfg, modelprovider.OpenAICompatibleProviderConfig{
+			ID:      providerID,
 			BaseURL: cfg.ModelBaseURL,
 			APIKey:  cfg.ModelAPIKey,
 			Model:   cfg.ModelName,
@@ -149,7 +154,7 @@ func modelProviderFromEnv(cfg config.Config, logger *slog.Logger) (model.ToolCal
 		if err != nil {
 			return nil, err
 		}
-		logger.Info("using openai-compatible model provider", "base_url", strings.TrimRight(cfg.ModelBaseURL, "/"), "model", cfg.ModelName)
+		logger.Info("using openai-compatible model provider", "profile", cfg.ModelProviderProfile, "base_url", strings.TrimRight(cfg.ModelBaseURL, "/"), "model", cfg.ModelName)
 		return modelProvider, nil
 	default:
 		return nil, fmt.Errorf("unsupported MODEL_PROVIDER %q", cfg.ModelProvider)

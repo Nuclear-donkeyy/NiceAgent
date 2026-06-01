@@ -36,6 +36,43 @@ func TestModelProviderFromEnvBuildsOpenAICompatibleChatModel(t *testing.T) {
 	}
 }
 
+func TestModelProviderFromEnvBuildsDeepSeekProfile(t *testing.T) {
+	t.Setenv("MODEL_PROVIDER_PROFILE", "deepseek")
+	t.Setenv("MODEL_API_KEY", "secret")
+	t.Setenv("MODEL_NAME", "official-model")
+
+	cfg := config.FromEnv()
+	if cfg.ModelProvider != "openai-compatible" {
+		t.Fatalf("model provider = %q, want openai-compatible", cfg.ModelProvider)
+	}
+	if cfg.ModelProviderProfile != "deepseek" {
+		t.Fatalf("model profile = %q, want deepseek", cfg.ModelProviderProfile)
+	}
+	if cfg.ModelBaseURL != "https://api.deepseek.com" {
+		t.Fatalf("model base url = %q, want DeepSeek default", cfg.ModelBaseURL)
+	}
+	provider, err := modelProviderFromEnv(cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("model provider: %v", err)
+	}
+	reporter, ok := provider.(modelprovider.UsageReporter)
+	if !ok {
+		t.Fatalf("provider = %T, want usage reporter", provider)
+	}
+	if usage := reporter.UsageSnapshot(); usage.Provider != "deepseek" || usage.Model != "official-model" {
+		t.Fatalf("usage metadata = %#v, want deepseek profile provider", usage)
+	}
+}
+
+func TestDeepSeekProfileRejectsConflictingProvider(t *testing.T) {
+	t.Setenv("MODEL_PROVIDER_PROFILE", "deepseek")
+	t.Setenv("MODEL_PROVIDER", "mock")
+
+	if err := config.FromEnv().Validate(); err == nil {
+		t.Fatal("expected deepseek profile to reject mock provider")
+	}
+}
+
 func TestModelProviderFromEnvBuildsMockFallback(t *testing.T) {
 	t.Setenv("MODEL_PROVIDER", "openai-compatible")
 	t.Setenv("MODEL_BASE_URL", "http://example.test/")

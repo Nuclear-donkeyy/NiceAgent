@@ -18,7 +18,7 @@ Eino 已提供 ChatModel 和 ADK `ChatModelAgent` 抽象，当前仓库使用 `T
 
 DeepSeek 官方 API 兼容 OpenAI/Anthropic API。按官方文档，OpenAI-compatible `base_url` 可用 `https://api.deepseek.com`，请求仍走 chat completions 风格；`MODEL_BASE_URL` 不应包含最终的 `/chat/completions` endpoint。参考：[DeepSeek API Docs](https://api-docs.deepseek.com/)。
 
-截至 2026-05-31，DeepSeek 官方文档展示的当前模型包括 `deepseek-v4-flash`、`deepseek-v4-pro`，并说明旧的 `deepseek-chat`、`deepseek-reasoner` 将在 2026-07-24 后废弃。模型名以后仍以官方文档为准。
+DeepSeek 模型名会随官方发布节奏变化，仓库文档不再把某个模型名写成长期默认值。接入时应查看 DeepSeek 官方文档的当前模型列表，并把 `MODEL_NAME` 显式配置为当时可用的模型。
 
 DeepSeek 官方错误码包括 400、401、402、422、429、500、503。401/402/422 属于配置或请求问题，不应重试；429、500、503 和网络瞬时错误可退避重试。参考：[DeepSeek Error Codes](https://api-docs.deepseek.com/quick_start/error_codes)。
 
@@ -94,9 +94,10 @@ DeepSeek 本地接入示例：
 
 ```bash
 MODEL_PROVIDER=openai-compatible
+MODEL_PROVIDER_PROFILE=deepseek
 MODEL_BASE_URL=https://api.deepseek.com
 MODEL_API_KEY=sk-...
-MODEL_NAME=deepseek-v4-flash
+MODEL_NAME=<以 DeepSeek 官方文档为准>
 MODEL_TIMEOUT_SECONDS=120
 MODEL_HEALTH_PROBE_ENABLED=true
 MODEL_HEALTH_PROBE_INTERVAL_SECONDS=60
@@ -109,8 +110,8 @@ MODEL_HEALTH_PROBE_TIMEOUT_SECONDS=10
 
 - 在 DeepSeek 控制台创建 API key。
 - 确认账户余额充足，避免 402。
-- 确认 `MODEL_BASE_URL` 是 `https://api.deepseek.com`，不包含最终 endpoint。
-- 使用官方当前模型名，例如 `deepseek-v4-flash` 或 `deepseek-v4-pro`。
+- 设置 `MODEL_PROVIDER_PROFILE=deepseek`；如果未显式传 `MODEL_BASE_URL`，Runtime 会默认使用 `https://api.deepseek.com`，且不要包含最终 endpoint。
+- 使用 DeepSeek 官方文档中的当前模型名，不把旧模型名当作长期默认值。
 - 启动三服务后测试普通消息。
 - 测试一次 tool calling，例如 `/cli echo hello` 或模型自主调用 `cli.exec`。
 - 测试错误 key，确认 401 日志脱敏。
