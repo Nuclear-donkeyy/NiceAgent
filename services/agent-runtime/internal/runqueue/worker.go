@@ -569,10 +569,16 @@ func newGoRedisQueueClient(addr string) *goRedisQueueClient {
 }
 
 func (c *goRedisQueueClient) XGroupCreateMkStream(ctx context.Context, stream, group, start string) error {
-	return c.client.XGroupCreateMkStream(ctx, stream, group, start).Err()
+	ctx, endSpan := startRedisCommandSpan(ctx, "XGROUP CREATE", stream, group)
+	err := c.client.XGroupCreateMkStream(ctx, stream, group, start).Err()
+	endSpan(err, nil)
+	return err
 }
 
 func (c *goRedisQueueClient) XReadGroup(ctx context.Context, stream, group, consumer string, count int64, block time.Duration) (redisStreamMessage, error) {
+	ctx, endSpan := startRedisCommandSpan(ctx, "XREADGROUP", stream, group)
+	var err error
+	defer func() { endSpan(err, nil) }()
 	streams, err := c.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    group,
 		Consumer: consumer,
@@ -595,10 +601,18 @@ func (c *goRedisQueueClient) XReadGroup(ctx context.Context, stream, group, cons
 }
 
 func (c *goRedisQueueClient) XAck(ctx context.Context, stream, group string, ids ...string) (int64, error) {
-	return c.client.XAck(ctx, stream, group, ids...).Result()
+	ctx, endSpan := startRedisCommandSpan(ctx, "XACK", stream, group)
+	var err error
+	defer func() { endSpan(err, nil) }()
+	var acked int64
+	acked, err = c.client.XAck(ctx, stream, group, ids...).Result()
+	return acked, err
 }
 
 func (c *goRedisQueueClient) XAutoClaim(ctx context.Context, stream, group, consumer string, minIdle time.Duration, start string, count int64) ([]redisStreamMessage, string, error) {
+	ctx, endSpan := startRedisCommandSpan(ctx, "XAUTOCLAIM", stream, group)
+	var err error
+	defer func() { endSpan(err, nil) }()
 	messages, nextStart, err := c.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 		Stream:   stream,
 		Group:    group,
@@ -621,6 +635,9 @@ func (c *goRedisQueueClient) XAutoClaim(ctx context.Context, stream, group, cons
 }
 
 func (c *goRedisQueueClient) XPendingExt(ctx context.Context, stream, group, start, end string, count int64) ([]redisPendingEntry, error) {
+	ctx, endSpan := startRedisCommandSpan(ctx, "XPENDING", stream, group)
+	var err error
+	defer func() { endSpan(err, nil) }()
 	entries, err := c.client.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream: stream,
 		Group:  group,
@@ -642,6 +659,9 @@ func (c *goRedisQueueClient) XPendingExt(ctx context.Context, stream, group, sta
 }
 
 func (c *goRedisQueueClient) XPendingCount(ctx context.Context, stream, group string) (int64, error) {
+	ctx, endSpan := startRedisCommandSpan(ctx, "XPENDING", stream, group)
+	var err error
+	defer func() { endSpan(err, nil) }()
 	pending, err := c.client.XPending(ctx, stream, group).Result()
 	if errors.Is(err, redis.Nil) || pending == nil {
 		return 0, nil
@@ -653,6 +673,9 @@ func (c *goRedisQueueClient) XPendingCount(ctx context.Context, stream, group st
 }
 
 func (c *goRedisQueueClient) XLen(ctx context.Context, stream string) (int64, error) {
+	ctx, endSpan := startRedisCommandSpan(ctx, "XLEN", stream, "")
+	var err error
+	defer func() { endSpan(err, nil) }()
 	length, err := c.client.XLen(ctx, stream).Result()
 	if errors.Is(err, redis.Nil) {
 		return 0, nil
@@ -661,6 +684,9 @@ func (c *goRedisQueueClient) XLen(ctx context.Context, stream string) (int64, er
 }
 
 func (c *goRedisQueueClient) XAdd(ctx context.Context, stream string, values map[string]any, maxLen int64) (string, error) {
+	ctx, endSpan := startRedisCommandSpan(ctx, "XADD", stream, "")
+	var err error
+	defer func() { endSpan(err, nil) }()
 	args := &redis.XAddArgs{
 		Stream: stream,
 		Values: values,
@@ -669,9 +695,22 @@ func (c *goRedisQueueClient) XAdd(ctx context.Context, stream string, values map
 		args.MaxLen = maxLen
 		args.Approx = true
 	}
-	return c.client.XAdd(ctx, args).Result()
+	var id string
+	id, err = c.client.XAdd(ctx, args).Result()
+	return id, err
 }
 
 func (c *goRedisQueueClient) Close() error {
 	return c.client.Close()
+}
+
+func startRedisCommandSpan(ctx context.Context, command, stream, group string) (context.Context, platform.EndSpanFunc) {
+	labels := platform.Labels{"redis_command": command}
+	if stream != "" {
+		labels["stream"] = stream
+	}
+	if group != "" {
+		labels["group"] = group
+	}
+	return platform.StartSpan(ctx, "niceagent/agent_runtime", "redis.command", labels)
 }

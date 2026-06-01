@@ -12,6 +12,7 @@ import (
 
 	redis "github.com/redis/go-redis/v9"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 	"niceagent/control-plane/internal/app"
 )
@@ -412,30 +413,61 @@ func NewRedisCounterStore(addr string) *RedisCounterStore {
 }
 
 func (s *RedisCounterStore) Incr(ctx context.Context, key string) (int64, error) {
-	return s.client.Incr(ctx, key).Result()
+	ctx, endSpan := startRedisCounterSpan(ctx, "INCR")
+	var err error
+	defer func() { endSpan(err, nil) }()
+	var value int64
+	value, err = s.client.Incr(ctx, key).Result()
+	return value, err
 }
 
 func (s *RedisCounterStore) Decr(ctx context.Context, key string) (int64, error) {
-	return s.client.Decr(ctx, key).Result()
+	ctx, endSpan := startRedisCounterSpan(ctx, "DECR")
+	var err error
+	defer func() { endSpan(err, nil) }()
+	var value int64
+	value, err = s.client.Decr(ctx, key).Result()
+	return value, err
 }
 
 func (s *RedisCounterStore) IncrBy(ctx context.Context, key string, amount int64) (int64, error) {
-	return s.client.IncrBy(ctx, key, amount).Result()
+	ctx, endSpan := startRedisCounterSpan(ctx, "INCRBY")
+	var err error
+	defer func() { endSpan(err, nil) }()
+	var value int64
+	value, err = s.client.IncrBy(ctx, key, amount).Result()
+	return value, err
 }
 
 func (s *RedisCounterStore) DecrBy(ctx context.Context, key string, amount int64) (int64, error) {
-	return s.client.DecrBy(ctx, key, amount).Result()
+	ctx, endSpan := startRedisCounterSpan(ctx, "DECRBY")
+	var err error
+	defer func() { endSpan(err, nil) }()
+	var value int64
+	value, err = s.client.DecrBy(ctx, key, amount).Result()
+	return value, err
 }
 
 func (s *RedisCounterStore) Expire(ctx context.Context, key string, ttl time.Duration) error {
-	return s.client.Expire(ctx, key, ttl).Err()
+	ctx, endSpan := startRedisCounterSpan(ctx, "EXPIRE")
+	err := s.client.Expire(ctx, key, ttl).Err()
+	endSpan(err, nil)
+	return err
 }
 
 func (s *RedisCounterStore) SetNX(ctx context.Context, key string, value string, ttl time.Duration) (bool, error) {
-	return s.client.SetNX(ctx, key, value, ttl).Result()
+	ctx, endSpan := startRedisCounterSpan(ctx, "SETNX")
+	var err error
+	defer func() { endSpan(err, nil) }()
+	var ok bool
+	ok, err = s.client.SetNX(ctx, key, value, ttl).Result()
+	return ok, err
 }
 
 func (s *RedisCounterStore) Get(ctx context.Context, key string) (string, bool, error) {
+	ctx, endSpan := startRedisCounterSpan(ctx, "GET")
+	var err error
+	defer func() { endSpan(err, nil) }()
 	value, err := s.client.Get(ctx, key).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", false, nil
@@ -447,7 +479,12 @@ func (s *RedisCounterStore) Get(ctx context.Context, key string) (string, bool, 
 }
 
 func (s *RedisCounterStore) Del(ctx context.Context, key string) (int64, error) {
-	return s.client.Del(ctx, key).Result()
+	ctx, endSpan := startRedisCounterSpan(ctx, "DEL")
+	var err error
+	defer func() { endSpan(err, nil) }()
+	var deleted int64
+	deleted, err = s.client.Del(ctx, key).Result()
+	return deleted, err
 }
 
 func (s *RedisCounterStore) Close() error {
@@ -455,6 +492,13 @@ func (s *RedisCounterStore) Close() error {
 		return nil
 	}
 	return s.client.Close()
+}
+
+func startRedisCounterSpan(ctx context.Context, command string) (context.Context, platform.EndSpanFunc) {
+	return platform.StartSpan(ctx, "niceagent/control_plane", "redis.command", platform.Labels{
+		"redis_command": command,
+		"component":     "quota_counter",
+	})
 }
 
 func maxInt(value, fallback int) int {
