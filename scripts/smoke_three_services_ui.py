@@ -46,7 +46,7 @@ def main() -> int:
     def base_env() -> dict[str, str]:
         env = os.environ.copy()
         env["PATH"] = "/usr/local/go/bin:" + env.get("PATH", "")
-        env["GOCACHE"] = env.get("GOCACHE", "/private/tmp/niceagent-go-cache")
+        env["GOCACHE"] = env.get("GOCACHE") or str(Path(tempfile.gettempdir()) / "niceagent-go-cache")
         env["NICEAGENT_ENV"] = "local"
         env["INTERNAL_API_TOKEN"] = token
         env["INTERNAL_API_TOKEN_REQUIRED"] = "true"

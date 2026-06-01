@@ -45,5 +45,10 @@ jobs:
       - name: Validate Docker Compose
         run: make compose-config
 
+      - name: Smoke Redis queue and fanout
+        run: |
+          make smoke-three-services-redis
+          make smoke-control-plane-fanout
+
       - name: Build container images
         run: make docker-build IMAGE_REGISTRY=niceagent-ci IMAGE_TAG=${{ github.sha }}
