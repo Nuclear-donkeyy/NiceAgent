@@ -1113,6 +1113,10 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.previewOpenAPIImport(w, r)
 		return
 	}
+	if len(parts) == 2 && parts[0] == "import" && parts[1] == "openapi" && r.Method == http.MethodPost {
+		s.createOpenAPIImportedSkill(w, r)
+		return
+	}
 	if len(parts) == 1 && r.Method == http.MethodPatch {
 		s.updateHTTPSkill(w, r, parts[0])
 		return
@@ -1174,6 +1178,39 @@ func (s *Server) previewOpenAPIImport(w http.ResponseWriter, r *http.Request) {
 		"candidate_count": len(candidates),
 	})
 	platform.WriteJSON(w, http.StatusOK, protocol.OpenAPIImportPreviewResponse{Candidates: candidates})
+}
+
+func (s *Server) createOpenAPIImportedSkill(w http.ResponseWriter, r *http.Request) {
+	actor := actorFromRequest(r)
+	if !s.requireWriteRole(w, r, "skill.import.create", "skill", "", "") {
+		return
+	}
+	var input protocol.OpenAPIImportCreateInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	skillInput, candidate, err := skillmanifest.BuildOpenAPIHTTPSkillInput(input)
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	skill, err := s.repo.CreateHTTPSkill(actor.UserID, actor.ProjectID, skillInput)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	s.auditAllow(r, "skill.import.create", "skill", skill.ID, "", map[string]any{
+		"kind":          string(skill.Kind),
+		"source":        "openapi",
+		"operation_id":  candidate.OperationID,
+		"method":        candidate.Method,
+		"path":          candidate.Path,
+		"auth_type":     skillInput.AuthType,
+		"secret_bound":  skillInput.BearerToken != "" || skillInput.BearerTokenSecretRef != "",
+		"security_hint": candidate.SecurityScheme,
+	})
+	platform.WriteJSON(w, http.StatusCreated, skill)
 }
 
 func (s *Server) createHTTPSkill(w http.ResponseWriter, r *http.Request) {

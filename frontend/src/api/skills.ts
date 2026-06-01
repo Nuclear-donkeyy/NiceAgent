@@ -1,5 +1,13 @@
 import { api } from "./client";
-import type { HTTPSkillInput, Skill, SkillGroups, SkillsResponse } from "../domain/skill";
+import type {
+  HTTPSkillInput,
+  OpenAPIImportCreateInput,
+  OpenAPIImportPreviewInput,
+  OpenAPIImportPreviewResponse,
+  Skill,
+  SkillGroups,
+  SkillsResponse,
+} from "../domain/skill";
 
 export async function listSkills(): Promise<SkillGroups> {
   const data = await api<SkillsResponse>("/api/skills");
@@ -13,6 +21,22 @@ export async function listSkills(): Promise<SkillGroups> {
 
 export function createHTTPSkill(input: HTTPSkillInput): Promise<Skill> {
   return api<Skill>("/api/skills/http", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function previewOpenAPIImport(
+  input: OpenAPIImportPreviewInput,
+): Promise<OpenAPIImportPreviewResponse> {
+  return api<OpenAPIImportPreviewResponse>("/api/skills/import/openapi/preview", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function createOpenAPIImportedSkill(input: OpenAPIImportCreateInput): Promise<Skill> {
+  return api<Skill>("/api/skills/import/openapi", {
     method: "POST",
     body: JSON.stringify(input),
   });

@@ -46,4 +46,43 @@ export interface HTTPSkillInput {
   rate_limit_per_minute?: number;
   auth_type: "none" | "bearer";
   bearer_token?: string;
+  bearer_token_secret_ref?: string;
+}
+
+export interface OpenAPIImportPreviewInput {
+  document: string;
+  base_url?: string;
+}
+
+export interface HTTPSkillImportCandidate {
+  name: string;
+  description?: string;
+  method: "GET" | "POST";
+  url: string;
+  path: string;
+  operation_id?: string;
+  input_schema?: string;
+  output_schema?: string;
+  auth_type?: "none" | "bearer";
+  requires_secret?: boolean;
+  security_scheme?: string;
+  unsupported_auth?: boolean;
+}
+
+export interface OpenAPIImportPreviewResponse {
+  candidates: HTTPSkillImportCandidate[];
+}
+
+export interface OpenAPIImportCreateInput extends OpenAPIImportPreviewInput {
+  operation_id?: string;
+  method?: "GET" | "POST";
+  path?: string;
+  name?: string;
+  description?: string;
+  auth_type?: "none" | "bearer";
+  bearer_token?: string;
+  bearer_token_secret_ref?: string;
+  timeout_seconds?: number;
+  retry_max_attempts?: number;
+  rate_limit_per_minute?: number;
 }

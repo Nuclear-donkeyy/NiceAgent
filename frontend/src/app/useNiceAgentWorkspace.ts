@@ -6,7 +6,13 @@ import * as runApi from "../api/runs";
 import * as skillApi from "../api/skills";
 import type { Artifact } from "../domain/artifact";
 import type { ChatSession, Message } from "../domain/chat";
-import type { HTTPSkillInput, SkillGroups } from "../domain/skill";
+import type {
+  HTTPSkillInput,
+  OpenAPIImportCreateInput,
+  OpenAPIImportPreviewInput,
+  OpenAPIImportPreviewResponse,
+  SkillGroups,
+} from "../domain/skill";
 import type { RunEvent, RunStatus } from "../domain/run";
 import { terminalRunStatuses } from "../domain/run";
 import { runEventTypes, statusText } from "../domain/labels";
@@ -111,6 +117,30 @@ export function useNiceAgentWorkspace() {
     } catch (error) {
       const message = errorMessage(error);
       setNotice(`添加 Skill 失败：${message}`);
+      throw new Error(message, { cause: error });
+    }
+  }
+
+  async function previewOpenAPIImport(
+    inputValue: OpenAPIImportPreviewInput,
+  ): Promise<OpenAPIImportPreviewResponse> {
+    try {
+      return await skillApi.previewOpenAPIImport(inputValue);
+    } catch (error) {
+      const message = errorMessage(error);
+      setNotice(`OpenAPI 预览失败：${message}`);
+      throw new Error(message, { cause: error });
+    }
+  }
+
+  async function createOpenAPIImportedSkill(inputValue: OpenAPIImportCreateInput) {
+    try {
+      await skillApi.createOpenAPIImportedSkill(inputValue);
+      setNotice("OpenAPI Skill 已导入");
+      await loadSkills();
+    } catch (error) {
+      const message = errorMessage(error);
+      setNotice(`导入 OpenAPI Skill 失败：${message}`);
       throw new Error(message, { cause: error });
     }
   }
@@ -346,6 +376,8 @@ export function useNiceAgentWorkspace() {
     chatsLoading,
     createChat,
     createHTTPSkill,
+    previewOpenAPIImport,
+    createOpenAPIImportedSkill,
     input,
     messageLoading,
     notice,

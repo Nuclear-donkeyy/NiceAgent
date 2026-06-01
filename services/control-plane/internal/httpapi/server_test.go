@@ -1345,6 +1345,95 @@ func TestServerPreviewsOpenAPIImport(t *testing.T) {
 	}
 }
 
+func TestServerCreatesOpenAPIImportedSkill(t *testing.T) {
+	store, handler := newTestHandler()
+	document := `{
+		"openapi":"3.1.0",
+		"servers":[{"url":"https://api.example.com"}],
+		"components":{"securitySchemes":{"bearerAuth":{"type":"http","scheme":"bearer"}}},
+		"security":[{"bearerAuth":[]}],
+		"paths":{
+			"/weather":{
+				"post":{
+					"operationId":"getWeather",
+					"summary":"Get weather",
+					"requestBody":{"content":{"application/json":{"schema":{"type":"object","properties":{"city":{"type":"string"}}}}}},
+					"responses":{"200":{"content":{"application/json":{"schema":{"type":"object"}}}}}
+				}
+			}
+		}
+	}`
+	request := httptest.NewRequest(http.MethodPost, "/api/skills/import/openapi", jsonBody(t, protocol.OpenAPIImportCreateInput{
+		Document:             document,
+		OperationID:          "getWeather",
+		Name:                 "Weather Lookup",
+		BearerTokenSecretRef: "env://WEATHER_TOKEN",
+		TimeoutSeconds:       20,
+		RetryMaxAttempts:     2,
+		RateLimitPerMinute:   30,
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("import status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var skill protocol.Skill
+	decodeJSON(t, response.Body, &skill)
+	if skill.ID == "" || skill.Name != "Weather Lookup" || skill.Kind != protocol.SkillKindHTTP || skill.OwnerUserID != "demo-user" {
+		t.Fatalf("skill = %#v", skill)
+	}
+	if !strings.Contains(skill.RuntimeConfig, `"url":"https://api.example.com/weather"`) || !strings.Contains(skill.RuntimeConfig, `"max_attempts":2`) {
+		t.Fatalf("runtime config = %s", skill.RuntimeConfig)
+	}
+	runtimeSkills := store.ListRuntimeSkillsForUser("demo-user", "demo-project")
+	var material protocol.RuntimeSecret
+	for _, runtimeSkill := range runtimeSkills {
+		if runtimeSkill.Skill.ID == skill.ID {
+			material = runtimeSkill.SecretMaterial("bearer_token")
+			break
+		}
+	}
+	if material.SecretRef != "env://WEATHER_TOKEN" || material.EncryptedValue != "" {
+		t.Fatalf("secret material = %#v", material)
+	}
+	auditRequest := httptest.NewRequest(http.MethodGet, "/api/audit/events?action=skill.import.create", nil)
+	auditResponse := httptest.NewRecorder()
+	handler.ServeHTTP(auditResponse, auditRequest)
+	if auditResponse.Code != http.StatusOK {
+		t.Fatalf("audit status = %d, body = %s", auditResponse.Code, auditResponse.Body.String())
+	}
+	var auditOutput protocol.AuditEventsResponse
+	decodeJSON(t, auditResponse.Body, &auditOutput)
+	if len(auditOutput.Events) != 1 || auditOutput.Events[0].ResourceID != skill.ID {
+		t.Fatalf("audit events = %#v", auditOutput.Events)
+	}
+}
+
+func TestServerRejectsOpenAPIImportWithoutRequiredSecret(t *testing.T) {
+	_, handler := newTestHandler()
+	document := `{
+		"openapi":"3.1.0",
+		"servers":[{"url":"https://api.example.com"}],
+		"components":{"securitySchemes":{"bearerAuth":{"type":"http","scheme":"bearer"}}},
+		"security":[{"bearerAuth":[]}],
+		"paths":{
+			"/weather":{"post":{"operationId":"getWeather","responses":{"200":{"content":{"application/json":{"schema":{"type":"object"}}}}}}}
+		}
+	}`
+	request := httptest.NewRequest(http.MethodPost, "/api/skills/import/openapi", jsonBody(t, protocol.OpenAPIImportCreateInput{
+		Document:    document,
+		OperationID: "getWeather",
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("import status = %d, body = %s; want 400", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "bearer_token") {
+		t.Fatalf("response body = %s, want bearer token error", response.Body.String())
+	}
+}
+
 func TestServerRejectsInvalidOpenAPIImportPreview(t *testing.T) {
 	_, handler := newTestHandler()
 	request := httptest.NewRequest(http.MethodPost, "/api/skills/import/openapi/preview", jsonBody(t, protocol.OpenAPIImportPreviewInput{

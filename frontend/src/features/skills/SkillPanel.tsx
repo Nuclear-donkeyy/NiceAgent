@@ -2,7 +2,15 @@ import { useState, type FormEvent } from "react";
 
 import { Empty } from "../../components/Empty";
 import { SectionTitle } from "../../components/SectionTitle";
-import type { HTTPSkillInput, Skill, SkillGroups } from "../../domain/skill";
+import type {
+  HTTPSkillImportCandidate,
+  HTTPSkillInput,
+  OpenAPIImportCreateInput,
+  OpenAPIImportPreviewInput,
+  OpenAPIImportPreviewResponse,
+  Skill,
+  SkillGroups,
+} from "../../domain/skill";
 import styles from "./SkillPanel.module.scss";
 
 const defaultForm: HTTPSkillInput = {
@@ -16,19 +24,52 @@ const defaultForm: HTTPSkillInput = {
 
 type FieldName = "name" | "description" | "url" | "bearer_token";
 type FieldErrors = Partial<Record<FieldName, string>>;
+type ImportFieldName = "document" | "selected" | "bearer_token";
+type ImportFieldErrors = Partial<Record<ImportFieldName, string>>;
+
+interface ImportFormState {
+  document: string;
+  base_url: string;
+  selected: string;
+  bearer_token: string;
+}
+
+const defaultImportForm: ImportFormState = {
+  document: "",
+  base_url: "",
+  selected: "",
+  bearer_token: "",
+};
 
 interface SkillPanelProps {
   groups: SkillGroups;
   onCreateHTTPSkill: (input: HTTPSkillInput) => Promise<void>;
+  onCreateOpenAPIImportedSkill: (input: OpenAPIImportCreateInput) => Promise<void>;
+  onPreviewOpenAPIImport: (
+    input: OpenAPIImportPreviewInput,
+  ) => Promise<OpenAPIImportPreviewResponse>;
   onSetSkillEnabled: (skillID: string, enabled: boolean) => Promise<void>;
 }
 
-export function SkillPanel({ groups, onCreateHTTPSkill, onSetSkillEnabled }: SkillPanelProps) {
+export function SkillPanel({
+  groups,
+  onCreateHTTPSkill,
+  onCreateOpenAPIImportedSkill,
+  onPreviewOpenAPIImport,
+  onSetSkillEnabled,
+}: SkillPanelProps) {
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<HTTPSkillInput>(defaultForm);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [serverError, setServerError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importForm, setImportForm] = useState<ImportFormState>(defaultImportForm);
+  const [importErrors, setImportErrors] = useState<ImportFieldErrors>({});
+  const [importCandidates, setImportCandidates] = useState<HTTPSkillImportCandidate[]>([]);
+  const [importError, setImportError] = useState("");
+  const [previewingImport, setPreviewingImport] = useState(false);
+  const [savingImport, setSavingImport] = useState(false);
   const [pendingSkillID, setPendingSkillID] = useState("");
   const [actionError, setActionError] = useState("");
 
@@ -72,12 +113,67 @@ export function SkillPanel({ groups, onCreateHTTPSkill, onSetSkillEnabled }: Ski
     }
   }
 
+  async function previewImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const errors = validateImportForm(importForm, null);
+    setImportErrors(errors);
+    setImportError("");
+    setImportCandidates([]);
+    if (Object.keys(errors).length > 0) return;
+    setPreviewingImport(true);
+    try {
+      const response = await onPreviewOpenAPIImport({
+        document: importForm.document,
+        base_url: importForm.base_url.trim() || undefined,
+      });
+      setImportCandidates(response.candidates || []);
+      setImportForm((prev) => ({ ...prev, selected: candidateKey(response.candidates?.[0]) }));
+    } catch (error) {
+      setImportError(errorMessage(error));
+    } finally {
+      setPreviewingImport(false);
+    }
+  }
+
+  async function saveImport() {
+    const selected = selectedImportCandidate(importCandidates, importForm.selected);
+    const errors = validateImportForm(importForm, selected);
+    setImportErrors(errors);
+    setImportError("");
+    if (Object.keys(errors).length > 0 || !selected) return;
+    setSavingImport(true);
+    try {
+      await onCreateOpenAPIImportedSkill({
+        document: importForm.document,
+        base_url: importForm.base_url.trim() || undefined,
+        operation_id: selected.operation_id || undefined,
+        method: selected.operation_id ? undefined : selected.method,
+        path: selected.operation_id ? undefined : selected.path,
+        bearer_token: selected.requires_secret ? importForm.bearer_token.trim() : undefined,
+      });
+      setImportForm(defaultImportForm);
+      setImportCandidates([]);
+      setImportErrors({});
+      setImportOpen(false);
+    } catch (error) {
+      setImportError(errorMessage(error));
+    } finally {
+      setSavingImport(false);
+    }
+  }
+
   function updateForm<K extends keyof HTTPSkillInput>(field: K, value: HTTPSkillInput[K]) {
     setForm((prev) => ({ ...prev, [field]: value }));
     setServerError("");
     if (isFieldName(field)) {
       setFieldErrors((prev) => withoutFieldError(prev, field));
     }
+  }
+
+  function updateImportForm<K extends keyof ImportFormState>(field: K, value: ImportFormState[K]) {
+    setImportForm((prev) => ({ ...prev, [field]: value }));
+    setImportError("");
+    setImportErrors((prev) => withoutImportFieldError(prev, field));
   }
 
   return (
@@ -195,6 +291,98 @@ export function SkillPanel({ groups, onCreateHTTPSkill, onSetSkillEnabled }: Ski
         </form>
       )}
 
+      <div className={styles.sectionRow}>
+        <SectionTitle text="OpenAPI 导入" />
+        <button
+          className={styles.miniButton}
+          disabled={previewingImport || savingImport}
+          onClick={() => setImportOpen((value) => !value)}
+          type="button"
+        >
+          {importOpen ? "收起" : "导入"}
+        </button>
+      </div>
+
+      {importOpen && (
+        <form className={styles.form} noValidate onSubmit={previewImport}>
+          <label className={styles.field}>
+            <span>OpenAPI JSON/YAML</span>
+            <textarea
+              aria-invalid={Boolean(importErrors.document)}
+              disabled={previewingImport || savingImport}
+              value={importForm.document}
+              onChange={(event) => updateImportForm("document", event.target.value)}
+              placeholder="粘贴 OpenAPI 3.1 文档"
+              rows={6}
+            />
+            {importErrors.document && <small>{importErrors.document}</small>}
+          </label>
+          <label className={styles.field}>
+            <span>Base URL 覆盖</span>
+            <input
+              disabled={previewingImport || savingImport}
+              value={importForm.base_url}
+              onChange={(event) => updateImportForm("base_url", event.target.value)}
+              placeholder="https://api.example.com"
+            />
+          </label>
+          <button
+            className={styles.secondaryButton}
+            disabled={previewingImport || savingImport}
+            type="submit"
+          >
+            {previewingImport ? "预览中..." : "预览可导入能力"}
+          </button>
+          {importCandidates.length > 0 && (
+            <>
+              <label className={styles.field}>
+                <span>选择 Operation</span>
+                <select
+                  aria-invalid={Boolean(importErrors.selected)}
+                  disabled={savingImport}
+                  value={importForm.selected}
+                  onChange={(event) => updateImportForm("selected", event.target.value)}
+                >
+                  {importCandidates.map((candidate) => (
+                    <option key={candidateKey(candidate)} value={candidateKey(candidate)}>
+                      {candidate.name} · {candidate.method} {candidate.path}
+                    </option>
+                  ))}
+                </select>
+                {importErrors.selected && <small>{importErrors.selected}</small>}
+              </label>
+              {selectedImportCandidate(importCandidates, importForm.selected)?.requires_secret && (
+                <label className={styles.field}>
+                  <span>Bearer Token</span>
+                  <input
+                    aria-invalid={Boolean(importErrors.bearer_token)}
+                    disabled={savingImport}
+                    value={importForm.bearer_token}
+                    onChange={(event) => updateImportForm("bearer_token", event.target.value)}
+                    placeholder="Bearer token"
+                    type="password"
+                  />
+                  {importErrors.bearer_token && <small>{importErrors.bearer_token}</small>}
+                </label>
+              )}
+              <button
+                className={styles.primaryButton}
+                disabled={savingImport || previewingImport}
+                onClick={() => void saveImport()}
+                type="button"
+              >
+                {savingImport ? "导入中..." : "保存选中的 Skill"}
+              </button>
+            </>
+          )}
+          {importError && (
+            <p className={styles.formError} role="alert">
+              OpenAPI 导入失败：{importError}
+            </p>
+          )}
+        </form>
+      )}
+
       {actionError && (
         <p className={styles.formError} role="alert">
           {actionError}
@@ -232,6 +420,20 @@ function validateForm(form: HTTPSkillInput): FieldErrors {
     ...validateField(form, "url"),
     ...validateField(form, "bearer_token"),
   };
+}
+
+function validateImportForm(
+  form: ImportFormState,
+  selected: HTTPSkillImportCandidate | null,
+): ImportFieldErrors {
+  const errors: ImportFieldErrors = {};
+  if (!form.document.trim()) errors.document = "请粘贴 OpenAPI 文档";
+  if (selected === null && form.selected) errors.selected = "请选择有效的 operation";
+  if (selected?.unsupported_auth) errors.selected = "该 operation 的鉴权方式暂不支持";
+  if (selected?.requires_secret && !form.bearer_token.trim()) {
+    errors.bearer_token = "请输入 Bearer Token";
+  }
+  return errors;
 }
 
 function validateField(form: HTTPSkillInput, field: FieldName): FieldErrors {
@@ -283,6 +485,29 @@ function withoutFieldError(current: FieldErrors, field: FieldName): FieldErrors 
 
 function isFieldName(field: keyof HTTPSkillInput): field is FieldName {
   return ["name", "description", "url", "bearer_token"].includes(field);
+}
+
+function withoutImportFieldError(
+  current: ImportFieldErrors,
+  field: keyof ImportFormState,
+): ImportFieldErrors {
+  const next = { ...current };
+  if (field === "document") delete next.document;
+  if (field === "selected") delete next.selected;
+  if (field === "bearer_token") delete next.bearer_token;
+  return next;
+}
+
+function candidateKey(candidate: HTTPSkillImportCandidate | undefined): string {
+  if (!candidate) return "";
+  return candidate.operation_id || `${candidate.method}:${candidate.path}`;
+}
+
+function selectedImportCandidate(
+  candidates: HTTPSkillImportCandidate[],
+  key: string,
+): HTTPSkillImportCandidate | null {
+  return candidates.find((candidate) => candidateKey(candidate) === key) || null;
 }
 
 function errorMessage(error: unknown): string {
