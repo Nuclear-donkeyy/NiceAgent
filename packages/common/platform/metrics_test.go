@@ -79,6 +79,37 @@ func TestInjectTraceHeadersPropagatesOpenTelemetryContext(t *testing.T) {
 	}
 }
 
+func TestWithRequestIDPropagatesHeaderAndContext(t *testing.T) {
+	var gotRequestID string
+	handler := WithRequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestID = RequestIDFromContext(r.Context())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("X-Request-ID", "req-test-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if gotRequestID != "req-test-1" {
+		t.Fatalf("request id = %q, want req-test-1", gotRequestID)
+	}
+	if response.Header().Get("X-Request-ID") != "req-test-1" {
+		t.Fatalf("response request id = %q", response.Header().Get("X-Request-ID"))
+	}
+}
+
+func TestInjectTraceHeadersIncludesRequestID(t *testing.T) {
+	ctx := ContextWithRequestID(context.Background(), "req-propagate-1")
+	header := http.Header{}
+
+	InjectTraceHeaders(ctx, header)
+
+	if got := header.Get("X-Request-ID"); got != "req-propagate-1" {
+		t.Fatalf("propagated request id = %q", got)
+	}
+}
+
 func TestOpenTelemetryConfigFromEnv(t *testing.T) {
 	t.Setenv("OTEL_SERVICE_NAME", "custom-service")
 	t.Setenv("OTEL_TRACES_EXPORTER", "otlp")

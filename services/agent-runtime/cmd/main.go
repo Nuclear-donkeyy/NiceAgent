@@ -49,6 +49,7 @@ func main() {
 		RuntimeID:   cfg.RuntimeID,
 		ModelHealth: modelHealth,
 		Metrics:     metrics,
+		Logger:      logger,
 	})
 
 	logger.Info("starting agent runtime", "addr", cfg.Addr)

@@ -46,6 +46,9 @@ func ContextWithTraceID(ctx context.Context, traceID string) context.Context {
 
 func InjectTraceHeaders(ctx context.Context, header http.Header) {
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(header))
+	if requestID := RequestIDFromContext(ctx); requestID != "" {
+		header.Set("X-Request-ID", requestID)
+	}
 	traceID := TraceIDFromContext(ctx)
 	if traceID == "" {
 		traceID = OpenTelemetryTraceIDFromContext(ctx)

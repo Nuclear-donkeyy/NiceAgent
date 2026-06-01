@@ -98,7 +98,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/internal/artifacts/", s.internalArtifactSubroutes)
 	mux.Handle("/", http.FileServer(http.Dir(staticDir())))
 	handler := platform.WithTraceID(requestLogger(s.log, s.authMode, platform.MetricsMiddleware(s.metrics, s.withActor(mux))))
-	return withRequestID(platform.OpenTelemetryMiddleware("control_plane", handler))
+	return platform.WithRequestID(platform.OpenTelemetryMiddleware("control_plane", handler))
 }
 
 func staticDir() string {
@@ -1467,7 +1467,6 @@ func parseIntBounded(value string, fallback, min, max int) int {
 }
 
 type actorContextKey struct{}
-type requestIDContextKey struct{}
 
 func normalizeAuthMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
@@ -1671,29 +1670,6 @@ func normalizeTokenReservationOptions(opts TokenReservationOptions) TokenReserva
 		opts.OutputBuffer = 0
 	}
 	return opts
-}
-
-func withRequestID(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-		if !validRequestID(requestID) {
-			requestID = platform.NewID("req")
-		}
-		w.Header().Set("X-Request-ID", requestID)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDContextKey{}, requestID)))
-	})
-}
-
-func validRequestID(value string) bool {
-	if value == "" || len(value) > 128 {
-		return false
-	}
-	for _, ch := range value {
-		if ch < 33 || ch > 126 {
-			return false
-		}
-	}
-	return true
 }
 
 func (s *Server) withActor(next http.Handler) http.Handler {
@@ -1912,10 +1888,7 @@ func normalizeMemberRole(role string) string {
 }
 
 func requestIDFromRequest(r *http.Request) string {
-	if requestID, ok := r.Context().Value(requestIDContextKey{}).(string); ok {
-		return requestID
-	}
-	return ""
+	return platform.RequestIDFromContext(r.Context())
 }
 
 func firstNonEmpty(values ...string) string {

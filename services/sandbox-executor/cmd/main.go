@@ -25,7 +25,7 @@ func main() {
 	}
 	defer shutdownTelemetryWithTimeout(shutdownTelemetry)
 	sandboxExecutor := executor.NewConfiguredExecutor(cfg)
-	handler := httpapi.NewHandler(sandboxExecutor, cfg.InternalAPIToken)
+	handler := httpapi.NewHandlerWithLogger(sandboxExecutor, cfg.InternalAPIToken, logger)
 
 	logger.Info("starting sandbox executor", "addr", cfg.Addr, "policy", policy.SystemCLIMode, "executor_mode", cfg.ExecutorMode)
 	if err := http.ListenAndServe(cfg.Addr, handler); err != nil {
