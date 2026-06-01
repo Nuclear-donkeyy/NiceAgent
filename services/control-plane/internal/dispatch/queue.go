@@ -100,6 +100,7 @@ type RedisStreamsRunQueue struct {
 	Group        string
 	Consumer     string
 	BlockTimeout time.Duration
+	MaxLen       int64
 
 	client redisRunQueueClient
 }
@@ -141,7 +142,7 @@ func (q *RedisStreamsRunQueue) Enqueue(ctx context.Context, run QueuedRun) error
 	if err != nil {
 		return err
 	}
-	_, err = q.client.XAdd(ctx, q.Stream, values)
+	_, err = q.client.XAdd(ctx, q.Stream, values, q.MaxLen)
 	return err
 }
 
@@ -277,7 +278,7 @@ type redisStreamMessage struct {
 }
 
 type redisRunQueueClient interface {
-	XAdd(ctx context.Context, stream string, values map[string]any) (string, error)
+	XAdd(ctx context.Context, stream string, values map[string]any, maxLen int64) (string, error)
 	XGroupCreateMkStream(ctx context.Context, stream, group, start string) error
 	XReadGroup(ctx context.Context, stream, group, consumer string, count int64, block time.Duration) (redisStreamMessage, error)
 	XAck(ctx context.Context, stream, group string, ids ...string) (int64, error)
@@ -292,8 +293,13 @@ func newGoRedisRunQueueClient(addr string) *goRedisRunQueueClient {
 	return &goRedisRunQueueClient{client: redis.NewClient(&redis.Options{Addr: addr})}
 }
 
-func (c *goRedisRunQueueClient) XAdd(ctx context.Context, stream string, values map[string]any) (string, error) {
-	return c.client.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: values}).Result()
+func (c *goRedisRunQueueClient) XAdd(ctx context.Context, stream string, values map[string]any, maxLen int64) (string, error) {
+	args := &redis.XAddArgs{Stream: stream, Values: values}
+	if maxLen > 0 {
+		args.MaxLen = maxLen
+		args.Approx = true
+	}
+	return c.client.XAdd(ctx, args).Result()
 }
 
 func (c *goRedisRunQueueClient) XGroupCreateMkStream(ctx context.Context, stream, group, start string) error {

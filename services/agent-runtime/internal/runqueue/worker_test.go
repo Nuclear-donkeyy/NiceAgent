@@ -254,6 +254,7 @@ func TestRedisWorkerMovesOverDeliveredPendingMessageToDLQ(t *testing.T) {
 		ReclaimMinIdle:   time.Millisecond,
 		MaxDeliveries:    5,
 		DeadLetterStream: "niceagent:runs:test:dlq",
+		DeadLetterMaxLen: 100,
 	}, engine, client, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if err := worker.ProcessNext(context.Background()); err != nil {
@@ -271,6 +272,9 @@ func TestRedisWorkerMovesOverDeliveredPendingMessageToDLQ(t *testing.T) {
 	add := client.adds[0]
 	if add.stream != "niceagent:runs:test:dlq" {
 		t.Fatalf("dlq stream = %q", add.stream)
+	}
+	if add.maxLen != 100 {
+		t.Fatalf("dlq max len = %d, want 100", add.maxLen)
 	}
 	if add.values["reason"] != "max_deliveries_exceeded" || add.values["run_id"] != "run_1" {
 		t.Fatalf("dlq values = %#v", add.values)
@@ -306,6 +310,7 @@ type fakeXGroup struct {
 type fakeXAdd struct {
 	stream string
 	values map[string]any
+	maxLen int64
 }
 
 func (c *fakeRedisQueueClient) XGroupCreateMkStream(_ context.Context, stream, group, start string) error {
@@ -339,8 +344,8 @@ func (c *fakeRedisQueueClient) XPendingExt(_ context.Context, _, _, start, _ str
 	return []redisPendingEntry{{ID: start, RetryCount: count}}, nil
 }
 
-func (c *fakeRedisQueueClient) XAdd(_ context.Context, stream string, values map[string]any) (string, error) {
-	c.adds = append(c.adds, fakeXAdd{stream: stream, values: values})
+func (c *fakeRedisQueueClient) XAdd(_ context.Context, stream string, values map[string]any, maxLen int64) (string, error) {
+	c.adds = append(c.adds, fakeXAdd{stream: stream, values: values, maxLen: maxLen})
 	return "1700000000001-0", nil
 }
 

@@ -113,9 +113,9 @@ Browser -> 任意 Control Plane
 ## 分阶段落地
 
 1. SSE replay 收口：`id:`、`Last-Event-ID`、前端 last seq、去重测试。
-2. 跨副本 event fanout：Redis nudge 最小路径已落地，权威仍是 Postgres/repository；下一步补多 Control Plane 集成测试和指标。
+2. 跨副本 event fanout：Redis nudge 最小路径和多 Control Plane smoke 已落地，权威仍是 Postgres/repository；下一步补指标、告警和容量测试。
 3. Redis Streams run queue：实现 `XADD`、`XREADGROUP`、`XACK` 基础路径。
-4. Attempt/lease/retry：claim、heartbeat、`XAUTOCLAIM`、DLQ 已有最小闭环；`make smoke-three-services-redis` 已能启动临时 Redis 和两个 Agent Runtime consumer 做最小多 runtime 冒烟。后续继续补跨 Control Plane event fanout 集成测试、指标和压测。
+4. Attempt/lease/retry：claim、heartbeat、`XAUTOCLAIM`、DLQ 已有最小闭环；`make smoke-three-services-redis` 已能启动临时 Redis 和两个 Agent Runtime consumer 做最小多 runtime 冒烟；`make smoke-control-plane-fanout` 已覆盖跨 Control Plane event fanout。主 queue stream 和 DLQ stream 已支持可配置近似裁剪，后续继续补指标、告警和压测。
 5. 压测与观测：覆盖 100/500/1000 并发 run、queue lag、SSE replay gap。
 
 ## 风险与验收

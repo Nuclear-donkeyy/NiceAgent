@@ -21,6 +21,7 @@ type Config struct {
 	RunQueueStream                   string
 	RunQueueGroup                    string
 	RunQueueConsumer                 string
+	RunQueueMaxLen                   int64
 	AgentRuntimeURL                  string
 	ControlPlanePublicURL            string
 	InternalAPIToken                 string
@@ -52,6 +53,7 @@ func FromEnv() Config {
 		RunQueueStream:                   env("RUN_QUEUE_STREAM", "niceagent:runs"),
 		RunQueueGroup:                    env("RUN_QUEUE_GROUP", "agent-runtimes"),
 		RunQueueConsumer:                 env("RUN_QUEUE_CONSUMER", "control-plane"),
+		RunQueueMaxLen:                   int64Env("RUN_QUEUE_MAX_LEN", 0),
 		AgentRuntimeURL:                  os.Getenv("AGENT_RUNTIME_URL"),
 		ControlPlanePublicURL:            env("CONTROL_PLANE_PUBLIC_URL", "http://127.0.0.1:8080"),
 		InternalAPIToken:                 strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN")),
@@ -89,6 +91,18 @@ func intEnv(key string, fallback int) int {
 		return fallback
 	}
 	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		log.Fatalf("%s must be a non-negative integer, got %q", key, raw)
+	}
+	return value
+}
+
+func int64Env(key string, fallback int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value < 0 {
 		log.Fatalf("%s must be a non-negative integer, got %q", key, raw)
 	}

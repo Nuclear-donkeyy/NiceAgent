@@ -143,8 +143,10 @@ func newDispatcher(cfg config.Config, store app.Repository, logger *slog.Logger)
 			"stream", cfg.RunQueueStream,
 			"group", cfg.RunQueueGroup,
 			"consumer", cfg.RunQueueConsumer,
+			"max_len", cfg.RunQueueMaxLen,
 		)
 		queue := dispatch.NewRedisStreamsRunQueue(cfg.RedisAddr, cfg.RunQueueStream, cfg.RunQueueGroup, cfg.RunQueueConsumer)
+		queue.MaxLen = cfg.RunQueueMaxLen
 		return dispatch.NewQueueDispatcher(store, queue)
 	}
 	if cfg.AgentRuntimeURL == "" {

@@ -74,6 +74,11 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: RUN_QUEUE_GROUP
+            - name: RUN_QUEUE_MAX_LEN
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_MAX_LEN
             - name: QUOTA_MAX_CONCURRENT_RUNS
               valueFrom:
                 configMapKeyRef:
