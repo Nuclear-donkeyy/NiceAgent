@@ -132,6 +132,16 @@ make run-runtime
 
 本地 API key 只放在未提交的 `.env` 或 shell 环境变量里。错误 key 应返回 `auth_error`，余额不足应返回 `billing_error`，日志和 run error 不应出现 `MODEL_API_KEY` 或 `Authorization` header。
 
+拿到真实 DeepSeek key 后，可以运行可选冒烟脚本验证 Runtime provider/profile/health probe 路径：
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+export DEEPSEEK_MODEL="replace-with-official-deepseek-model"
+make smoke-deepseek-runtime
+```
+
+未设置 key 或模型名时该目标会输出 `SKIP` 并返回成功，不会产生真实模型调用；需要强制要求 key 时运行 `python3 scripts/smoke_deepseek_runtime.py --require-key`。详细记录模板见 `docs/runbooks/deepseek-runtime-smoke.md`。
+
 如需本地验证 fallback，可先让主 provider 指向 fake/failing OpenAI-compatible 服务，再配置：
 
 ```bash

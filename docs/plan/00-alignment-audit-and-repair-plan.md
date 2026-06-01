@@ -181,21 +181,22 @@ artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也
 目标：
 
 - DeepSeek 接入文档只保留稳定配置原则，不硬编码易过期模型名。
-- `MODEL_PROVIDER_PROFILE=deepseek` 的配置模板和 smoke checklist 已补齐，真实 API key 冒烟仍待执行。
+- `MODEL_PROVIDER_PROFILE=deepseek` 的配置模板、可选 smoke 脚本和 runbook 已补齐，真实 API key 冒烟仍待执行。
 - model pricing 已有环境变量配置，下一步可以按 provider/model/version 持久化为配置表。
 - 增加 fallback config 已完成单一后备 provider 版本，默认关闭；provider health 快照、基础 metrics 和可选主动探针已完成，后续再做复杂路由、真实 DeepSeek 冒烟和外部告警系统接入。
 
 验收：
 
 - fake DeepSeek/OpenAI-compatible server 已覆盖普通回复、tool calling、401、402、429、503。
-- 真实 API key 冒烟结果记录在本地文档模板或运维 checklist，不提交 key。
+- `make smoke-deepseek-runtime` 未设置 key 时安全 `SKIP`；设置真实 key 后会启动临时 Agent Runtime 主动 probe，并把脱敏结果写入 `.local/deepseek-smoke/` 或指定 report。
+- 真实 API key 冒烟结果记录在本地 `.local/` 或运维 checklist，不提交 key。
 - usage/cost 可按 run 查询，也可按项目窗口聚合；估算值明确标记 `estimated=true` 和 `token_estimator`。
 
 ## 推荐近期行动
 
 PR 1 的文档状态收口后，近期更适合继续推进这些真实生产化缺口：
 
-1. DeepSeek 真实 API key 冒烟和模型运营记录，不提交 key，只沉淀可复现流程与结果。
+1. DeepSeek 真实 API key 冒烟和模型运营记录：可选 smoke 脚本与 runbook 已落地，下一步是在本地或运维环境用真实 key 执行并保留脱敏结果。
 2. NiceAgent 内置 OIDC login/session/refresh token，补齐从 API resource server 到浏览器登录产品链路的缺口。
 3. 邮件投递模板、退信处理和队列化发送，让邀请流程从最小闭环走向可运营。
 4. 真实 tokenizer/按模型动态估算、强一致账单级 quota、外部告警路由和值班系统。

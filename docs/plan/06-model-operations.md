@@ -60,9 +60,11 @@ K8s 部署已经把 `MODEL_API_KEY` 从 `niceagent-model-provider` Secret 注入
 - Runtime 进程内模型请求速率限制和并发保护。
 - `run_usage` 持久化模型 token/cost、估算标记、token estimator、latency 和 tool/sandbox/artifact 聚合用量。
 
+本轮新增了 `scripts/smoke_deepseek_runtime.py` 和 `make smoke-deepseek-runtime`：未设置真实 key 时安全 `SKIP`，设置 `DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL` 后会启动临时 Agent Runtime，使用 `MODEL_PROVIDER_PROFILE=deepseek` 触发一次 `/healthz model_provider` 主动 probe，并把脱敏结果写入 `.local/deepseek-smoke/`。详细流程见 `docs/runbooks/deepseek-runtime-smoke.md`。
+
 仍待落地能力：
 
-- 真实 DeepSeek API key smoke 记录和不泄露密钥的运维验收流程。
+- 使用真实 DeepSeek API key 执行一次 smoke，并把脱敏结果作为发布验收记录保存在本地或运维系统。
 - 真实 tokenizer、跨 Runtime/provider 账号级容量协调、复杂多 provider 路由和外部 SLO 告警系统。
 - 覆盖所有 run event、audit、tool raw output 的集中 redaction 策略开关。
 
@@ -159,7 +161,7 @@ retry/fallback 方案：
 
 ## 分阶段落地
 
-1. DeepSeek 冒烟：fake DeepSeek/OpenAI-compatible server 已覆盖普通回复、tool calling、usage 和典型错误分类；下一步用真实 DeepSeek key 补本地 smoke 记录。
+1. DeepSeek 冒烟：fake DeepSeek/OpenAI-compatible server 已覆盖普通回复、tool calling、usage 和典型错误分类；真实 key smoke 脚本与 runbook 已落地，下一步执行真实 key 并沉淀脱敏记录。
 2. Usage 持久化：从 Eino callback/provider response 收集 token usage，写入 Control Plane。
 3. Retry/rate limit：provider wrapper 已处理 429/5xx/timeout retry，并支持 Runtime 进程内请求限流和并发保护；后续补跨副本容量协调。
 4. Fallback：支持多 provider/model 策略和错误分类。
