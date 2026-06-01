@@ -41,6 +41,7 @@ type Server struct {
 	runQuota                RunQuota
 	quotaLimiter            quotapkg.Limiter
 	tokenReservation        TokenReservationOptions
+	artifactRetention       time.Duration
 }
 
 type ServerOptions struct {
@@ -52,6 +53,7 @@ type ServerOptions struct {
 	RunQuota                RunQuota
 	QuotaLimiter            quotapkg.Limiter
 	TokenReservation        TokenReservationOptions
+	ArtifactRetention       time.Duration
 	OIDC                    OIDCConfig
 }
 
@@ -99,6 +101,7 @@ func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log
 		runQuota:                opts.RunQuota,
 		quotaLimiter:            opts.QuotaLimiter,
 		tokenReservation:        normalizeTokenReservationOptions(opts.TokenReservation),
+		artifactRetention:       opts.ArtifactRetention,
 	}
 }
 
@@ -1346,6 +1349,7 @@ func (s *Server) internalRegisterRunArtifacts(w http.ResponseWriter, r *http.Req
 		platform.WriteJSON(w, http.StatusOK, protocol.ArtifactListResponse{Artifacts: nil})
 		return
 	}
+	input.Artifacts = s.withArtifactExpiration(input.Artifacts)
 	artifacts, err := (app.RepositorySink{Repo: s.repo}).RegisterArtifacts(runID, input.Artifacts...)
 	if err != nil {
 		writeStoreErr(w, err)
@@ -1359,11 +1363,38 @@ func (s *Server) internalArtifactSubroutes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	parts := splitPath(strings.TrimPrefix(r.URL.Path, "/internal/artifacts/"))
+	if len(parts) == 1 && parts[0] == "cleanup-expired" && r.Method == http.MethodPost {
+		s.internalCleanupExpiredArtifacts(w, r)
+		return
+	}
 	if len(parts) != 2 || parts[1] != "content" || r.Method != http.MethodGet {
 		platform.WriteError(w, http.StatusNotFound, "internal artifact route not found")
 		return
 	}
 	s.internalReadArtifactText(w, r, parts[0])
+}
+
+func (s *Server) internalCleanupExpiredArtifacts(w http.ResponseWriter, r *http.Request) {
+	var input protocol.ArtifactCleanupRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+			platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
+	}
+	limit := input.Limit
+	if limit <= 0 {
+		limit = parseIntBounded(r.URL.Query().Get("limit"), 100, 1, 1000)
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	artifacts, err := s.repo.DeleteExpiredArtifacts(time.Now().UTC(), limit)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	platform.WriteJSON(w, http.StatusOK, protocol.ArtifactListResponse{Artifacts: artifacts})
 }
 
 func (s *Server) internalReadArtifactText(w http.ResponseWriter, r *http.Request, artifactID string) {
@@ -1591,6 +1622,7 @@ func (s *Server) internalCompleteRun(w http.ResponseWriter, r *http.Request, run
 			return
 		}
 	}
+	input.Artifacts = s.withArtifactExpiration(input.Artifacts)
 	if err := (app.RepositorySink{Repo: s.repo}).Complete(runID, input.Content, input.Artifacts...); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -1611,6 +1643,22 @@ func usageFromCompleteRequest(input protocol.RunCompleteRequest) protocol.RunUsa
 		usage.Estimated = true
 	}
 	return protocol.NormalizeRunUsage(usage)
+}
+
+func (s *Server) withArtifactExpiration(artifacts []protocol.Artifact) []protocol.Artifact {
+	if s.artifactRetention <= 0 || len(artifacts) == 0 {
+		return artifacts
+	}
+	expiresAt := time.Now().UTC().Add(s.artifactRetention)
+	next := make([]protocol.Artifact, len(artifacts))
+	copy(next, artifacts)
+	for i := range next {
+		if next[i].ExpiresAt == nil {
+			t := expiresAt
+			next[i].ExpiresAt = &t
+		}
+	}
+	return next
 }
 
 func (s *Server) internalFailRun(w http.ResponseWriter, r *http.Request, runID string) {

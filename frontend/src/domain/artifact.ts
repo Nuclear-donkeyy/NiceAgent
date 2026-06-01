@@ -13,6 +13,7 @@ export interface Artifact {
   storage_backend?: string;
   storage_key?: string;
   created_at?: string;
+  expires_at?: string;
   deleted_at?: string;
 }
 

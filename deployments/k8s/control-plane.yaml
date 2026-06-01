@@ -266,6 +266,11 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL
+            - name: ARTIFACT_RETENTION_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: ARTIFACT_RETENTION_DAYS
             - name: INTERNAL_API_TOKEN
               valueFrom:
                 secretKeyRef:

@@ -27,6 +27,7 @@ type Artifact struct {
 	StorageBackend string     `json:"storage_backend,omitempty"`
 	StorageKey     string     `json:"storage_key,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
 }
 
@@ -37,6 +38,10 @@ type ArtifactListResponse struct {
 type ArtifactWriteRequest struct {
 	AttemptID string     `json:"attempt_id,omitempty"`
 	Artifacts []Artifact `json:"artifacts"`
+}
+
+type ArtifactCleanupRequest struct {
+	Limit int `json:"limit,omitempty"`
 }
 
 type ArtifactTextResponse struct {

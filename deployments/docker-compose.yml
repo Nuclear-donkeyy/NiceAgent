@@ -79,6 +79,7 @@ services:
       REDIS_ADDR: redis:6379
       WEB_DIST_DIR: /workspace/frontend/dist
       SANDBOX_WORKSPACE_ROOT: /workspace/workspaces
+      ARTIFACT_RETENTION_DAYS: "0"
     ports:
       - "8080:8080"
     volumes:

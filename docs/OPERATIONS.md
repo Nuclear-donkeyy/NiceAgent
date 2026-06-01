@@ -22,6 +22,23 @@ memory 模式的权威状态在进程内存中，进程重启会丢失数据。P
 
 Redis Streams 已有 run queue 最小闭环：`DISPATCH_MODE=redis` 时 Control Plane 会把 run 写入 `RUN_QUEUE_STREAM`，`RUNTIME_QUEUE_MODE=redis` 时 Agent Runtime 会通过同一个 consumer group 消费 run，并回调 Control Plane 拉取完整 execution context。Runtime 执行前会 claim `attempt_id`，后续 event/complete/fail 都按 active attempt fencing。Runtime worker 也已经支持 idle pending `XAUTOCLAIM`、超最大投递次数写 DLQ、执行期间 heartbeat 续租。Redis 不替代 Postgres 的权威持久化。
 
+Artifact 默认不过期，适合本地开发。需要让新登记的 artifact 自动带上过期时间时，设置：
+
+```bash
+ARTIFACT_RETENTION_DAYS=7
+```
+
+Control Plane 会在 Runtime 通过内部 artifact/complete API 登记产物时，为没有显式 `expires_at` 的 artifact 写入默认过期时间。过期 artifact 会从外部 list/get/download/content API 中隐藏。后台清理可以调用：
+
+```bash
+curl -X POST http://control-plane:8080/internal/artifacts/cleanup-expired \
+  -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"limit":100}'
+```
+
+当前清理只把 metadata 标记为 `deleted_at`，不会删除本地 workspace 文件或对象存储对象；真实文件回收、对象存储生命周期和归档策略仍是后续工作。
+
 ## 认证与配额
 
 外部 API 支持三种模式：

@@ -102,6 +102,7 @@ type Repository interface {
 	AddArtifact(artifact protocol.Artifact) (protocol.Artifact, error)
 	ListArtifacts(runID string) []protocol.Artifact
 	GetArtifact(artifactID string) (protocol.Artifact, error)
+	DeleteExpiredArtifacts(now time.Time, limit int) ([]protocol.Artifact, error)
 	ListSkillsForUser(userID, projectID string) []protocol.Skill
 	ListRuntimeSkillsForUser(userID, projectID string) []protocol.RuntimeSkill
 	CreateHTTPSkill(userID, projectID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
