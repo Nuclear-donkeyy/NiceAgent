@@ -11,6 +11,7 @@ func TestFromEnvReadsExecutorModeAndContainerConfig(t *testing.T) {
 	t.Setenv("SANDBOX_CONTAINER_PIDS_LIMIT", "64")
 	t.Setenv("SANDBOX_CONTAINER_READ_ONLY_ROOTFS", "false")
 	t.Setenv("SANDBOX_CONTAINER_LOCAL_FALLBACK", "false")
+	t.Setenv("SANDBOX_CONTAINER_ALLOWED_IMAGES", "alpine:3.20, busybox:1.36")
 
 	cfg := FromEnv()
 
@@ -25,6 +26,34 @@ func TestFromEnvReadsExecutorModeAndContainerConfig(t *testing.T) {
 	}
 	if cfg.ContainerPidsLimit != 64 || cfg.ContainerReadOnlyRoot || cfg.ContainerLocalFallback {
 		t.Fatalf("container booleans/limits = %#v", cfg)
+	}
+	if len(cfg.ContainerAllowedImages) != 2 || cfg.ContainerAllowedImages[1] != "busybox:1.36" {
+		t.Fatalf("allowed images = %#v", cfg.ContainerAllowedImages)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected allowed container image to validate: %v", err)
+	}
+}
+
+func TestValidateRejectsUnsupportedExecutorMode(t *testing.T) {
+	t.Setenv("EXECUTOR_MODE", "k8s")
+
+	cfg := FromEnv()
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected unsupported executor mode to fail validation")
+	}
+}
+
+func TestValidateRejectsContainerImageOutsideAllowlist(t *testing.T) {
+	t.Setenv("EXECUTOR_MODE", "container")
+	t.Setenv("SANDBOX_CONTAINER_IMAGE", "ubuntu:latest")
+	t.Setenv("SANDBOX_CONTAINER_ALLOWED_IMAGES", "alpine:3.20,busybox:1.36")
+
+	cfg := FromEnv()
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected disallowed container image to fail validation")
 	}
 }
 

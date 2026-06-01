@@ -38,6 +38,18 @@ make run-control
 
 如果没有配置 `AGENT_RUNTIME_URL`，Control Plane 会回退到本地 demo dispatcher。如果没有配置 `SANDBOX_EXECUTOR_URL`，Agent Runtime 会回退到 local sandbox executor。
 
+Sandbox Executor 默认使用 `EXECUTOR_MODE=local`。如需验证 Docker 容器执行路径，可在确认本机 Docker CLI 和 daemon 可用后运行：
+
+```bash
+EXECUTOR_MODE=container \
+SANDBOX_CONTAINER_IMAGE=alpine:3.20 \
+SANDBOX_CONTAINER_ALLOWED_IMAGES=alpine:3.20 \
+SANDBOX_CONTAINER_LOCAL_FALLBACK=false \
+make run-sandbox
+```
+
+`SANDBOX_CONTAINER_ALLOWED_IMAGES` 是逗号分隔镜像白名单；设置后，`EXECUTOR_MODE=container` 只允许使用白名单中的 `SANDBOX_CONTAINER_IMAGE`。`GET /healthz` 会显示当前 `executor_mode`、`container_image` 和白名单，方便确认是否真的跑在 container profile。
+
 多 Control Plane 副本需要实时唤醒 SSE 时，可以使用 Redis nudge fanout：
 
 ```bash

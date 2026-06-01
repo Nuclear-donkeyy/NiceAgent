@@ -151,6 +151,9 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ""
       EXECUTOR_MODE: local
       SANDBOX_WORKSPACE_ROOT: /workspace/workspaces
+      SANDBOX_CONTAINER_IMAGE: alpine:3.20
+      SANDBOX_CONTAINER_ALLOWED_IMAGES: alpine:3.20
+      SANDBOX_CONTAINER_LOCAL_FALLBACK: "true"
     ports:
       - "8082:8082"
     volumes:

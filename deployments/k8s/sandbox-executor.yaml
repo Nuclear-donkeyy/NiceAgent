@@ -77,6 +77,31 @@ spec:
                   name: niceagent-otel
                   key: headers
                   optional: true
+            - name: EXECUTOR_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: EXECUTOR_MODE
+            - name: SANDBOX_WORKSPACE_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SANDBOX_WORKSPACE_ROOT
+            - name: SANDBOX_CONTAINER_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SANDBOX_CONTAINER_IMAGE
+            - name: SANDBOX_CONTAINER_ALLOWED_IMAGES
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SANDBOX_CONTAINER_ALLOWED_IMAGES
+            - name: SANDBOX_CONTAINER_LOCAL_FALLBACK
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SANDBOX_CONTAINER_LOCAL_FALLBACK
           volumeMounts:
             - name: workspaces
               mountPath: /app/workspaces
