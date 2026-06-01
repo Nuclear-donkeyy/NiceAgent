@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 	"niceagent/control-plane/internal/app"
 
@@ -92,15 +93,21 @@ func (b *RedisNudgeBus) Publish(ctx context.Context, event protocol.RunEvent) er
 	if err != nil {
 		return err
 	}
-	return b.client.Publish(ctx, b.channel(event.RunID), payload).Err()
+	ctx, endSpan := startRedisPubSubSpan(ctx, "PUBLISH")
+	err = b.client.Publish(ctx, b.channel(event.RunID), payload).Err()
+	endSpan(err, nil)
+	return err
 }
 
 func (b *RedisNudgeBus) Subscribe(ctx context.Context, runID string) (<-chan EventNudge, func(), error) {
+	ctx, endSpan := startRedisPubSubSpan(ctx, "SUBSCRIBE")
 	pubsub := b.client.Subscribe(ctx, b.channel(runID))
 	if _, err := pubsub.Receive(ctx); err != nil {
+		endSpan(err, nil)
 		_ = pubsub.Close()
 		return nil, nil, err
 	}
+	endSpan(nil, nil)
 	out := make(chan EventNudge, 16)
 	done := make(chan struct{})
 	go func() {
@@ -143,6 +150,13 @@ func (b *RedisNudgeBus) Subscribe(ctx context.Context, runID string) (<-chan Eve
 
 func (b *RedisNudgeBus) channel(runID string) string {
 	return b.prefix + ":" + runID
+}
+
+func startRedisPubSubSpan(ctx context.Context, command string) (context.Context, platform.EndSpanFunc) {
+	return platform.StartSpan(ctx, "niceagent/control_plane", "redis.command", platform.Labels{
+		"redis_command": command,
+		"component":     "event_fanout",
+	})
 }
 
 type FanoutRepository struct {

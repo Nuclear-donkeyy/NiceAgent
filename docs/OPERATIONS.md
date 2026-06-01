@@ -250,7 +250,7 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 # OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>,x-tenant=niceagent"
 ```
 
-服务启动后会以 `control_plane`、`agent_runtime`、`sandbox_executor` 作为默认 service name，也可以用 `OTEL_SERVICE_NAME` 覆盖。当前 OpenTelemetry 会为每个入站 HTTP 请求创建 server span，并通过 `traceparent` 在 Control Plane、Agent Runtime 和 Sandbox Executor 之间传播；`X-Trace-ID` 继续保留，便于日志、audit event 和非 OTel 工具串联。内部 span 已覆盖 Control Plane HTTP dispatcher、Redis run queue enqueue/process/fetch execution context、Runtime run execute、模型调用、tool invoke、HTTP Skill 请求、Runtime 调 Sandbox Executor、Sandbox Executor 命令执行和 Runtime 回写 Control Plane。DB repository 和 Redis 低层命令级 span 仍是后续工作。
+服务启动后会以 `control_plane`、`agent_runtime`、`sandbox_executor` 作为默认 service name，也可以用 `OTEL_SERVICE_NAME` 覆盖。当前 OpenTelemetry 会为每个入站 HTTP 请求创建 server span，并通过 `traceparent` 在 Control Plane、Agent Runtime 和 Sandbox Executor 之间传播；`X-Trace-ID` 继续保留，便于日志、audit event 和非 OTel 工具串联。内部 span 已覆盖 Control Plane HTTP dispatcher、Redis run queue enqueue/process/fetch execution context、Runtime run execute、模型调用、tool invoke、HTTP Skill 请求、Runtime 调 Sandbox Executor、Sandbox Executor 命令执行和 Runtime 回写 Control Plane。Redis Streams、Redis PubSub event fanout 和 Redis quota counter 的底层命令会统一输出 `redis.command` span，并带上 `redis_command`、`stream`、`group` 或 `component` 等低基数字段。DB repository 低层命令级 span 仍是后续工作。
 
 三服务都提供 `GET /metrics`，输出 Prometheus text exposition 风格指标。当前内置指标覆盖：
 
@@ -272,7 +272,7 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 - `niceagent_redis_queue_dlq_length`：Agent Runtime 采样到的 DLQ stream 长度。
 - `niceagent_sandbox_exec_total`：Sandbox Executor 命令执行结果次数。
 
-这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。Redis queue 告警可以先从 DLQ 写入速率、reclaimed 速率、worker errors 速率、ack/message 比例、pending entries 总量和 DLQ 长度开始。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span 和主要 agent 执行内部 span；后续还需要继续补 DB repository、Redis 低层命令 span，以及外部告警系统接入。
+这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。Redis queue 告警可以先从 DLQ 写入速率、reclaimed 速率、worker errors 速率、ack/message 比例、pending entries 总量和 DLQ 长度开始。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span、主要 agent 执行内部 span 和 Redis 低层命令 span；后续还需要继续补 DB repository 低层命令 span，以及外部告警系统接入。
 
 ## Sandbox 安全边界
 

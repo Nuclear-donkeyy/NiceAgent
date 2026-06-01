@@ -294,19 +294,30 @@ func newGoRedisRunQueueClient(addr string) *goRedisRunQueueClient {
 }
 
 func (c *goRedisRunQueueClient) XAdd(ctx context.Context, stream string, values map[string]any, maxLen int64) (string, error) {
+	ctx, endSpan := startRedisCommandSpan(ctx, "XADD", stream, "")
+	var err error
+	defer func() { endSpan(err, nil) }()
 	args := &redis.XAddArgs{Stream: stream, Values: values}
 	if maxLen > 0 {
 		args.MaxLen = maxLen
 		args.Approx = true
 	}
-	return c.client.XAdd(ctx, args).Result()
+	var id string
+	id, err = c.client.XAdd(ctx, args).Result()
+	return id, err
 }
 
 func (c *goRedisRunQueueClient) XGroupCreateMkStream(ctx context.Context, stream, group, start string) error {
-	return c.client.XGroupCreateMkStream(ctx, stream, group, start).Err()
+	ctx, endSpan := startRedisCommandSpan(ctx, "XGROUP CREATE", stream, group)
+	err := c.client.XGroupCreateMkStream(ctx, stream, group, start).Err()
+	endSpan(err, nil)
+	return err
 }
 
 func (c *goRedisRunQueueClient) XReadGroup(ctx context.Context, stream, group, consumer string, count int64, block time.Duration) (redisStreamMessage, error) {
+	ctx, endSpan := startRedisCommandSpan(ctx, "XREADGROUP", stream, group)
+	var err error
+	defer func() { endSpan(err, nil) }()
 	streams, err := c.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    group,
 		Consumer: consumer,
@@ -329,9 +340,25 @@ func (c *goRedisRunQueueClient) XReadGroup(ctx context.Context, stream, group, c
 }
 
 func (c *goRedisRunQueueClient) XAck(ctx context.Context, stream, group string, ids ...string) (int64, error) {
-	return c.client.XAck(ctx, stream, group, ids...).Result()
+	ctx, endSpan := startRedisCommandSpan(ctx, "XACK", stream, group)
+	var err error
+	defer func() { endSpan(err, nil) }()
+	var acked int64
+	acked, err = c.client.XAck(ctx, stream, group, ids...).Result()
+	return acked, err
 }
 
 func (c *goRedisRunQueueClient) Close() error {
 	return c.client.Close()
+}
+
+func startRedisCommandSpan(ctx context.Context, command, stream, group string) (context.Context, platform.EndSpanFunc) {
+	labels := platform.Labels{"redis_command": command}
+	if stream != "" {
+		labels["stream"] = stream
+	}
+	if group != "" {
+		labels["group"] = group
+	}
+	return platform.StartSpan(ctx, "niceagent/control_plane", "redis.command", labels)
 }
