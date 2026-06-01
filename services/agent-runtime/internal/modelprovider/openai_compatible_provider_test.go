@@ -2,6 +2,7 @@ package modelprovider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -99,6 +100,97 @@ func TestOpenAICompatibleProviderClassifiesDeepSeekErrorsAndRedactsAPIKey(t *tes
 				t.Fatalf("attempts = %d, want 1", attempts)
 			}
 		})
+	}
+}
+
+func TestOpenAICompatibleProviderParsesToolCallsFromFakeDeepSeekServer(t *testing.T) {
+	var requestBody struct {
+		Model string `json:"model"`
+		Tools []struct {
+			Type     string `json:"type"`
+			Function struct {
+				Name string `json:"name"`
+			} `json:"function"`
+		} `json:"tools"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"chatcmpl-tool-call",
+			"object":"chat.completion",
+			"created":1710000000,
+			"model":"deepseek-fake-tool",
+			"choices":[{
+				"index":0,
+				"message":{
+					"role":"assistant",
+					"content":"",
+					"tool_calls":[{
+						"id":"call_cli_exec",
+						"type":"function",
+						"function":{
+							"name":"cli_exec",
+							"arguments":"{\"command\":[\"echo\",\"hello\"]}"
+						}
+					}]
+				},
+				"finish_reason":"tool_calls"
+			}],
+			"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}
+		}`))
+	}))
+	defer server.Close()
+
+	chatModel, err := NewOpenAICompatibleChatModel(context.Background(), OpenAICompatibleProviderConfig{
+		ID:      "deepseek",
+		BaseURL: server.URL,
+		APIKey:  "sk-test-secret",
+		Model:   "deepseek-fake-tool",
+		RetryPolicy: RetryPolicy{
+			MaxAttempts: 1,
+			BaseDelay:   time.Nanosecond,
+			MaxDelay:    time.Nanosecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("new chat model: %v", err)
+	}
+	toolModel, err := chatModel.WithTools([]*schema.ToolInfo{{
+		Name: "cli_exec",
+		Desc: "Execute a read-only CLI command.",
+	}})
+	if err != nil {
+		t.Fatalf("with tools: %v", err)
+	}
+	msg, err := toolModel.Generate(context.Background(), []*schema.Message{schema.UserMessage("please inspect")})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if requestBody.Model != "deepseek-fake-tool" {
+		t.Fatalf("request model = %q, want deepseek-fake-tool", requestBody.Model)
+	}
+	if len(requestBody.Tools) != 1 || requestBody.Tools[0].Function.Name != "cli_exec" {
+		t.Fatalf("request tools = %#v, want cli_exec tool", requestBody.Tools)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("tool calls len = %d, want 1; message = %#v", len(msg.ToolCalls), msg)
+	}
+	call := msg.ToolCalls[0]
+	if call.ID != "call_cli_exec" || call.Function.Name != "cli_exec" || !strings.Contains(call.Function.Arguments, `"echo"`) {
+		t.Fatalf("tool call = %#v, want cli_exec echo call", call)
+	}
+	reporter, ok := chatModel.(UsageReporter)
+	if !ok {
+		t.Fatalf("chat model %T does not report usage", chatModel)
+	}
+	if usage := reporter.UsageSnapshot(); usage.Provider != "deepseek" || usage.InputTokens != 7 || usage.TotalTokens != 10 {
+		t.Fatalf("usage = %#v, want deepseek usage from fake tool-call response", usage)
 	}
 }
 
