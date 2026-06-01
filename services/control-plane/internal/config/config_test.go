@@ -56,3 +56,38 @@ func TestFromEnvReadsQuotaCounterConfig(t *testing.T) {
 		t.Fatalf("usage quota config = tool:%d sandbox:%d", cfg.MaxToolCallsPerDay, cfg.MaxSandboxSecondsPerDay)
 	}
 }
+
+func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
+	t.Setenv("CONTROL_PLANE_PUBLIC_URL", "https://control.example.test")
+	t.Setenv("INVITATION_EMAIL_MODE", "smtp")
+	t.Setenv("INVITATION_PUBLIC_BASE_URL", "https://app.example.test")
+	t.Setenv("SMTP_HOST", "smtp.example.test")
+	t.Setenv("SMTP_PORT", "2525")
+	t.Setenv("SMTP_USERNAME", "mailer")
+	t.Setenv("SMTP_PASSWORD", "secret")
+	t.Setenv("SMTP_FROM", "NiceAgent <noreply@example.test>")
+
+	cfg := FromEnv()
+
+	if cfg.InvitationEmailMode != "smtp" || cfg.InvitationPublicBaseURL != "https://app.example.test" {
+		t.Fatalf("invitation email config = mode:%q base:%q", cfg.InvitationEmailMode, cfg.InvitationPublicBaseURL)
+	}
+	if cfg.SMTPHost != "smtp.example.test" || cfg.SMTPPort != 2525 || cfg.SMTPUsername != "mailer" || cfg.SMTPPassword != "secret" || cfg.SMTPFrom != "NiceAgent <noreply@example.test>" {
+		t.Fatalf("smtp config = %#v", cfg)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected smtp config to validate: %v", err)
+	}
+}
+
+func TestValidateRequiresSMTPFieldsWhenInvitationEmailEnabled(t *testing.T) {
+	t.Setenv("INVITATION_EMAIL_MODE", "smtp")
+	t.Setenv("SMTP_HOST", "")
+	t.Setenv("SMTP_FROM", "")
+
+	cfg := FromEnv()
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected missing smtp fields to fail validation")
+	}
+}

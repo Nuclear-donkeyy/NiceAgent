@@ -102,3 +102,7 @@ type Repository interface {
 type RunDispatcher interface {
 	Dispatch(ctx context.Context, run protocol.Run, userMessage string) error
 }
+
+type InvitationMailer interface {
+	SendInvitation(ctx context.Context, invitation protocol.Invitation) error
+}

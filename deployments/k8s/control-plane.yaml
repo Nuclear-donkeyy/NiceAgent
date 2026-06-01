@@ -59,6 +59,42 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: CONTROL_PLANE_PUBLIC_URL
+            - name: INVITATION_EMAIL_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INVITATION_EMAIL_MODE
+            - name: INVITATION_PUBLIC_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INVITATION_PUBLIC_BASE_URL
+            - name: SMTP_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SMTP_HOST
+            - name: SMTP_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SMTP_PORT
+            - name: SMTP_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SMTP_USERNAME
+            - name: SMTP_FROM
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SMTP_FROM
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-smtp
+                  key: password
+                  optional: true
             - name: REDIS_ADDR
               valueFrom:
                 configMapKeyRef:

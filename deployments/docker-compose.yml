@@ -31,6 +31,13 @@ services:
       STORE_DRIVER: postgres
       AGENT_RUNTIME_URL: http://agent-runtime:8081
       CONTROL_PLANE_PUBLIC_URL: http://control-plane:8080
+      INVITATION_EMAIL_MODE: disabled
+      INVITATION_PUBLIC_BASE_URL: http://localhost:3000
+      SMTP_HOST: ""
+      SMTP_PORT: "587"
+      SMTP_USERNAME: ""
+      SMTP_PASSWORD: ""
+      SMTP_FROM: ""
       INTERNAL_API_TOKEN: niceagent-local-internal-token
       INTERNAL_API_TOKEN_REQUIRED: "false"
       OTEL_TRACES_EXPORTER: none

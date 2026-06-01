@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,13 @@ type Config struct {
 	RunQueueMaxLen                   int64
 	AgentRuntimeURL                  string
 	ControlPlanePublicURL            string
+	InvitationEmailMode              string
+	InvitationPublicBaseURL          string
+	SMTPHost                         string
+	SMTPPort                         int
+	SMTPUsername                     string
+	SMTPPassword                     string
+	SMTPFrom                         string
 	InternalAPIToken                 string
 	InternalTokenRequired            bool
 	MaxConcurrentRuns                int
@@ -40,6 +48,7 @@ type Config struct {
 
 func FromEnv() Config {
 	environment := strings.TrimSpace(env("NICEAGENT_ENV", "local"))
+	controlPlanePublicURL := env("CONTROL_PLANE_PUBLIC_URL", "http://127.0.0.1:8080")
 	return Config{
 		Addr:                             env("CONTROL_PLANE_ADDR", ":8080"),
 		Environment:                      environment,
@@ -55,7 +64,14 @@ func FromEnv() Config {
 		RunQueueConsumer:                 env("RUN_QUEUE_CONSUMER", "control-plane"),
 		RunQueueMaxLen:                   int64Env("RUN_QUEUE_MAX_LEN", 0),
 		AgentRuntimeURL:                  os.Getenv("AGENT_RUNTIME_URL"),
-		ControlPlanePublicURL:            env("CONTROL_PLANE_PUBLIC_URL", "http://127.0.0.1:8080"),
+		ControlPlanePublicURL:            controlPlanePublicURL,
+		InvitationEmailMode:              env("INVITATION_EMAIL_MODE", "disabled"),
+		InvitationPublicBaseURL:          env("INVITATION_PUBLIC_BASE_URL", controlPlanePublicURL),
+		SMTPHost:                         strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPPort:                         intEnv("SMTP_PORT", 587),
+		SMTPUsername:                     strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		SMTPPassword:                     os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:                         strings.TrimSpace(os.Getenv("SMTP_FROM")),
 		InternalAPIToken:                 strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN")),
 		InternalTokenRequired:            boolEnv("INTERNAL_API_TOKEN_REQUIRED", isNonLocalEnvironment(environment)),
 		MaxConcurrentRuns:                intEnv("QUOTA_MAX_CONCURRENT_RUNS", 0),
@@ -74,6 +90,25 @@ func FromEnv() Config {
 func (c Config) Validate() error {
 	if c.InternalTokenRequired && strings.TrimSpace(c.InternalAPIToken) == "" {
 		return fmt.Errorf("INTERNAL_API_TOKEN is required when INTERNAL_API_TOKEN_REQUIRED=true or NICEAGENT_ENV is non-local")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.InvitationEmailMode)) {
+	case "", "disabled", "smtp":
+	default:
+		return fmt.Errorf("INVITATION_EMAIL_MODE must be disabled or smtp")
+	}
+	if strings.EqualFold(strings.TrimSpace(c.InvitationEmailMode), "smtp") {
+		if strings.TrimSpace(c.SMTPHost) == "" {
+			return fmt.Errorf("SMTP_HOST is required when INVITATION_EMAIL_MODE=smtp")
+		}
+		if strings.TrimSpace(c.SMTPFrom) == "" {
+			return fmt.Errorf("SMTP_FROM is required when INVITATION_EMAIL_MODE=smtp")
+		}
+		if _, err := mail.ParseAddress(c.SMTPFrom); err != nil {
+			return fmt.Errorf("SMTP_FROM must be a valid email address")
+		}
+		if c.SMTPPort <= 0 || c.SMTPPort > 65535 {
+			return fmt.Errorf("SMTP_PORT must be between 1 and 65535")
+		}
 	}
 	return nil
 }

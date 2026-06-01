@@ -715,6 +715,40 @@ func TestServerManagesInvitations(t *testing.T) {
 	}
 }
 
+func TestServerSendsInvitationEmailWhenMailerConfigured(t *testing.T) {
+	fakeMailer := &recordingInvitationMailer{}
+	store, handler := newTestHandlerWithOptions(ServerOptions{
+		AuthMode:         "trusted-header",
+		InvitationMailer: fakeMailer,
+	})
+	store.SetProjectOrganization("project-a", "org-project-a")
+	store.SetOrganizationRole("org-owner", "org-project-a", "owner")
+
+	request := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/invitations", jsonBody(t, protocol.InvitationInput{
+		Email:     "project-invited@example.test",
+		Role:      "viewer",
+		ProjectID: "project-a",
+	}))
+	setTrustedActorWithoutRoles(request, "org-owner", "project-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create invitation status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if len(fakeMailer.sent) != 1 {
+		t.Fatalf("sent invitations = %d, want 1", len(fakeMailer.sent))
+	}
+	sent := fakeMailer.sent[0]
+	if sent.Email != "project-invited@example.test" || sent.Token == "" || sent.ProjectID != "project-a" {
+		t.Fatalf("sent invitation = %#v", sent)
+	}
+	events := store.ListAuditEvents(app.ActorContext{UserID: "org-owner", ProjectID: "project-a", OrgID: "org-project-a", Roles: []string{"owner"}}, app.AuditEventListOptions{Action: "invitation.email.send"})
+	if len(events) != 1 || events[0].Decision != protocol.AuditDecisionAllow {
+		t.Fatalf("email audit events = %#v", events)
+	}
+}
+
 func TestServerProjectMemberManagementRequiresAdminRole(t *testing.T) {
 	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
 	store.SetProjectRole("viewer-user", "project-a", "viewer")
@@ -1689,6 +1723,15 @@ type fakeQuotaReservation struct{}
 
 func (fakeQuotaReservation) Commit(context.Context, string) error { return nil }
 func (fakeQuotaReservation) Rollback(context.Context) error       { return nil }
+
+type recordingInvitationMailer struct {
+	sent []protocol.Invitation
+}
+
+func (m *recordingInvitationMailer) SendInvitation(_ context.Context, invitation protocol.Invitation) error {
+	m.sent = append(m.sent, invitation)
+	return nil
+}
 
 func newTestHandler() (*repository.Store, http.Handler) {
 	return newTestHandlerWithOptions(ServerOptions{})
