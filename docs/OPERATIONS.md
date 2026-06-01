@@ -62,7 +62,7 @@ QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER=0
 
 `QUOTA_COUNTER_MODE=repository` 是默认模式，直接从 Postgres/memory 统计 run 状态。`QUOTA_COUNTER_MODE=redis` 会在创建 run 前用 Redis 对 `max_concurrent_runs` 和 `max_runs_per_hour` 做预占：并发计数在 run 进入 `succeeded/failed/canceled` 后释放，小时窗口计数保留到窗口 TTL。Redis quota 只作为高频计数和预占层，项目 policy 和最终 run 状态仍以 Control Plane repository 为权威。
 
-Redis quota 支持两种模型 token 预占模式。`QUOTA_MODEL_TOKEN_RESERVATION_MODE=fixed` 时，如果 `QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN>0`，每个 run 创建前会按固定值预占每日 token；`dynamic` 时，Control Plane 会按当前用户消息长度估算 input tokens，并叠加 `QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER` 作为输出缓冲。run 成功时按真实 `RunUsage.total_tokens` 结算差额；失败或取消时按 0 用量释放预占。动态模式比固定值更贴近请求大小，但仍不是精确 tokenizer，也无法预知模型真实输出。更精细的按模型/租户/账单维度 token bucket 仍属于后续工作。
+Redis quota 支持两种模型 token 预占模式。`QUOTA_MODEL_TOKEN_RESERVATION_MODE=fixed` 时，如果 `QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN>0`，每个 run 创建前会按固定值预占每日 token；`dynamic` 时，Control Plane 会按当前用户消息长度估算 input tokens，并叠加 `QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER` 作为输出缓冲。run 成功时按真实 `RunUsage.total_tokens` 结算差额；失败或取消时按 0 用量释放预占。动态模式比固定值更贴近请求大小，但仍不是精确 tokenizer，也无法预知模型真实输出。估算路径会在 `RunUsage.token_estimator` 中标记当前估算器，现阶段为 `heuristic_rune_div4`。更精细的按模型/租户/账单维度 token bucket 仍属于后续工作。
 
 项目级持久 quota policy 已有最小版本：
 
@@ -110,7 +110,7 @@ MODEL_API_KEY=sk-...
 MODEL_NAME=deepseek-v4-flash
 ```
 
-Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，优先采集 provider response 中的真实 token usage；缺失 usage 时按 run 的输入/输出文本做估算并标记 `estimated=true`。如果配置了价格，Runtime 会在 `RunUsage.cost` 和 `RunUsage.currency` 中回写本次 run 的估算费用；模型价格仍以服务商官方控制台/文档为准，不在仓库中硬编码。
+Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，优先采集 provider response 中的真实 token usage；缺失 usage 时按 run 的输入/输出文本做估算并标记 `estimated=true`、`token_estimator=heuristic_rune_div4`。如果配置了价格，Runtime 会在 `RunUsage.cost` 和 `RunUsage.currency` 中回写本次 run 的估算费用；模型价格仍以服务商官方控制台/文档为准，不在仓库中硬编码。
 
 `RunUsage` 也会记录 run 级工具/sandbox 聚合：tool 调用数、tool 错误数、sandbox 命令数、sandbox 执行耗时、stdout/stderr 输出字节数、sandbox CPU/内存使用摘要以及 artifact 数量/大小。它们来自 Eino tool observation 和 `SandboxResult`，用于排障、审计和配额/账单聚合。Runtime 执行 tool 前会先向 Control Plane 预占一次 `tool_calls`；`cli.exec` 还会按 timeout 预占 `sandbox_seconds`。如果预占被拒绝，Runtime 不会执行真实 tool，而是把中文 quota deny 作为 tool observation 交给模型。run 完成时会用实际 `RunUsage` 覆盖预占快照。当前还没有更细的按 skill/provider 计费和分布式强一致 token bucket。
 

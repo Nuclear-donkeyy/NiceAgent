@@ -99,6 +99,7 @@ type RunUsage struct {
 	CachedTokens          int     `json:"cached_tokens,omitempty"`
 	TotalTokens           int     `json:"total_tokens,omitempty"`
 	Estimated             bool    `json:"estimated,omitempty"`
+	TokenEstimator        string  `json:"token_estimator,omitempty"`
 	Cost                  float64 `json:"cost,omitempty"`
 	Currency              string  `json:"currency,omitempty"`
 	LatencyMillis         int64   `json:"latency_millis,omitempty"`
@@ -140,6 +141,7 @@ func IsZeroRunUsage(usage RunUsage) bool {
 		usage.CachedTokens == 0 &&
 		usage.TotalTokens == 0 &&
 		!usage.Estimated &&
+		usage.TokenEstimator == "" &&
 		usage.Cost == 0 &&
 		usage.Currency == "" &&
 		usage.LatencyMillis == 0 &&

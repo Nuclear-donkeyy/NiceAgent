@@ -1487,7 +1487,7 @@ func (s *Server) estimateModelTokenReservation(userMessage string) int {
 	if s.tokenReservation.Mode != "dynamic" {
 		return 0
 	}
-	estimate := estimateTextTokens(userMessage) + s.tokenReservation.OutputBuffer
+	estimate := platform.EstimateTextTokens(strings.TrimSpace(userMessage)).Tokens + s.tokenReservation.OutputBuffer
 	if estimate < 1 {
 		return 1
 	}
@@ -1590,14 +1590,6 @@ func normalizeTokenReservationOptions(opts TokenReservationOptions) TokenReserva
 		opts.OutputBuffer = 0
 	}
 	return opts
-}
-
-func estimateTextTokens(value string) int {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0
-	}
-	return len([]rune(value))/4 + 1
 }
 
 func withRequestID(next http.Handler) http.Handler {

@@ -10,6 +10,7 @@ import (
 
 	"niceagent/agent-runtime/internal/modelprovider"
 	"niceagent/agent-runtime/internal/tools"
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 )
 
@@ -60,10 +61,7 @@ func parseCLICommand(content string) ([]string, bool) {
 }
 
 func estimateTokens(s string) int {
-	if s == "" {
-		return 0
-	}
-	return len([]rune(s))/4 + 1
+	return platform.EstimateTextTokens(s).Tokens
 }
 
 func failed(runID string, err error) protocol.RunResult {

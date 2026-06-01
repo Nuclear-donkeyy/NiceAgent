@@ -8,6 +8,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"niceagent/agent-runtime/internal/modelprovider"
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 	"niceagent/common/sandbox"
 )
@@ -271,6 +272,9 @@ func TestEnginePrefersRealModelUsageAndFallsBackToEstimate(t *testing.T) {
 	if result.Usage.Estimated || result.Usage.InputTokens != 11 || result.Usage.OutputTokens != 13 {
 		t.Fatalf("usage = %#v, want real provider usage", result.Usage)
 	}
+	if result.Usage.TokenEstimator != "" {
+		t.Fatalf("usage token estimator = %q, want empty for real provider usage", result.Usage.TokenEstimator)
+	}
 	if realUsageSink.usage.InputTokens != 11 || realUsageSink.usage.OutputTokens != 13 {
 		t.Fatalf("sink usage = %#v, want real usage", realUsageSink.usage)
 	}
@@ -289,6 +293,9 @@ func TestEnginePrefersRealModelUsageAndFallsBackToEstimate(t *testing.T) {
 	}
 	if !result.Usage.Estimated || result.Usage.InputTokens == 0 || result.Usage.OutputTokens == 0 {
 		t.Fatalf("usage = %#v, want estimated token fallback", result.Usage)
+	}
+	if result.Usage.TokenEstimator != platform.HeuristicRuneDiv4TokenEstimator {
+		t.Fatalf("token estimator = %q, want %q", result.Usage.TokenEstimator, platform.HeuristicRuneDiv4TokenEstimator)
 	}
 }
 

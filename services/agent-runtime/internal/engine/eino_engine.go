@@ -197,9 +197,12 @@ func buildRunUsage(req protocol.RunRequest, reporter modelprovider.UsageReporter
 		}
 	}
 	if !hasUsageTokens(usage) {
-		usage.InputTokens = estimateTokens(userMessage)
-		usage.OutputTokens = estimateTokens(content)
+		inputEstimate := platform.EstimateTextTokens(userMessage)
+		outputEstimate := platform.EstimateTextTokens(content)
+		usage.InputTokens = inputEstimate.Tokens
+		usage.OutputTokens = outputEstimate.Tokens
 		usage.Estimated = true
+		usage.TokenEstimator = firstNonEmpty(inputEstimate.Estimator, outputEstimate.Estimator)
 	}
 	usage.Provider = firstNonEmpty(usage.Provider, req.ModelPolicy, "mock")
 	usage.Model = firstNonEmpty(usage.Model, req.ModelPolicy, "mock")

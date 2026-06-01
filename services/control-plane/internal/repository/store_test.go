@@ -242,6 +242,8 @@ func TestStoreSumsRunUsageTokensSince(t *testing.T) {
 	if _, err := store.SaveRunUsage(run.ID, protocol.RunUsage{
 		InputTokens:           7,
 		OutputTokens:          5,
+		Estimated:             true,
+		TokenEstimator:        "heuristic_rune_div4",
 		ToolCalls:             2,
 		ToolErrors:            1,
 		SandboxCommands:       1,
@@ -263,6 +265,9 @@ func TestStoreSumsRunUsageTokensSince(t *testing.T) {
 		usage.SandboxCPUMillis != 78 || usage.SandboxMemoryMaxBytes != 1024 ||
 		usage.ArtifactCount != 3 || usage.ArtifactBytes != 4096 {
 		t.Fatalf("usage = %#v, want tool and sandbox usage", usage)
+	}
+	if !usage.Estimated || usage.TokenEstimator != "heuristic_rune_div4" {
+		t.Fatalf("usage estimator = estimated:%v estimator:%q, want heuristic estimate metadata", usage.Estimated, usage.TokenEstimator)
 	}
 
 	total := store.SumRunUsageTokensSince("demo-user", app.DemoProjectID, time.Now().UTC().Add(-time.Hour))
