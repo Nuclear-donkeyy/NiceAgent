@@ -3,7 +3,7 @@ IMAGE_TAG ?= local
 KIND_CLUSTER ?= niceagent
 K8S_NAMESPACE ?= niceagent
 
-.PHONY: run-control run-runtime run-sandbox run-web build-web test smoke-three-services smoke-three-services-ui smoke-three-services-redis smoke-control-plane-fanout smoke-deepseek-runtime compose-up compose-down compose-config check-js check-alerts docker-build docker-build-control docker-build-runtime docker-build-sandbox kind-create kind-delete kind-load k8s-apply k8s-status k8s-port-forward kind-deploy
+.PHONY: run-control run-runtime run-sandbox run-web build-web test smoke-three-services smoke-three-services-ui smoke-three-services-redis smoke-control-plane-fanout smoke-deepseek-runtime compose-up compose-down compose-config check-js check-alerts check-k8s-sandbox docker-build docker-build-control docker-build-runtime docker-build-sandbox kind-create kind-delete kind-load k8s-apply k8s-status k8s-port-forward kind-deploy
 
 run-control:
 	cd services/control-plane && go run ./cmd
@@ -48,6 +48,9 @@ check-js:
 check-alerts:
 	python3 scripts/check_prometheus_alerts.py deployments/monitoring/prometheus-alerts.yml
 	python3 scripts/check_alertmanager_config.py deployments/monitoring/alertmanager.example.yml
+
+check-k8s-sandbox:
+	python3 scripts/check_k8s_sandbox_hardening.py deployments/k8s/sandbox-hardening.yaml
 
 compose-up:
 	docker compose -f deployments/docker-compose.yml up
