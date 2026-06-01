@@ -352,6 +352,84 @@ func (s *PostgresStore) SumRunUsageSince(userID, projectID string, since time.Ti
 	return protocol.NormalizeRunUsage(usage)
 }
 
+func (s *PostgresStore) ListRunUsageBucketsSince(projectID string, since time.Time) []protocol.RunUsageBucket {
+	rows, err := s.db.Query(`
+		SELECT
+			ru.provider,
+			ru.model,
+			ru.currency,
+			ru.estimated,
+			COALESCE(ru.token_estimator, ''),
+			COUNT(*),
+			COALESCE(SUM(ru.input_tokens), 0),
+			COALESCE(SUM(ru.output_tokens), 0),
+			COALESCE(SUM(ru.reasoning_tokens), 0),
+			COALESCE(SUM(ru.cached_tokens), 0),
+			COALESCE(SUM(
+				CASE
+					WHEN ru.total_tokens > 0 THEN ru.total_tokens
+					ELSE ru.input_tokens + ru.output_tokens
+				END
+			), 0),
+			COALESCE(SUM(ru.cost), 0),
+			COALESCE(SUM(ru.latency_millis), 0),
+			COALESCE(SUM(ru.retry_count), 0),
+			COALESCE(SUM(ru.tool_calls), 0),
+			COALESCE(SUM(ru.tool_errors), 0),
+			COALESCE(SUM(ru.sandbox_commands), 0),
+			COALESCE(SUM(ru.sandbox_duration_millis), 0),
+			COALESCE(SUM(ru.sandbox_output_bytes), 0),
+			COALESCE(SUM(ru.sandbox_cpu_millis), 0),
+			COALESCE(MAX(ru.sandbox_memory_max_bytes), 0),
+			COALESCE(SUM(ru.artifact_count), 0),
+			COALESCE(SUM(ru.artifact_bytes), 0)
+		FROM run_usage ru
+		JOIN runs r ON r.id = ru.run_id
+		JOIN chat_sessions c ON c.id = r.chat_id
+		WHERE c.project_id = $1
+		  AND r.created_at >= $2
+		GROUP BY ru.provider, ru.model, ru.currency, ru.estimated, COALESCE(ru.token_estimator, '')
+		ORDER BY ru.provider, ru.model, ru.currency, ru.estimated, COALESCE(ru.token_estimator, '')`,
+		projectID, since,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	buckets := []protocol.RunUsageBucket{}
+	for rows.Next() {
+		var bucket protocol.RunUsageBucket
+		if err := rows.Scan(
+			&bucket.Provider,
+			&bucket.Model,
+			&bucket.Currency,
+			&bucket.Estimated,
+			&bucket.TokenEstimator,
+			&bucket.RunCount,
+			&bucket.InputTokens,
+			&bucket.OutputTokens,
+			&bucket.ReasoningTokens,
+			&bucket.CachedTokens,
+			&bucket.TotalTokens,
+			&bucket.Cost,
+			&bucket.LatencyMillis,
+			&bucket.RetryCount,
+			&bucket.ToolCalls,
+			&bucket.ToolErrors,
+			&bucket.SandboxCommands,
+			&bucket.SandboxDurationMillis,
+			&bucket.SandboxOutputBytes,
+			&bucket.SandboxCPUMillis,
+			&bucket.SandboxMemoryMaxBytes,
+			&bucket.ArtifactCount,
+			&bucket.ArtifactBytes,
+		); err == nil {
+			buckets = append(buckets, bucket)
+		}
+	}
+	return buckets
+}
+
 func (s *PostgresStore) ProjectBelongsToOrganization(projectID, orgID string) bool {
 	var exists bool
 	err := s.db.QueryRow(`

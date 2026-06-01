@@ -25,6 +25,40 @@ type ProjectQuotaPolicyResponse struct {
 	Policy ProjectQuotaPolicy `json:"policy"`
 }
 
+type RunUsageBucket struct {
+	Provider              string  `json:"provider,omitempty"`
+	Model                 string  `json:"model,omitempty"`
+	Currency              string  `json:"currency,omitempty"`
+	Estimated             bool    `json:"estimated,omitempty"`
+	TokenEstimator        string  `json:"token_estimator,omitempty"`
+	RunCount              int     `json:"run_count"`
+	InputTokens           int     `json:"input_tokens"`
+	OutputTokens          int     `json:"output_tokens"`
+	ReasoningTokens       int     `json:"reasoning_tokens"`
+	CachedTokens          int     `json:"cached_tokens"`
+	TotalTokens           int     `json:"total_tokens"`
+	Cost                  float64 `json:"cost"`
+	LatencyMillis         int64   `json:"latency_millis"`
+	RetryCount            int     `json:"retry_count"`
+	ToolCalls             int     `json:"tool_calls"`
+	ToolErrors            int     `json:"tool_errors"`
+	SandboxCommands       int     `json:"sandbox_commands"`
+	SandboxDurationMillis int64   `json:"sandbox_duration_millis"`
+	SandboxOutputBytes    int     `json:"sandbox_output_bytes"`
+	SandboxCPUMillis      int64   `json:"sandbox_cpu_millis"`
+	SandboxMemoryMaxBytes int64   `json:"sandbox_memory_max_bytes"`
+	ArtifactCount         int     `json:"artifact_count"`
+	ArtifactBytes         int64   `json:"artifact_bytes"`
+}
+
+type ProjectUsageResponse struct {
+	ProjectID string           `json:"project_id"`
+	Window    string           `json:"window"`
+	Since     time.Time        `json:"since"`
+	Buckets   []RunUsageBucket `json:"buckets"`
+	Total     RunUsageBucket   `json:"total"`
+}
+
 type ToolQuotaReserveRequest struct {
 	AttemptID      string `json:"attempt_id,omitempty"`
 	SkillID        string `json:"skill_id"`

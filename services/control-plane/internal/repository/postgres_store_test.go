@@ -105,6 +105,15 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if totals.TotalTokens < 13 || totals.ToolCalls != 2 || totals.SandboxCommands != 1 || totals.ArtifactBytes != 8192 {
 		t.Fatalf("usage totals = %#v, want token/tool/sandbox totals", totals)
 	}
+	buckets := store.ListRunUsageBucketsSince(app.DemoProjectID, time.Now().UTC().Add(-time.Hour))
+	if len(buckets) != 1 {
+		t.Fatalf("usage bucket count = %d, want 1", len(buckets))
+	}
+	if bucket := buckets[0]; bucket.Provider != "openai-compatible" || bucket.Model != "deepseek-v4-flash" ||
+		bucket.RunCount != 1 || bucket.TotalTokens < 13 || !bucket.Estimated ||
+		bucket.TokenEstimator != "heuristic_rune_div4" || bucket.ToolCalls != 2 || bucket.ArtifactBytes != 8192 {
+		t.Fatalf("usage bucket = %#v, want provider/model usage bucket", bucket)
+	}
 	if err := (app.RepositorySink{Repo: store}).Complete(run.ID, "persisted assistant"); err != nil {
 		t.Fatalf("complete run: %v", err)
 	}
