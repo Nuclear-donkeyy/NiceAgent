@@ -39,6 +39,20 @@ SSE endpoint 支持 `?after=`、`Last-Event-ID` replay、SSE `id: <seq>` 和 pin
 
 终态保护已有基础：`Complete`/`Fail` 会跳过 terminal run，store 也阻止 terminal 被不同状态覆盖。`runs` 已补上 `active_attempt_id`、`claimed_by`、`lease_expires_at`、`attempt_count`，旧 attempt 的 event/complete/fail 会被拒绝。Redis worker 已支持 heartbeat 续租、idle pending `XAUTOCLAIM` 和 DLQ；跨 Control Plane 副本 live fanout 已有 Redis nudge 路径。`make smoke-three-services-redis` 已覆盖两个 Agent Runtime consumer 的最小冒烟，`make smoke-control-plane-fanout` 已覆盖两个 Control Plane 进程间的 event fanout 冒烟。生产级 Redis 高可用、外部告警和容量压测仍待补齐。
 
+已落地能力：
+
+- HTTP dispatcher 仍是默认简单路径，Redis dispatcher 可通过 `DISPATCH_MODE=redis` 入队。
+- Redis Streams queue adapter 已有 `XADD`、consumer group、`XREADGROUP`、`XACK`、payload 最小化、Runtime worker、execution context 拉取和多 Runtime consumer smoke。
+- attempt/lease/fencing 已落到 `runs.active_attempt_id`、`claimed_by`、`lease_expires_at`、`attempt_count`，旧 attempt 回写会被拒绝。
+- Runtime worker 已支持 heartbeat 续租、idle pending `XAUTOCLAIM`、最大投递次数和 DLQ。
+- SSE replay 已支持 `id`、`?after=`、`Last-Event-ID`、前端 seq 去重和跨 Control Plane Redis nudge fanout。
+- CI 已包含 Redis queue/fanout 相关 smoke，Redis worker 也暴露 message、reclaim、ack、error、DLQ、pending gauge 等指标。
+
+仍待落地能力：
+
+- 生产级 Redis HA/备份/故障演练、容量压测、queue lag/oldest idle/SSE subscriber 等更完整指标和外部告警。
+- 可选独立 dispatcher worker 服务、独立 `run_attempts` 审计表和更完整的多副本回放压测。
+
 ## 扩展点
 
 - `DISPATCH_MODE=redis`、`RUNTIME_QUEUE_MODE=redis`、stream/group/consumer/DLQ/idle timeout/max delivery 已有最小配置面，后续要补生产部署模板和容量建议。

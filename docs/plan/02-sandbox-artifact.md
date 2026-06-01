@@ -38,6 +38,21 @@ Sandbox 执行后会扫描 workspace `output/` 下的新增或修改文件，生
 
 `workspace.read` 已能通过 Control Plane 内部 API 列出当前 run artifacts，返回 workspace/artifact 元数据摘要，并安全读取已登记文本 artifact 的内容摘要。摘要 action 不读取文件内容，只汇总 artifact 数量、总大小、MIME 分布、文本 artifact 数量、latest artifact 和 artifact 路径清单；读取路径复用 artifact metadata、workspace root、`output/` 限制、symlink escape 检查、MIME 文本限制和最大读取字节数。
 
+已落地能力：
+
+- Sandbox Executor 已独立成服务，支持 `EXECUTOR_MODE=local|container`，Runtime 可通过 `SANDBOX_EXECUTOR_URL` 调用。
+- Local executor 已有只读系统 CLI allowlist、危险命令拒绝、超时、workspace 创建、环境过滤和输出截断。
+- Docker `ContainerExecutor` 已具备 CPU、内存、PID、只读 rootfs、cap drop、no-new-privileges、tmpfs、workspace mount 和网络开关。
+- workspace metadata、artifact 表/API/download、`artifact.created` event、前端 artifact 展示/下载和刷新恢复已落地。
+- artifact 下载和 `workspace.read` 文本读取复用 user/project/run 权限、`output/` 限制、path clean、symlink escape 和 MIME/大小检查。
+- K8s 已有基础 `NetworkPolicy`、`ResourceQuota`、`LimitRange` 和 Sandbox Executor `securityContext`。
+
+仍待落地能力：
+
+- Compose 和生产部署默认切到 container executor，并补镜像白名单、egress policy 和资源容量建议。
+- artifact 增量可见性、PDF/音视频/表格等复杂预览、过期清理和外部对象存储归档。
+- RuntimeClass、独立节点池、gVisor/Kata/Firecracker 等更强隔离 profile。
+
 ## 扩展点
 
 - Sandbox Executor 增加 `EXECUTOR_MODE=local|container|k8s`，默认逐步切到 `container`。
@@ -88,13 +103,12 @@ Artifact 元数据建议包括：
 
 ## 技术方案
 
-第一步补闭环，不追求一步到位的微虚拟机：
+当前最小闭环已经具备，不追求一步到位的微虚拟机；下一步重点是把默认执行路径和产物治理继续推向生产化：
 
-- 新增 `artifacts` 表和 repository。
-- run 创建时插入 workspace 记录。
-- Sandbox Executor 执行前后扫描 output 目录，限制最大文件数、单文件大小和总大小。
-- 对 artifact path 做 clean、symlink、`..`、绝对路径检查，禁止越界。
-- ContainerExecutor 默认增加只读 rootfs、cap drop、no-new-privileges、pids limit、环境变量白名单。
+- `artifacts` 表、repository、workspace 记录、artifact list/download API 和前端展示已落地。
+- Sandbox Executor 已能扫描 output 目录并生成 artifact metadata；后续补增量可见性、过期清理和对象存储归档。
+- artifact path clean、symlink、`..`、绝对路径检查和 `output/` 限制已落地，后续继续扩展更多 preview 类型。
+- ContainerExecutor 已支持只读 rootfs、cap drop、no-new-privileges、pids limit、资源限制和环境变量白名单；后续把 Compose/生产默认执行路径切到 container profile。
 - 网络策略保持“默认关闭，按 skill/runtime_config 显式允许”。
 
 容器默认路径稳定后，再评估 gVisor/Kata/Firecracker。普通 SaaS 早期可以先用 Docker + K8s policy，强多租户或不可信代码执行再切 RuntimeClass 或专用 microVM worker。

@@ -19,12 +19,12 @@
 
 ## 建议 PR 顺序
 
-1. Skill 执行最小闭环：先做 HTTP Skill schema validation、错误模型、secret redaction 和 Runtime 输入校验。
-2. DeepSeek 接入验证：在现有 OpenAI-compatible + Eino `ToolCallingChatModel` 路径上完成真实 API key 冒烟。
-3. Sandbox workspace/artifact：补 artifact 表、下载 API、容器默认执行和 workspace diff。
-4. 前端 artifact 与 E2E：让用户能看到产物，并用 Playwright 覆盖核心链路。
-5. 平台认证与权限：从 `demo-user` 迁移到 `AUTH_MODE=demo|trusted-header|oidc` 和 `ActorContext`。
-6. Redis queue/event fanout：在单实例路径稳定后，再把 run dispatch 和 SSE fanout 推向多副本。
+1. DeepSeek 真实 key 冒烟与模型运营记录：在现有 OpenAI-compatible + Eino `ToolCallingChatModel` 路径上完成可复现 smoke，不提交密钥。
+2. Skill 治理补强：在已有 HTTP Skill schema validation、错误模型、secret redaction、OpenAPI preview、per-skill retry/rate limit 基础上，继续补完整 OpenAPI 保存向导、MCP 导入预留和跨副本限流。
+3. Sandbox 生产化：把 Compose/部署默认路径从 local executor 推向 container executor，补 egress policy、镜像白名单和更完整 artifact 预览。
+4. 平台化收口：在 `AUTH_MODE=trusted-header|oidc`、ActorContext、RBAC、邀请、quota、metrics/tracing 已有最小闭环基础上，补浏览器 OIDC login/session/refresh token、真实 tokenizer、告警路由和投递队列。
+5. Redis 与多副本韧性：在 Redis Streams worker、attempt/lease/DLQ、跨 Control Plane nudge fanout 和 CI smoke 已落地后，继续补 Redis HA、容量压测和外部告警。
+6. 前端真实链路 E2E：在 artifact、skill 表单、mock smoke 和三服务 UI smoke 已有基础上，补真实 HTTP Skill 后端流和复杂 SSE 断线重连场景。
 
 ## 文档约定
 

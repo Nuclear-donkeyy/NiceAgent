@@ -4,8 +4,8 @@
 
 结论：当前系统已经实现了六条主线里的多项“最小闭环”，但还没有完全达到 `docs/plan/` 描述的目标态。主要问题分两类：
 
-- 文档现状过期：部分专题文档仍写着“尚未实现”，但代码已经落地，例如 artifact 表/API/前端、Playwright smoke、`AUTH_MODE=demo|trusted-header|oidc` 边界、audit events、SSE replay、Go 1.23 基线。
-- 架构能力缺口：Redis queue 已补上最小 Runtime consumer 闭环，attempt/lease/fencing 也已有权威字段、回写校验、heartbeat 续租、idle pending auto-claim 和 DLQ；`workspace.read` 已能列出 artifact、读取文本 artifact，并返回 workspace/artifact 元数据摘要；Sandbox Executor 已有 K8s 基础 NetworkPolicy、ResourceQuota、LimitRange 和 securityContext；三服务已具备轻量 `X-Trace-ID`/`X-Request-ID` 传播、结构化 request log、`/metrics` 指标、基础 Prometheus 告警规则、OpenTelemetry OTLP HTTP exporter、入站 HTTP span、Control Plane 调度/回写、Runtime run/tool/model、HTTP Skill、Sandbox HTTP/exec、Redis queue 处理 span、Redis 低层命令级 span 和 Postgres repository 低层命令级 span 边界；quota 已有项目 policy、Redis 并发/小时预占、模型 token 预扣/结算、tool/sandbox 最小实时预占和按 provider/model 的项目 usage 聚合查询；但 OIDC 还只是 header 边界，真实 tokenizer、强一致账单级 quota、真实 DeepSeek 冒烟、复杂模型路由仍待补齐。
+- 文档现状过期：部分专题文档此前仍写着“尚未实现”，但代码已经落地，例如 artifact 表/API/前端、Playwright smoke、`AUTH_MODE=demo|trusted-header|oidc` 边界、audit events、SSE replay、Go 1.23 基线；本轮已先做文档状态收口，后续仍要持续维护。
+- 架构能力缺口：Redis queue 已补上最小 Runtime consumer 闭环，attempt/lease/fencing 也已有权威字段、回写校验、heartbeat 续租、idle pending auto-claim 和 DLQ；`workspace.read` 已能列出 artifact、读取文本 artifact，并返回 workspace/artifact 元数据摘要；Sandbox Executor 已有 K8s 基础 NetworkPolicy、ResourceQuota、LimitRange 和 securityContext；三服务已具备轻量 `X-Trace-ID`/`X-Request-ID` 传播、结构化 request log、`/metrics` 指标、基础 Prometheus 告警规则、OpenTelemetry OTLP HTTP exporter、入站 HTTP span、Control Plane 调度/回写、Runtime run/tool/model、HTTP Skill、Sandbox HTTP/exec、Redis queue 处理 span、Redis 低层命令级 span 和 Postgres repository 低层命令级 span 边界；quota 已有项目 policy、Redis 并发/小时预占、模型 token 预扣/结算、tool/sandbox 最小实时预占和按 provider/model 的项目 usage 聚合查询；`AUTH_MODE=oidc` 已能做 bearer JWT/JWKS 资源服务器校验，但浏览器 OIDC 登录/session/refresh token、真实 tokenizer、强一致账单级 quota、真实 DeepSeek 冒烟、复杂模型路由仍待补齐。
 
 ## 当前对齐度
 
@@ -37,15 +37,15 @@
 
 ## 关键不一致
 
-### 1. `docs/plan/` 的“当前仓库现状”已经部分过期
+### 1. `docs/plan/` 的“当前仓库现状”曾部分过期
 
-`01` 到 `06` 中多处仍描述为“尚未实现”，但现在已经实现了对应最小闭环。例如：
+`01` 到 `06` 中曾有多处描述为“尚未实现”，但代码已经实现了对应最小闭环。例如：
 
-- `02-sandbox-artifact.md` 仍写“没有 artifacts 表、前端没有 artifact 展示区”，但当前已有 migration、repository、API 和 UI。
-- `03-platform-auth-observability.md` 仍写“外部 API 硬编码 demo-user、没有 audit_events 表”，但当前已有 `AUTH_MODE`、`ActorContext` 和 audit API。
-- `05-frontend-product-e2e.md` 仍写“没有 Playwright 依赖和 E2E 目录”，但当前已经有 `frontend/e2e/smoke.spec.ts`。
+- `02-sandbox-artifact.md` 曾写“没有 artifacts 表、前端没有 artifact 展示区”，但当前已有 migration、repository、API 和 UI。
+- `03-platform-auth-observability.md` 曾写“外部 API 硬编码 demo-user、没有 audit_events 表”，但当前已有 `AUTH_MODE`、`ActorContext` 和 audit API。
+- `05-frontend-product-e2e.md` 曾写“没有 Playwright 依赖和 E2E 目录”，但当前已经有 `frontend/e2e/smoke.spec.ts` 和三服务 UI smoke。
 
-修复方向：先把六份专题规划改成“已落地 / 部分落地 / 待落地”三段，避免后续开发者基于过期现状做重复设计。
+修复方向：六份专题规划需要持续保持“当前仓库现状 / 已落地能力 / 仍待落地能力”三段，避免后续开发者基于过期现状做重复设计。
 
 ### 2. Redis queue 架构还不能真正替代 HTTP dispatcher
 
@@ -81,7 +81,7 @@ artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也
 
 ## 修复 PR 顺序
 
-### PR 1：同步规划文档与实际状态
+### PR 1：同步规划文档与实际状态（已完成本轮文档收口）
 
 目标：
 
@@ -193,11 +193,13 @@ artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也
 
 ## 推荐近期行动
 
-建议下一步先做 PR 1 和 PR 6 的小修，再进入 PR 2/3 的队列架构：
+PR 1 的文档状态收口后，近期更适合继续推进这些真实生产化缺口：
 
-1. PR 1 能立刻消除文档与代码现状不一致，避免后续重复劳动。
-2. PR 6 修掉用户可见的前后端策略不一致，并把 E2E 从 mock 推向真实链路。
-3. 下一条真正的平台化关键路径是 NiceAgent 内置 OIDC/session/JWT、邮件投递模板/退信/队列化、真实 tokenizer/按模型动态估算与强一致账单级 quota，以及告警路由/值班系统。
+1. DeepSeek 真实 API key 冒烟和模型运营记录，不提交 key，只沉淀可复现流程与结果。
+2. NiceAgent 内置 OIDC login/session/refresh token，补齐从 API resource server 到浏览器登录产品链路的缺口。
+3. 邮件投递模板、退信处理和队列化发送，让邀请流程从最小闭环走向可运营。
+4. 真实 tokenizer/按模型动态估算、强一致账单级 quota、外部告警路由和值班系统。
+5. Sandbox container 默认执行路径、egress policy、镜像白名单和复杂 artifact 预览。
 
 ## 最小验收命令
 
