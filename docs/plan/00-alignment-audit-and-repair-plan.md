@@ -15,7 +15,7 @@
 | Sandbox 与 Artifact | 中度对齐 | workspace 登记、artifact 表/API/download、前端 artifact 展示、sandbox 输出扫描、path/symlink 越界检查、container executor 可配置；`workspace.read` 可列出当前 run artifacts 并读取已登记文本 artifact 摘要 | Compose 默认仍是 local executor；artifact 只在 run complete 时持久化和发事件；K8s NetworkPolicy/ResourceQuota/securityContext 未落地 |
 | 平台认证、权限与可观测 | 部分对齐 | `AUTH_MODE=demo|trusted-header|oidc` 边界、`ActorContext`、可信邮箱/name header、可信 `issuer + subject` 到 `user_identities` 的绑定、读写路径基础隔离、request id、轻量 `X-Trace-ID` 传播、标准 `traceparent` 传播、三服务 `/metrics`、可选 OpenTelemetry OTLP HTTP exporter、入站 HTTP server span、Control Plane 调度/回写 span、Runtime run/tool/model span、HTTP Skill span、Sandbox HTTP/exec span、Redis queue 处理 span、audit_events 表/API、audit redaction、trusted-header 最小 RBAC、`organization_members`/`project_members` 持久成员表、当前组织/项目成员管理 API、邀请创建/接受最小闭环、邀请接受邮箱 claim 匹配、组织成员 API 的持久角色解析、同组织项目 API 继承组织角色、项目级持久 quota policy、最小 run quota、Redis 并发/小时窗口 quota 预占、固定或动态模型 token 预扣/结算；`RunUsage` 已记录 tool/sandbox/artifact 聚合用量；每日模型 token、tool calls、sandbox seconds quota 已落地，Runtime 调用 tool 前也会做最小 tool/sandbox 实时预占；非本地或显式 required 模式会强制 `INTERNAL_API_TOKEN` | 真 OIDC 登录/JWT/session 未接；邮件发送未做；quota 仍缺真实 tokenizer/按模型动态估算和账单维度统计；DB/Redis 低层命令级 spans、日志关联和告警系统未做 |
 | 多实例队列与事件流 | 较高对齐 | SSE `id`、`Last-Event-ID`、`?after=`、前端 seq 去重；Redis Streams `XADD/XREADGROUP/XACK` adapter；`DISPATCH_MODE=redis` 入队；`RUNTIME_QUEUE_MODE=redis` Runtime worker；queue payload 最小化；execution context 内部 API；attempt claim、lease 字段和 callback fencing；worker heartbeat 续租、`XAUTOCLAIM` 回收 idle pending、DLQ；Redis nudge fanout 已能唤醒多 Control Plane SSE 副本 | 真实 Redis 多 runtime/多 Control Plane 冒烟还需要沉淀到集成测试 |
-| 前端产品体验与 E2E | 高度对齐但仍有小偏差 | React/TS/SCSS Modules、聊天优先、artifact 展示/下载、HTTP Skill 表单校验、保存状态、Playwright mock smoke、三服务真实 UI smoke、SSE replay 去重；HTTP Skill URL 已同步为仅允许 `https`；`make smoke-three-services` 可启动三服务真实进程做 `/cli echo hello` 冒烟；`make smoke-three-services-ui` 可构建前端并由 Control Plane 托管静态产物，做真实浏览器 smoke | Redis dispatcher 冒烟需要外部 Redis；重连恢复状态还偏轻 |
+| 前端产品体验与 E2E | 高度对齐但仍有小偏差 | React/TS/SCSS Modules、聊天优先、artifact 展示/下载、HTTP Skill 表单校验、保存状态、Playwright mock smoke、三服务真实 UI smoke、SSE replay 去重；断线重连中和恢复补齐状态已折叠进 agent 状态气泡；HTTP Skill URL 已同步为仅允许 `https`；`make smoke-three-services` 可启动三服务真实进程做 `/cli echo hello` 冒烟；`make smoke-three-services-ui` 可构建前端并由 Control Plane 托管静态产物，做真实浏览器 smoke | Redis dispatcher 冒烟需要外部 Redis；更复杂的 SSE 断线重连真实服务场景仍待补强 |
 | 模型运营与 DeepSeek | 部分对齐 | Eino 原生 `ToolCallingChatModel`、OpenAI-compatible provider、错误分类、retry transport、单一后备 provider fallback、usage tracker、redactor、run_usage 持久化、配置化 cost/pricing、provider health 快照、模型运行指标、可选主动 provider 探针和基础告警指标 | 未完成真实 DeepSeek API 冒烟；复杂多 provider 路由未做；真实告警系统接入未做；真实 usage 依赖 provider callback，缺失时仍估算 |
 
 ## 当前系统证据
@@ -162,7 +162,7 @@ artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也
 - 前端 HTTP Skill URL 校验改为默认只允许 `https`。
 - Playwright 增加三服务集成 smoke：构建前端，启动 Control Plane、Agent Runtime 和 Sandbox Executor，由 Control Plane 托管静态产物，覆盖 `/cli echo hello`、artifact list API 和刷新恢复。
 - 已新增非 Playwright 的三服务进程 smoke，覆盖 `/cli echo hello`；`make smoke-three-services-ui` 已补上真实浏览器 UI smoke。更复杂的 SSE 断线重连场景仍待补。
-- UI 增加更明确的重连/恢复状态。
+- UI 已增加更明确的重连/恢复状态：断线时显示“连接暂时中断，正在重连”，恢复时显示“连接已恢复，正在补齐事件”，Playwright mock smoke 会模拟断线、重放重复 seq，并验证 token 不重复追加。
 
 验收：
 
