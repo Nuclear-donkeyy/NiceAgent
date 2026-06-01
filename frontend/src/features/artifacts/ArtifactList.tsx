@@ -1,4 +1,4 @@
-import { artifactDownloadPath } from "../../api/artifacts";
+import { artifactDownloadPath, artifactPreviewPath } from "../../api/artifacts";
 import type { Artifact } from "../../domain/artifact";
 import styles from "./ArtifactList.module.scss";
 
@@ -32,23 +32,23 @@ export function ArtifactList({ artifacts, error, loading }: ArtifactListProps) {
           {artifacts.map((artifact) => {
             const displayName = artifact.name || artifact.path || artifact.id;
             const downloadPath = artifactDownloadPath(artifact.id);
-            const isImage = isImageArtifact(artifact);
+            const previewPath = artifactPreviewPath(artifact.id);
+            const previewType = previewKind(artifact);
             return (
               <article className={styles.item} key={artifact.id || artifact.path}>
                 <div className={styles.content}>
-                  {artifact.id && isImage && (
-                    <a
-                      className={styles.preview}
-                      href={downloadPath}
-                      aria-label={`预览 ${displayName}`}
-                    >
-                      <img alt={displayName} loading="lazy" src={downloadPath} />
-                    </a>
+                  {artifact.id && (
+                    <ArtifactPreview
+                      artifact={artifact}
+                      displayName={displayName}
+                      previewPath={previewPath}
+                      previewType={previewType}
+                    />
                   )}
                   <div className={styles.meta}>
                     <strong>{displayName}</strong>
                     <span>{artifact.path || "output"}</span>
-                    {isImage && <span>图片预览</span>}
+                    <span>{artifactKindLabel(artifact, previewType)}</span>
                   </div>
                 </div>
                 <div className={styles.actions}>
@@ -72,8 +72,112 @@ export function ArtifactList({ artifacts, error, loading }: ArtifactListProps) {
   );
 }
 
-function isImageArtifact(artifact: Artifact): boolean {
-  return artifact.mime_type.toLowerCase().split(";")[0].trim().startsWith("image/");
+interface ArtifactPreviewProps {
+  artifact: Artifact;
+  displayName: string;
+  previewPath: string;
+  previewType: PreviewKind;
+}
+
+type PreviewKind = "image" | "pdf" | "audio" | "video" | "table" | "generic";
+
+function ArtifactPreview({
+  artifact,
+  displayName,
+  previewPath,
+  previewType,
+}: ArtifactPreviewProps) {
+  if (previewType === "image") {
+    return (
+      <a className={styles.preview} href={previewPath} aria-label={`预览 ${displayName}`}>
+        <img alt={displayName} loading="lazy" src={previewPath} />
+      </a>
+    );
+  }
+  if (previewType === "pdf") {
+    return (
+      <a
+        className={`${styles.preview} ${styles.pdfPreview}`}
+        href={previewPath}
+        aria-label={`预览 ${displayName}`}
+      >
+        <iframe src={previewPath} title={displayName} loading="lazy" />
+      </a>
+    );
+  }
+  if (previewType === "audio") {
+    return (
+      <div
+        className={`${styles.preview} ${styles.mediaPreview}`}
+        aria-label={`预览 ${displayName}`}
+      >
+        <audio controls preload="none" src={previewPath} />
+      </div>
+    );
+  }
+  if (previewType === "video") {
+    return (
+      <a
+        className={`${styles.preview} ${styles.mediaPreview}`}
+        href={previewPath}
+        aria-label={`预览 ${displayName}`}
+      >
+        <video muted preload="metadata" src={previewPath} />
+      </a>
+    );
+  }
+  return (
+    <a
+      className={`${styles.preview} ${styles.filePreview}`}
+      href={previewPath}
+      aria-label={`打开 ${displayName}`}
+    >
+      <span>{artifactExtension(artifact) || "FILE"}</span>
+    </a>
+  );
+}
+
+function previewKind(artifact: Artifact): PreviewKind {
+  const mimeType = normalizedMimeType(artifact);
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType === "application/pdf") return "pdf";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  if (isTableArtifact(artifact, mimeType)) return "table";
+  return "generic";
+}
+
+function artifactKindLabel(artifact: Artifact, previewType: PreviewKind): string {
+  if (previewType === "image") return "图片预览";
+  if (previewType === "pdf") return "PDF 预览";
+  if (previewType === "audio") return "音频预览";
+  if (previewType === "video") return "视频预览";
+  if (previewType === "table") return "表格文件";
+  return normalizedMimeType(artifact) || "文件";
+}
+
+function normalizedMimeType(artifact: Artifact): string {
+  return artifact.mime_type.toLowerCase().split(";")[0].trim();
+}
+
+function isTableArtifact(artifact: Artifact, mimeType: string): boolean {
+  const extension = artifactExtension(artifact);
+  return (
+    ["csv", "tsv", "xlsx", "xls"].includes(extension.toLowerCase()) ||
+    mimeType === "text/csv" ||
+    mimeType === "text/tab-separated-values" ||
+    mimeType.includes("spreadsheet")
+  );
+}
+
+function artifactExtension(artifact: Artifact): string {
+  const name = artifact.name || artifact.path;
+  const dotIndex = name.lastIndexOf(".");
+  if (dotIndex < 0 || dotIndex === name.length - 1) return "";
+  return name
+    .slice(dotIndex + 1)
+    .slice(0, 6)
+    .toUpperCase();
 }
 
 function formatBytes(value: number): string {

@@ -9,3 +9,7 @@ export async function listRunArtifacts(runID: string): Promise<Artifact[]> {
 export function artifactDownloadPath(artifactID: string): string {
   return `/api/artifacts/${encodeURIComponent(artifactID)}/download`;
 }
+
+export function artifactPreviewPath(artifactID: string): string {
+  return `${artifactDownloadPath(artifactID)}?disposition=inline`;
+}
