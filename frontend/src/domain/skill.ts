@@ -86,3 +86,23 @@ export interface OpenAPIImportCreateInput extends OpenAPIImportPreviewInput {
   retry_max_attempts?: number;
   rate_limit_per_minute?: number;
 }
+
+export interface MCPImportPreviewInput {
+  document: string;
+}
+
+export interface MCPSkillImportCandidate {
+  name: string;
+  description?: string;
+  input_schema?: string;
+  output_schema?: string;
+  annotations?: string;
+  read_only?: boolean;
+  destructive?: boolean;
+  idempotent?: boolean;
+  open_world?: boolean;
+}
+
+export interface MCPImportPreviewResponse {
+  candidates: MCPSkillImportCandidate[];
+}
