@@ -44,7 +44,7 @@ Agent Runtime 已有配置：
 
 Runtime engine 已使用 `model.ToolCallingChatModel`，按 run 下发 skills 构造 Eino tools，并用 `guardedToolModel` 阻止模型调用未授权 tool。`/cli ...` 仍保留为开发测试入口。
 
-模型层已经新增运营包装：`OperationalChatModel`、`RetryTransport`、`FallbackChatModel`、错误分类、usage tracker、pricing policy 和 redactor。Runtime 会优先从 Eino message metadata 收集真实 token usage，缺失时回退估算，并通过 `CompleteWithUsage` 回写 Control Plane。Control Plane 已有 `run_usage` 表、repository 和 complete handler 持久化。`run_usage` 不只记录模型 token，也会记录 Eino tool observation 聚合出的 tool/sandbox/artifact 用量，包括 tool 调用数、tool 错误数、sandbox 命令数、sandbox 耗时/输出/资源摘要和 artifact 数量/大小。费用计算通过 `MODEL_*_PRICE_PER_1M_TOKENS` 环境变量配置，不在仓库中硬编码实时模型价格；fallback 已支持单一后备 provider，可在 `rate_limited`、`provider_unavailable`、`network_error` 时切换到 `mock` 或另一个 OpenAI-compatible provider。Agent Runtime 的 `/healthz` 已返回 `model_provider` 健康快照，`/metrics` 已暴露 `niceagent_model_runs_total`、`niceagent_model_latency_seconds_*`、`niceagent_model_health_probe_total` 和 `niceagent_model_health_probe_duration_seconds_*`，用于观察 provider/model/status/error_class/fallback/probe。
+模型层已经新增运营包装：`OperationalChatModel`、`RetryTransport`、`FallbackChatModel`、错误分类、usage tracker、pricing policy 和 redactor。Runtime 会优先从 Eino message metadata 收集真实 token usage，缺失时回退估算，并通过 `CompleteWithUsage` 回写 Control Plane。Control Plane 已有 `run_usage` 表、repository 和 complete handler 持久化。估算 usage 会设置 `estimated=true`，并记录 `token_estimator=heuristic_rune_div4`，用于区分真实 provider usage 和当前粗略估算。`run_usage` 不只记录模型 token，也会记录 Eino tool observation 聚合出的 tool/sandbox/artifact 用量，包括 tool 调用数、tool 错误数、sandbox 命令数、sandbox 耗时/输出/资源摘要和 artifact 数量/大小。费用计算通过 `MODEL_*_PRICE_PER_1M_TOKENS` 环境变量配置，不在仓库中硬编码实时模型价格；fallback 已支持单一后备 provider，可在 `rate_limited`、`provider_unavailable`、`network_error` 时切换到 `mock` 或另一个 OpenAI-compatible provider。Agent Runtime 的 `/healthz` 已返回 `model_provider` 健康快照，`/metrics` 已暴露 `niceagent_model_runs_total`、`niceagent_model_latency_seconds_*`、`niceagent_model_health_probe_total` 和 `niceagent_model_health_probe_duration_seconds_*`，用于观察 provider/model/status/error_class/fallback/probe。
 
 日志方面，主入口记录 provider/base_url/model，不记录 API key。`modelprovider` 已有 redactor，provider 错误、OpenAI style key、Authorization/Bearer/token/secret/password/cookie 等会被掩码。HTTP Skill observation 也会对 secret 和敏感 key 做 redaction。主动 provider 探针已通过 `MODEL_HEALTH_PROBE_ENABLED` 和间隔/超时配置落地，默认关闭；探针结果会进入 `/healthz` 和 `/metrics`，运维文档给出了基础告警建议。仍待补的是统一覆盖所有 run event、audit、tool raw output 的策略开关，以及真实 DeepSeek 生产 key 下的 smoke 记录和外部告警系统接入。
 
@@ -54,7 +54,7 @@ K8s 部署已经把 `MODEL_API_KEY` 从 `niceagent-model-provider` Secret 注入
 
 - `modelprovider` 增加 provider wrapper：统一 rate limit、retry、fallback、usage callback、redaction。retry、fallback、usage 和 redaction 已有最小闭环；rate limit 仍待补。
 - `RunCompleteRequest` 和 Control Plane repository 落地 token usage 持久化。
-- `run_usage` 表已记录 provider、model、input/output/reasoning/cached tokens、latency、cost、currency，以及 run 级 tool/sandbox/artifact 聚合用量。
+- `run_usage` 表已记录 provider、model、input/output/reasoning/cached tokens、`estimated`、`token_estimator`、latency、cost、currency，以及 run 级 tool/sandbox/artifact 聚合用量。
 - 当前先通过环境变量提供轻量 pricing policy；后续如需多模型、多租户成本核算，再增加 `model_pricing` 配置或表，按生效日期维护不同 provider/model 价格。
 - 日志和 event 增加统一 `Redactor`，覆盖 prompt、completion、tool output、headers、secret key。
 - provider health、错误分类、fallback 记录、主动探针和基础指标已有最小闭环；后续补外部 SLO 告警系统、多 provider 路由指标和真实生产 key 下的 smoke 记录。

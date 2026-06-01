@@ -84,7 +84,8 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 		InputTokens:           9,
 		OutputTokens:          4,
 		TotalTokens:           13,
-		Estimated:             false,
+		Estimated:             true,
+		TokenEstimator:        "heuristic_rune_div4",
 		ToolCalls:             2,
 		ToolErrors:            1,
 		SandboxCommands:       1,
@@ -125,6 +126,9 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	}
 	if gotRun.Usage.Provider != "openai-compatible" || gotRun.Usage.InputTokens != 9 || gotRun.Usage.OutputTokens != 4 {
 		t.Fatalf("reloaded run usage = %#v", gotRun.Usage)
+	}
+	if !gotRun.Usage.Estimated || gotRun.Usage.TokenEstimator != "heuristic_rune_div4" {
+		t.Fatalf("reloaded usage estimator = estimated:%v estimator:%q, want heuristic metadata", gotRun.Usage.Estimated, gotRun.Usage.TokenEstimator)
 	}
 	if gotRun.Usage.ToolCalls != 2 || gotRun.Usage.ToolErrors != 1 || gotRun.Usage.SandboxCommands != 1 ||
 		gotRun.Usage.SandboxDurationMillis != 345 || gotRun.Usage.SandboxOutputBytes != 678 ||

@@ -992,13 +992,13 @@ func (s *PostgresStore) SaveRunUsage(runID string, usage protocol.RunUsage) (pro
 	_, err := s.db.Exec(`
 		INSERT INTO run_usage (
 			run_id, provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
-			total_tokens, estimated, cost, currency, latency_millis, retry_count, fallback_from,
+			total_tokens, estimated, token_estimator, cost, currency, latency_millis, retry_count, fallback_from,
 			fallback_to, error_class, tool_calls, tool_errors, sandbox_commands, sandbox_duration_millis,
 			sandbox_output_bytes, sandbox_cpu_millis, sandbox_memory_max_bytes, artifact_count,
 			artifact_bytes, created_at, updated_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-			$17, $18, $19, $20, $21, $22, $23, $24, $25, now(), now())
+			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, now(), now())
 		ON CONFLICT (run_id) DO UPDATE SET
 			provider = EXCLUDED.provider,
 			model = EXCLUDED.model,
@@ -1008,6 +1008,7 @@ func (s *PostgresStore) SaveRunUsage(runID string, usage protocol.RunUsage) (pro
 			cached_tokens = EXCLUDED.cached_tokens,
 			total_tokens = EXCLUDED.total_tokens,
 			estimated = EXCLUDED.estimated,
+			token_estimator = EXCLUDED.token_estimator,
 			cost = EXCLUDED.cost,
 			currency = EXCLUDED.currency,
 			latency_millis = EXCLUDED.latency_millis,
@@ -1026,7 +1027,7 @@ func (s *PostgresStore) SaveRunUsage(runID string, usage protocol.RunUsage) (pro
 			artifact_bytes = EXCLUDED.artifact_bytes,
 			updated_at = now()`,
 		runID, usage.Provider, usage.Model, usage.InputTokens, usage.OutputTokens, usage.ReasoningTokens, usage.CachedTokens,
-		usage.TotalTokens, usage.Estimated, usage.Cost, usage.Currency, usage.LatencyMillis, usage.RetryCount, usage.FallbackFrom,
+		usage.TotalTokens, usage.Estimated, usage.TokenEstimator, usage.Cost, usage.Currency, usage.LatencyMillis, usage.RetryCount, usage.FallbackFrom,
 		usage.FallbackTo, usage.ErrorClass, usage.ToolCalls, usage.ToolErrors, usage.SandboxCommands, usage.SandboxDurationMillis,
 		usage.SandboxOutputBytes, usage.SandboxCPUMillis, usage.SandboxMemoryMaxBytes, usage.ArtifactCount, usage.ArtifactBytes)
 	if err != nil {
@@ -1050,14 +1051,14 @@ func (s *PostgresStore) getRunUsage(runID string) (protocol.RunUsage, error) {
 	var usage protocol.RunUsage
 	if err := s.db.QueryRow(`
 		SELECT provider, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens,
-		       total_tokens, estimated, cost, currency, latency_millis, retry_count,
+		       total_tokens, estimated, token_estimator, cost, currency, latency_millis, retry_count,
 		       fallback_from, fallback_to, error_class, tool_calls, tool_errors,
 		       sandbox_commands, sandbox_duration_millis, sandbox_output_bytes,
 		       sandbox_cpu_millis, sandbox_memory_max_bytes, artifact_count, artifact_bytes
 		FROM run_usage
 		WHERE run_id = $1`, runID).Scan(
 		&usage.Provider, &usage.Model, &usage.InputTokens, &usage.OutputTokens, &usage.ReasoningTokens, &usage.CachedTokens,
-		&usage.TotalTokens, &usage.Estimated, &usage.Cost, &usage.Currency, &usage.LatencyMillis, &usage.RetryCount,
+		&usage.TotalTokens, &usage.Estimated, &usage.TokenEstimator, &usage.Cost, &usage.Currency, &usage.LatencyMillis, &usage.RetryCount,
 		&usage.FallbackFrom, &usage.FallbackTo, &usage.ErrorClass, &usage.ToolCalls, &usage.ToolErrors,
 		&usage.SandboxCommands, &usage.SandboxDurationMillis, &usage.SandboxOutputBytes,
 		&usage.SandboxCPUMillis, &usage.SandboxMemoryMaxBytes, &usage.ArtifactCount, &usage.ArtifactBytes,

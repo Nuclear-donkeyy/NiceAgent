@@ -1,0 +1,1 @@
+ALTER TABLE run_usage ADD COLUMN IF NOT EXISTS token_estimator TEXT NOT NULL DEFAULT '';
