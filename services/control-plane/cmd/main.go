@@ -87,7 +87,7 @@ func newInvitationMailer(cfg config.Config, logger *slog.Logger) app.InvitationM
 		return nil
 	case "smtp":
 		logger.Info("using smtp invitation email", "host", cfg.SMTPHost, "port", cfg.SMTPPort, "from", cfg.SMTPFrom)
-		return mailer.NewSMTPInvitationMailer(mailer.SMTPConfig{
+		smtpMailer := mailer.NewSMTPInvitationMailer(mailer.SMTPConfig{
 			Host:            cfg.SMTPHost,
 			Port:            cfg.SMTPPort,
 			Username:        cfg.SMTPUsername,
@@ -97,6 +97,22 @@ func newInvitationMailer(cfg config.Config, logger *slog.Logger) app.InvitationM
 			SubjectTemplate: cfg.InvitationEmailSubjectTemplate,
 			BodyTemplate:    cfg.InvitationEmailBodyTemplate,
 		})
+		if strings.EqualFold(strings.TrimSpace(cfg.InvitationEmailQueueMode), "memory") {
+			logger.Info(
+				"using memory invitation email queue",
+				"size", cfg.InvitationEmailQueueSize,
+				"workers", cfg.InvitationEmailQueueWorkers,
+				"retry_attempts", cfg.InvitationEmailRetryAttempts,
+				"retry_initial_delay_ms", cfg.InvitationEmailRetryInitialDelay,
+			)
+			return mailer.NewQueuedInvitationMailer(smtpMailer, mailer.QueueConfig{
+				Size:              cfg.InvitationEmailQueueSize,
+				Workers:           cfg.InvitationEmailQueueWorkers,
+				RetryAttempts:     cfg.InvitationEmailRetryAttempts,
+				RetryInitialDelay: time.Duration(cfg.InvitationEmailRetryInitialDelay) * time.Millisecond,
+			}, logger)
+		}
+		return smtpMailer
 	default:
 		logger.Warn("unknown INVITATION_EMAIL_MODE; invitation email disabled", "mode", cfg.InvitationEmailMode)
 		return nil

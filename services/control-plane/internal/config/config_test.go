@@ -87,6 +87,11 @@ func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	t.Setenv("SMTP_FROM", "NiceAgent <noreply@example.test>")
 	t.Setenv("INVITATION_EMAIL_SUBJECT_TEMPLATE", "Join {{.OrganizationID}}")
 	t.Setenv("INVITATION_EMAIL_BODY_TEMPLATE", "Accept {{.AcceptURL}} as {{.Role}}")
+	t.Setenv("INVITATION_EMAIL_QUEUE_MODE", "memory")
+	t.Setenv("INVITATION_EMAIL_QUEUE_SIZE", "25")
+	t.Setenv("INVITATION_EMAIL_QUEUE_WORKERS", "2")
+	t.Setenv("INVITATION_EMAIL_RETRY_ATTEMPTS", "3")
+	t.Setenv("INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS", "10")
 
 	cfg := FromEnv()
 
@@ -98,6 +103,9 @@ func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	}
 	if cfg.InvitationEmailSubjectTemplate != "Join {{.OrganizationID}}" || cfg.InvitationEmailBodyTemplate != "Accept {{.AcceptURL}} as {{.Role}}" {
 		t.Fatalf("invitation templates = subject:%q body:%q", cfg.InvitationEmailSubjectTemplate, cfg.InvitationEmailBodyTemplate)
+	}
+	if cfg.InvitationEmailQueueMode != "memory" || cfg.InvitationEmailQueueSize != 25 || cfg.InvitationEmailQueueWorkers != 2 || cfg.InvitationEmailRetryAttempts != 3 || cfg.InvitationEmailRetryInitialDelay != 10 {
+		t.Fatalf("invitation queue config = mode:%q size:%d workers:%d attempts:%d delay:%d", cfg.InvitationEmailQueueMode, cfg.InvitationEmailQueueSize, cfg.InvitationEmailQueueWorkers, cfg.InvitationEmailRetryAttempts, cfg.InvitationEmailRetryInitialDelay)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected smtp config to validate: %v", err)
@@ -126,5 +134,18 @@ func TestValidateRejectsInvalidInvitationEmailTemplates(t *testing.T) {
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected invalid invitation email template to fail validation")
+	}
+}
+
+func TestValidateRejectsInvalidInvitationEmailQueueMode(t *testing.T) {
+	t.Setenv("INVITATION_EMAIL_MODE", "smtp")
+	t.Setenv("SMTP_HOST", "smtp.example.test")
+	t.Setenv("SMTP_FROM", "noreply@example.test")
+	t.Setenv("INVITATION_EMAIL_QUEUE_MODE", "durable")
+
+	cfg := FromEnv()
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid invitation email queue mode to fail validation")
 	}
 }

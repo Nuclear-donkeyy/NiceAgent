@@ -71,6 +71,18 @@ SMTP_FROM="NiceAgent <noreply@example.com>"
 
 可用字段包括 `.Email`、`.Role`、`.OrganizationID`、`.ProjectID`、`.ProjectIDOrDash`、`.AcceptURL`、`.ExpiresAt`。启用 SMTP 时，Control Plane 启动会校验模板语法和字段名；错误模板会导致启动失败，避免发出坏邮件。SMTP 发送失败不会回滚已创建的邀请，排查时查看 `invitation.email.send` audit event 和 Control Plane 日志。生产环境不要把 `SMTP_PASSWORD` 放入 ConfigMap 或仓库；K8s 模板通过 `niceagent-smtp` Secret 注入该值。
 
+邀请邮件默认使用同步 `inline` 发送路径。需要避免创建邀请接口被 SMTP 瞬时抖动长时间阻塞时，可以开启进程内内存队列：
+
+```bash
+INVITATION_EMAIL_QUEUE_MODE=memory
+INVITATION_EMAIL_QUEUE_SIZE=100
+INVITATION_EMAIL_QUEUE_WORKERS=1
+INVITATION_EMAIL_RETRY_ATTEMPTS=3
+INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS=250
+```
+
+`memory` 队列会先把邀请邮件放入 Control Plane 进程内队列，再由后台 worker 重试发送。队列满时创建邀请仍会成功，但邮件入队会失败并写入 `invitation.email.send` deny audit event。该队列不是 durable queue：Control Plane 重启会丢失尚未发送的队列项；生产环境后续仍应接入 Redis/数据库 outbox 或专门邮件服务，并补退信 webhook。
+
 run 配额是最小治理边界，默认关闭。env 配置是 fallback：
 
 ```bash

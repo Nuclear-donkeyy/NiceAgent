@@ -134,6 +134,31 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: INVITATION_EMAIL_BODY_TEMPLATE
+            - name: INVITATION_EMAIL_QUEUE_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INVITATION_EMAIL_QUEUE_MODE
+            - name: INVITATION_EMAIL_QUEUE_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INVITATION_EMAIL_QUEUE_SIZE
+            - name: INVITATION_EMAIL_QUEUE_WORKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INVITATION_EMAIL_QUEUE_WORKERS
+            - name: INVITATION_EMAIL_RETRY_ATTEMPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INVITATION_EMAIL_RETRY_ATTEMPTS
+            - name: INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS
             - name: SMTP_HOST
               valueFrom:
                 configMapKeyRef:
