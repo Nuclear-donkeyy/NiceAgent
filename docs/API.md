@@ -575,7 +575,7 @@ Skill 元数据以 `skills` 和 `skill_versions` 为权威，`skill_grants` 表�
 
 Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。当前主执行路径通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 运行 agentic loop；模型输出仍通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端折叠成 assistant 消息。
 
-OpenAI-compatible provider 通过 Eino `eino-ext` OpenAI ChatModel 使用 `/v1/chat/completions` 协议，并支持模型原生 tool calling；该能力不改变外部 Web API 和 `RunExecutionRequest`。
+OpenAI-compatible provider 通过 Eino `eino-ext` OpenAI ChatModel 使用 `/v1/chat/completions` 协议，并支持模型原生 tool calling；该能力不改变外部 Web API 和 `RunExecutionRequest`。DeepSeek 使用同一 provider 路径，可设置 `MODEL_PROVIDER_PROFILE=deepseek` 作为部署侧配置预设，Runtime 会把 usage provider 标记为 `deepseek`，并在未显式配置 `MODEL_BASE_URL` 时使用 DeepSeek 官方 OpenAI-compatible 根地址；模型名和 API key 仍由环境变量或 Secret 显式注入。
 
 Runtime 完成 run 时会在 `RunCompleteRequest.usage` 回写模型与工具运营数据。Control Plane 会持久化到 run 级 usage，并在 `GET /api/runs/{run_id}` 的 `Run.usage` 中返回。真实 provider usage 优先；provider 缺失 usage 或 mock provider 会返回估算 token，并设置 `estimated=true`。估算 usage 会额外返回 `token_estimator`，当前内置值为 `heuristic_rune_div4`，表示按文本 rune 数粗略估算；后续接真实 tokenizer 时应替换该字段。字段包括 provider、model、input/output/reasoning/cached/total tokens、latency、retry_count、fallback_from/fallback_to、error_class、cost、currency，以及 run 级工具/sandbox 聚合字段：`tool_calls`、`tool_errors`、`sandbox_commands`、`sandbox_duration_millis`、`sandbox_output_bytes`、`sandbox_cpu_millis`、`sandbox_memory_max_bytes`、`artifact_count`、`artifact_bytes`。这些工具字段用于审计、排障和 quota/账单聚合；当前项目 quota 已能按 UTC 自然日限制每日 tool calls 和 sandbox seconds，并在 Runtime tool 调用前做最小实时预占。
 

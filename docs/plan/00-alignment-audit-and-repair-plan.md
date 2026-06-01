@@ -16,7 +16,7 @@
 | 平台认证、权限与可观测 | 部分对齐 | `AUTH_MODE=demo|trusted-header|oidc` 边界、`ActorContext`、可信邮箱/name header、可信 `issuer + subject` 到 `user_identities` 的绑定、读写路径基础隔离、request id、轻量 `X-Trace-ID` 传播、标准 `traceparent` 传播、三服务 `/metrics`、可选 OpenTelemetry OTLP HTTP exporter、入站 HTTP server span、Control Plane 调度/回写 span、Runtime run/tool/model span、HTTP Skill span、Sandbox HTTP/exec span、Redis queue 处理 span、audit_events 表/API、audit redaction、trusted-header 最小 RBAC、`organization_members`/`project_members` 持久成员表、当前组织/项目成员管理 API、邀请创建/接受最小闭环、邀请接受邮箱 claim 匹配、组织成员 API 的持久角色解析、同组织项目 API 继承组织角色、项目级持久 quota policy、最小 run quota、Redis 并发/小时窗口 quota 预占、固定或动态模型 token 预扣/结算；`RunUsage` 已记录 tool/sandbox/artifact 聚合用量；估算 token 会持久化 `token_estimator=heuristic_rune_div4`；每日模型 token、tool calls、sandbox seconds quota 已落地，Runtime 调用 tool 前也会做最小 tool/sandbox 实时预占；项目 usage 可按 provider/model/currency/估算来源聚合查询；非本地或显式 required 模式会强制 `INTERNAL_API_TOKEN` | 真 OIDC 登录/JWT/session 未接；邮件发送未做；quota 仍缺真实 tokenizer/按模型动态估算和强一致账单级 quota；DB/Redis 低层命令级 spans、日志关联和告警系统未做 |
 | 多实例队列与事件流 | 高度对齐但仍有小偏差 | SSE `id`、`Last-Event-ID`、`?after=`、前端 seq 去重；Redis Streams `XADD/XREADGROUP/XACK` adapter；`DISPATCH_MODE=redis` 入队；`RUNTIME_QUEUE_MODE=redis` Runtime worker；queue payload 最小化；execution context 内部 API；attempt claim、lease 字段和 callback fencing；worker heartbeat 续租、`XAUTOCLAIM` 回收 idle pending、DLQ；Redis nudge fanout 已能唤醒多 Control Plane SSE 副本；`make smoke-three-services-redis` 会启动临时 Redis 和两个 Runtime consumer，并自动校验 run 被不同 consumer claim；`make smoke-control-plane-fanout` 会启动临时 Postgres/Redis 和两个 Control Plane 进程，验证第二个 Control Plane 能收到第一个 Control Plane 写入的 run SSE 事件 | Redis queue/fanout 尚未纳入 CI 默认门禁；生产级 Redis 高可用、消息保留策略和告警仍待补 |
 | 前端产品体验与 E2E | 高度对齐但仍有小偏差 | React/TS/SCSS Modules、聊天优先、artifact 展示/下载、HTTP Skill 表单校验、保存状态、Playwright mock smoke、三服务真实 UI smoke、SSE replay 去重；断线重连中和恢复补齐状态已折叠进 agent 状态气泡；HTTP Skill URL 已同步为仅允许 `https`；`make smoke-three-services` 可启动三服务真实进程做 `/cli echo hello` 冒烟；`make smoke-three-services-ui` 可构建前端并由 Control Plane 托管静态产物，做真实浏览器 smoke | Redis dispatcher 冒烟需要外部 Redis；更复杂的 SSE 断线重连真实服务场景仍待补强 |
-| 模型运营与 DeepSeek | 部分对齐 | Eino 原生 `ToolCallingChatModel`、OpenAI-compatible provider、错误分类、retry transport、单一后备 provider fallback、usage tracker、redactor、run_usage 持久化、配置化 cost/pricing、provider health 快照、模型运行指标、可选主动 provider 探针和基础告警指标；provider 缺失 usage 时会标记 `estimated=true` 和 `token_estimator` | 未完成真实 DeepSeek API 冒烟；复杂多 provider 路由未做；真实告警系统接入未做；真实 usage 依赖 provider callback，缺失时仍估算 |
+| 模型运营与 DeepSeek | 部分对齐 | Eino 原生 `ToolCallingChatModel`、OpenAI-compatible provider、`MODEL_PROVIDER_PROFILE=deepseek` 配置预设、错误分类、retry transport、单一后备 provider fallback、usage tracker、redactor、run_usage 持久化、配置化 cost/pricing、provider health 快照、模型运行指标、可选主动 provider 探针和基础告警指标；provider 缺失 usage 时会标记 `estimated=true` 和 `token_estimator` | 未完成真实 DeepSeek API 冒烟；复杂多 provider 路由未做；真实告警系统接入未做；真实 usage 依赖 provider callback，缺失时仍估算 |
 
 ## 当前系统证据
 
@@ -77,7 +77,7 @@ artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也
 
 ### 7. 模型运营还有“骨架已落、生产未闭环”的差距
 
-当前 provider 已有 retry、错误分类、usage、redaction、单一后备 provider fallback、配置化 pricing/cost、`/healthz` 模型健康快照、`/metrics` 模型运行指标，以及可选主动 provider 探针。探针默认关闭，打开后会发起真实模型调用，并通过 `model_provider.probe_*` 字段和 `niceagent_model_health_probe_*` 指标暴露结果。provider 缺失 usage 或 mock provider 会回退到共享估算器，并在 `RunUsage` 中持久化 `estimated=true` 与 `token_estimator=heuristic_rune_div4`，方便后续替换成真实 tokenizer。还没有真实 DeepSeek 冒烟记录、复杂多 provider 路由和外部告警系统接入。`docs/plan/06` 中关于 DeepSeek 当前模型名的内容属于时效信息，后续应改成“以官方文档为准 + 配置示例”，避免模型名过期后误导。
+当前 provider 已有 retry、错误分类、usage、redaction、单一后备 provider fallback、配置化 pricing/cost、`/healthz` 模型健康快照、`/metrics` 模型运行指标，以及可选主动 provider 探针。探针默认关闭，打开后会发起真实模型调用，并通过 `model_provider.probe_*` 字段和 `niceagent_model_health_probe_*` 指标暴露结果。provider 缺失 usage 或 mock provider 会回退到共享估算器，并在 `RunUsage` 中持久化 `estimated=true` 与 `token_estimator=heuristic_rune_div4`，方便后续替换成真实 tokenizer。DeepSeek 已有 `MODEL_PROVIDER_PROFILE=deepseek` 配置预设：复用 OpenAI-compatible provider，默认补齐官方 base URL，并把 usage provider 标记为 `deepseek`；模型名仍要求显式配置并以官方文档为准。还没有真实 DeepSeek 冒烟记录、复杂多 provider 路由和外部告警系统接入。
 
 ## 修复 PR 顺序
 
@@ -175,7 +175,7 @@ artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也
 目标：
 
 - DeepSeek 接入文档只保留稳定配置原则，不硬编码易过期模型名。
-- 增加 `MODEL_PROVIDER_PROFILE=deepseek` 的配置模板和 smoke checklist。
+- `MODEL_PROVIDER_PROFILE=deepseek` 的配置模板和 smoke checklist 已补齐，真实 API key 冒烟仍待执行。
 - model pricing 已有环境变量配置，下一步可以按 provider/model/version 持久化为配置表。
 - 增加 fallback config 已完成单一后备 provider 版本，默认关闭；provider health 快照、基础 metrics 和可选主动探针已完成，后续再做复杂路由、真实 DeepSeek 冒烟和外部告警系统接入。
 

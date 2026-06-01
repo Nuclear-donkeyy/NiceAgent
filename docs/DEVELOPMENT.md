@@ -111,13 +111,14 @@ make run-runtime
 
 `MODEL_BASE_URL` 必须是 provider 根地址，不要包含 `/v1/chat/completions`、`/chat/completions` 或 `/completions`；runtime 启动时会校验 URL、API key 和模型名。Runtime 会通过 Eino `eino-ext` OpenAI ChatModel 调用 chat completions 协议，并使用 Eino 原生 tool calling 能力。
 
-DeepSeek 仍使用同一个 OpenAI-compatible provider，不新增 `MODEL_PROVIDER=deepseek`：
+DeepSeek 仍使用同一个 OpenAI-compatible provider。推荐使用 `MODEL_PROVIDER_PROFILE=deepseek` 作为配置预设：Runtime 会自动把空的 `MODEL_BASE_URL` 补为官方 OpenAI-compatible 根地址 `https://api.deepseek.com`，并在 usage 里把 provider 标记为 `deepseek`；API key 和模型名仍必须显式配置，模型名以 DeepSeek 官方文档当前值为准。
 
 ```bash
 MODEL_PROVIDER=openai-compatible \
+MODEL_PROVIDER_PROFILE=deepseek \
 MODEL_BASE_URL=https://api.deepseek.com \
 MODEL_API_KEY=replace-with-deepseek-key \
-MODEL_NAME=deepseek-v4-flash \
+MODEL_NAME=replace-with-official-deepseek-model \
 MODEL_TIMEOUT_SECONDS=120 \
 SANDBOX_EXECUTOR_URL=http://127.0.0.1:8082 \
 make run-runtime

@@ -97,6 +97,7 @@ Agent Runtime 默认使用 `MODEL_PROVIDER=mock`，适合本地演示和 CI。�
 - `MODEL_FALLBACK_PROVIDER`：可选后备 provider，当前支持 `mock` 或 `openai-compatible`。为空时不启用 fallback。
 - `MODEL_FALLBACK_BASE_URL`、`MODEL_FALLBACK_API_KEY`、`MODEL_FALLBACK_NAME`：当后备 provider 为 `openai-compatible` 时使用；fallback API key 只能通过环境变量或 Secret 注入。
 - `MODEL_TIMEOUT_SECONDS`：模型 HTTP 请求超时，默认 120 秒。
+- `MODEL_PROVIDER_PROFILE`：可选 provider profile。当前支持 `deepseek`，会复用 OpenAI-compatible provider、默认 `MODEL_BASE_URL=https://api.deepseek.com`，并把 usage provider 标记为 `deepseek`；API key 和模型名仍必须显式配置。
 - `MODEL_INPUT_PRICE_PER_1M_TOKENS`、`MODEL_CACHED_INPUT_PRICE_PER_1M_TOKENS`、`MODEL_OUTPUT_PRICE_PER_1M_TOKENS`、`MODEL_REASONING_PRICE_PER_1M_TOKENS`：可选价格配置，单位是每 100 万 token 的价格；默认都是 0，不提交任何厂商实时价格。
 - `MODEL_PRICE_CURRENCY`：价格币种，默认 `USD`。
 - `MODEL_HEALTH_PROBE_ENABLED`：是否开启主动模型健康探针，默认 `false`，避免本地和 CI 无意产生真实模型调用。
@@ -104,13 +105,14 @@ Agent Runtime 默认使用 `MODEL_PROVIDER=mock`，适合本地演示和 CI。�
 - `MODEL_HEALTH_PROBE_TIMEOUT_SECONDS`：单次探针超时，默认 10 秒。
 - `MODEL_HEALTH_PROBE_INITIAL_DELAY_SECONDS`：Runtime 启动后首次探针延迟，默认 0 秒。
 
-DeepSeek 接入不新增 provider 名，保持：
+DeepSeek 接入不新增 `MODEL_PROVIDER`，仍走 OpenAI-compatible；建议增加 profile：
 
 ```bash
 MODEL_PROVIDER=openai-compatible
+MODEL_PROVIDER_PROFILE=deepseek
 MODEL_BASE_URL=https://api.deepseek.com
 MODEL_API_KEY=sk-...
-MODEL_NAME=deepseek-v4-flash
+MODEL_NAME=<以 DeepSeek 官方文档为准>
 ```
 
 Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，优先采集 provider response 中的真实 token usage；缺失 usage 时按 run 的输入/输出文本做估算并标记 `estimated=true`、`token_estimator=heuristic_rune_div4`。如果配置了价格，Runtime 会在 `RunUsage.cost` 和 `RunUsage.currency` 中回写本次 run 的估算费用；模型价格仍以服务商官方控制台/文档为准，不在仓库中硬编码。
