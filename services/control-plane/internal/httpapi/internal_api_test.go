@@ -200,6 +200,80 @@ func TestInternalRunExecutionContextMaterializesRuntimeRequest(t *testing.T) {
 	}
 }
 
+func TestInternalToolEventsWriteRedactedSkillAuditEvents(t *testing.T) {
+	store, handler := newTestHandler()
+	chat := mustCreateChat(t, store, "demo-user", "tool audit")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "/cli echo hello")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+
+	started := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/events", jsonBody(t, protocol.RunEventWriteRequest{
+		Type:    protocol.EventToolStarted,
+		Message: "Starting skill invocation.",
+		Payload: map[string]any{
+			"skill_id": "cli.exec",
+			"tool":     "cli_exec",
+			"input":    "redacted summary",
+		},
+	}))
+	started.Header.Set("X-Request-ID", "request-tool-started")
+	startedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(startedResponse, started)
+	if startedResponse.Code != http.StatusCreated {
+		t.Fatalf("tool started status = %d, body = %s", startedResponse.Code, startedResponse.Body.String())
+	}
+
+	output := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/events", jsonBody(t, protocol.RunEventWriteRequest{
+		Type:    protocol.EventToolOutput,
+		Message: "Skill invocation returned output.",
+		Payload: map[string]any{
+			"skill_id": "cli.exec",
+			"tool":     "cli_exec",
+			"output":   "secret raw output must stay out of audit",
+			"ok":       false,
+		},
+	}))
+	outputResponse := httptest.NewRecorder()
+	handler.ServeHTTP(outputResponse, output)
+	if outputResponse.Code != http.StatusCreated {
+		t.Fatalf("tool output status = %d, body = %s", outputResponse.Code, outputResponse.Body.String())
+	}
+
+	finished := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/events", jsonBody(t, protocol.RunEventWriteRequest{
+		Type:    protocol.EventToolFinished,
+		Message: "Finished skill invocation.",
+		Payload: map[string]any{
+			"skill_id": "cli.exec",
+			"tool":     "cli_exec",
+			"ok":       false,
+		},
+	}))
+	finished.Header.Set("X-Request-ID", "request-tool-finished")
+	finishedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(finishedResponse, finished)
+	if finishedResponse.Code != http.StatusCreated {
+		t.Fatalf("tool finished status = %d, body = %s", finishedResponse.Code, finishedResponse.Body.String())
+	}
+
+	audits := store.ListAuditEvents(app.DemoActor(), app.AuditEventListOptions{RunID: run.ID})
+	if len(audits) != 2 {
+		t.Fatalf("audit events = %#v, want only started and finished", audits)
+	}
+	if audits[1].Action != "skill.invoke.start" || audits[1].ResourceID != "cli.exec" || audits[1].Decision != protocol.AuditDecisionAllow {
+		t.Fatalf("started audit = %#v", audits[1])
+	}
+	if audits[0].Action != "skill.invoke.finish" || audits[0].ResourceID != "cli.exec" || audits[0].Decision != protocol.AuditDecisionDeny {
+		t.Fatalf("finished audit = %#v", audits[0])
+	}
+	if audits[0].Reason != "skill invocation finished unsuccessfully" {
+		t.Fatalf("finished audit reason = %q", audits[0].Reason)
+	}
+	if audits[0].Metadata["output"] != nil || audits[1].Metadata["input"] != nil {
+		t.Fatalf("audit metadata leaked tool input/output: %#v %#v", audits[0].Metadata, audits[1].Metadata)
+	}
+}
+
 func TestInternalRunQuotaReservePersistsUsageAndDeniesLimits(t *testing.T) {
 	store, handler := newTestHandlerWithOptions(ServerOptions{RunQuota: RunQuota{
 		MaxToolCallsPerDay:      1,

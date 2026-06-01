@@ -36,7 +36,7 @@ Control Plane 已经支持：
 
 创建/更新 HTTP Skill 时已经校验 `name`、`GET|POST`、`auth_type`、`https` URL、URL 不含 credentials、timeout 范围、`input_schema` 和 `output_schema`。`runtime_config` 会由 `HTTPSkillRuntimeConfig` 统一生成，避免 token 进入 runtime config。OpenAPI JSON/YAML preview dry-run 已有最小入口：`POST /api/skills/import/openapi/preview` 会把 `GET/POST` operation 转成 HTTP Skill 候选项；`POST /api/skills/import/openapi` 已能把用户选中的 operation 保存成 HTTP Skill，并复用 bearer token / `env://` / `file://` secret_ref 绑定路径。前端 HTTP Skill 表单和 OpenAPI 导入表单也支持 Secret Ref 输入，生产环境可避免在浏览器里粘贴明文 token。MCP 导入仍未实现。
 
-Agent Runtime 的 `ToolBridge` 已能把 `RuntimeSkill` 转成 Eino tool。builtin skill 调 `cli.exec` 或 `workspace.read`；HTTP Skill 会按 `runtime_config` 构造请求，支持 bearer token，响应限制为 64KB。Runtime 调用 HTTP Skill 前会校验 arguments；返回后会按 `output_schema` 校验 structured output；非 2xx、DNS、TLS、timeout、响应过大、schema 错误会转成结构化 observation。HTTP Skill 默认只允许 `https`，禁用重定向，拒绝 loopback、`.local`、metadata host、字面量 private/link-local IP，并会在发出请求前解析域名，拒绝解析到 private/link-local/loopback/metadata 类地址的 host。HTTP Skill 还支持可选 `retry.max_attempts` 和 `rate_limit.requests_per_minute`；rate limit 默认是 Agent Runtime 进程内固定窗口，也可通过 `SKILL_RATE_LIMIT_MODE=redis` 切到 Redis 分钟窗口，让多个 Runtime 副本共享同一个 skill rate limit。当前仍缺 MCP 导入和更细审计能力。
+Agent Runtime 的 `ToolBridge` 已能把 `RuntimeSkill` 转成 Eino tool。builtin skill 调 `cli.exec` 或 `workspace.read`；HTTP Skill 会按 `runtime_config` 构造请求，支持 bearer token，响应限制为 64KB。Runtime 调用 HTTP Skill 前会校验 arguments；返回后会按 `output_schema` 校验 structured output；非 2xx、DNS、TLS、timeout、响应过大、schema 错误会转成结构化 observation。HTTP Skill 默认只允许 `https`，禁用重定向，拒绝 loopback、`.local`、metadata host、字面量 private/link-local IP，并会在发出请求前解析域名，拒绝解析到 private/link-local/loopback/metadata 类地址的 host。HTTP Skill 还支持可选 `retry.max_attempts` 和 `rate_limit.requests_per_minute`；rate limit 默认是 Agent Runtime 进程内固定窗口，也可通过 `SKILL_RATE_LIMIT_MODE=redis` 切到 Redis 分钟窗口，让多个 Runtime 副本共享同一个 skill rate limit。Control Plane 内部 event 写入路径会把 `tool.started` 和 `tool.finished` 同步写入脱敏后的 `audit_events`，只记录 `skill_id`、tool 名、event id/seq、完成状态和失败原因，不复制 `tool.output` 原始内容。当前仍缺 MCP 导入、独立 skill invocation 专表和更细风险策略。
 
 HTTP dispatcher 已经把完整 `RuntimeSkill` 下发给 Runtime。Redis queue 路径已经收敛为最小 `run_id/attempt_id` payload，并由 Agent Runtime worker 通过 Control Plane execution context API 拉取当前授权后的完整 `RuntimeSkill`，因此 HTTP Skill 执行材料不再依赖 queue payload。
 
@@ -48,11 +48,12 @@ HTTP dispatcher 已经把完整 `RuntimeSkill` 下发给 Runtime。Redis queue �
 - Runtime `ToolBridge` materialize 授权后的 `RuntimeSkill`，支持 builtin、HTTP Skill、secret redaction、`env://` / `file://` secret_ref、入参/出参 schema validation、结构化 observation、SSRF 基础拦截、retry、进程内 per-skill rate limit 和可选 Redis 跨副本 rate limit。
 - Redis queue worker 可通过 execution context 拉取完整 skill manifest，不依赖 queue payload 携带 secret 或大对象。
 - OpenAPI JSON/YAML preview dry-run API 已能生成候选 HTTP Skill；保存 API 已能把选中的 operation 创建为用户 HTTP Skill，并绑定 bearer secret。
+- `tool.started`/`tool.finished` 会进入 `audit_events`，提供 run 级 skill invocation 轨迹；审计 metadata 不包含 tool 原始输入和输出。
 
 仍待落地能力：
 
 - Vault、KMS、External Secrets 等生产 secret resolver。
-- MCP manifest 导入和更细审计。
+- MCP manifest 导入。
 - 独立 skill invocation 审计表、更细粒度风险策略和 Redis rate limit 容量/告警。
 
 ## 扩展点
@@ -119,7 +120,7 @@ OpenAPI/MCP 导入放在下一层：
 1. 最小生产闭环：schema validation、HTTP Skill 错误模型、secret redaction、Runtime 输入校验。
 2. Secret resolver：本地开发继续支持 `encrypted_value`，`env://` 和 `file://` secret_ref 已可用；生产继续补阿里云 KMS/Vault/External Secrets 原生 resolver。
 3. 导入能力：OpenAPI JSON/YAML dry-run API 与最小保存向导已落地；继续实现 MCP manifest 转换器和更完整前端导入体验。
-4. 治理能力：Runtime 进程内和 Redis 跨副本 per-skill rate limit 已有最小闭环；后续继续补 skill invocation 审计、风险策略和更完整 metrics/tracing。
+4. 治理能力：Runtime 进程内和 Redis 跨副本 per-skill rate limit 已有最小闭环；`audit_events` 已记录脱敏 skill invocation 起止轨迹；后续继续补独立 invocation 专表、风险策略和更完整 metrics/tracing。
 
 ## 风险与验收
 
@@ -141,6 +142,7 @@ OpenAPI/MCP 导入放在下一层：
 - HTTP Skill 对 429、5xx、网络/超时错误按配置重试，且 `retry_count` 可观测。
 - HTTP Skill 命中 per-skill rate limit 时返回 `rate_limited` observation 且不发起请求；`SKILL_RATE_LIMIT_MODE=redis` 时多个 Runtime 副本共享同一 Redis 计数窗口。
 - OpenAPI JSON/YAML preview 不创建 skill、不保存 secret，只返回可供用户选择的 HTTP Skill 候选项；保存接口会按选中 operation 单独创建 skill。
+- `tool.output` 原始内容不会写入 `audit_events`；审计列表只暴露脱敏 metadata。
 - HTTP dispatcher 和未来 queue dispatcher 都能让 Runtime 拿到完整授权后的 skill manifest。
 
 ## 参考资料

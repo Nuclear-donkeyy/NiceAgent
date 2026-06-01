@@ -1599,6 +1599,7 @@ func (s *Server) internalWriteRunEvent(w http.ResponseWriter, r *http.Request, r
 		writeStoreErr(w, err)
 		return
 	}
+	s.auditInternalToolEvent(r, runID, event, input.Payload)
 	if input.Type == protocol.EventRunStarted {
 		_, _ = s.repo.UpdateRunStatus(runID, protocol.RunRunning, "")
 	}
@@ -1606,6 +1607,54 @@ func (s *Server) internalWriteRunEvent(w http.ResponseWriter, r *http.Request, r
 		_, _ = s.repo.UpdateRunStatus(runID, protocol.RunWaitingForApproval, "")
 	}
 	platform.WriteJSON(w, http.StatusCreated, event)
+}
+
+func (s *Server) auditInternalToolEvent(r *http.Request, runID string, event protocol.RunEvent, payload any) {
+	if event.Type != protocol.EventToolStarted && event.Type != protocol.EventToolFinished {
+		return
+	}
+	run, err := s.repo.GetRun(runID)
+	if err != nil {
+		return
+	}
+	chat, _, err := s.repo.GetChat(run.ChatID)
+	if err != nil {
+		return
+	}
+	payloadMap, _ := payload.(map[string]any)
+	skillID := stringValue(payloadMap["skill_id"])
+	toolName := stringValue(payloadMap["tool"])
+	if skillID == "" {
+		skillID = toolName
+	}
+	if skillID == "" {
+		skillID = "unknown"
+	}
+	action := "skill.invoke.start"
+	decision := protocol.AuditDecisionAllow
+	reason := ""
+	metadata := map[string]any{
+		"event_id":  event.ID,
+		"event_seq": event.Seq,
+	}
+	if toolName != "" {
+		metadata["tool"] = toolName
+	}
+	if event.Type == protocol.EventToolFinished {
+		action = "skill.invoke.finish"
+		if okValue, exists := boolValue(payloadMap["ok"]); exists {
+			metadata["ok"] = okValue
+			if !okValue {
+				decision = protocol.AuditDecisionDeny
+				reason = "skill invocation finished unsuccessfully"
+			}
+		}
+	}
+	actor := app.ActorContext{
+		UserID:    run.UserID,
+		ProjectID: chat.ProjectID,
+	}
+	s.writeAuditEvent(r, actor, action, "skill", skillID, runID, decision, reason, metadata)
 }
 
 func (s *Server) internalCompleteRun(w http.ResponseWriter, r *http.Request, runID string) {
@@ -2431,6 +2480,24 @@ func pathWithin(root, target string) bool {
 	root = filepath.Clean(root)
 	target = filepath.Clean(target)
 	return target == root || strings.HasPrefix(target, root+string(os.PathSeparator))
+}
+
+func stringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return ""
+	}
+}
+
+func boolValue(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	default:
+		return false, false
+	}
 }
 
 func (s *Server) auditAllow(r *http.Request, action, resourceType, resourceID, runID string, metadata map[string]any) {
