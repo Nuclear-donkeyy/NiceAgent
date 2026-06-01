@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -36,6 +37,10 @@ type ToolQuotaReserver interface {
 	ReserveToolQuota(ctx context.Context, runID string, input protocol.ToolQuotaReserveRequest) (protocol.ToolQuotaReserveResponse, error)
 }
 
+type HostResolver interface {
+	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
+}
+
 type Definition struct {
 	ID          string
 	Name        string
@@ -47,6 +52,7 @@ type Definition struct {
 type DefaultToolBridge struct {
 	Sandbox        SandboxExecutor
 	Client         *http.Client
+	Resolver       HostResolver
 	SecretResolver SecretResolver
 }
 
@@ -54,6 +60,7 @@ func NewDefaultToolBridge(executor SandboxExecutor) *DefaultToolBridge {
 	return &DefaultToolBridge{
 		Sandbox:        executor,
 		Client:         &http.Client{Timeout: 15 * time.Second},
+		Resolver:       net.DefaultResolver,
 		SecretResolver: LocalSecretResolver{},
 	}
 }

@@ -33,6 +33,7 @@ type LocalSecretResolver struct{}
 var (
 	ErrSecretMissing            = errors.New("secret material is missing")
 	ErrSecretRefResolverUnwired = errors.New("secret_ref resolver is not configured")
+	ErrUnsafeResolvedHost       = errors.New("http skill resolved host is not allowed")
 )
 
 func (LocalSecretResolver) ResolveSecret(_ context.Context, material protocol.RuntimeSecret) (string, error) {
@@ -89,6 +90,19 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 			Message:   err.Error(),
 		}), false, nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
+	defer cancel()
+	if err := rejectUnsafeResolvedHTTPHost(ctx, t.bridge.Resolver, cfg.URL); err != nil {
+		errorType := "upstream_dns"
+		if errors.Is(err, ErrUnsafeResolvedHost) {
+			errorType = "ssrf_rejected"
+		}
+		return marshalObservation(httpSkillObservation{
+			OK:        false,
+			ErrorType: errorType,
+			Message:   err.Error(),
+		}), false, nil
+	}
 
 	var secretValues []string
 	var bearerToken string
@@ -104,8 +118,6 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 		secretValues = append(secretValues, bearerToken)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
-	defer cancel()
 	ctx, endSpan := platform.StartSpan(ctx, "niceagent/agent_runtime", "tool.http_skill.request", platform.Labels{
 		"run_id":   t.runID,
 		"skill_id": skill.ID,
@@ -122,12 +134,13 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 		}), false, nil
 	}
 	platform.InjectTraceHeaders(ctx, request.Header)
-	response, err := httpSkillClient(t.bridge.Client).Do(request)
+	response, err := httpSkillClient(t.bridge.Client, t.bridge.Resolver).Do(request)
 	if err != nil {
-		endSpan(err, platform.Labels{"error_type": classifyHTTPClientError(ctx, err)})
+		errorType := classifyHTTPClientError(ctx, err)
+		endSpan(err, platform.Labels{"error_type": errorType})
 		return marshalObservation(httpSkillObservation{
 			OK:        false,
-			ErrorType: classifyHTTPClientError(ctx, err),
+			ErrorType: errorType,
 			Message:   "HTTP skill request failed: " + redactError(err, secretValues),
 		}), false, nil
 	}
@@ -220,7 +233,7 @@ func buildHTTPSkillRequest(ctx context.Context, cfg skillmanifest.HTTPSkillRunti
 	return request, nil
 }
 
-func httpSkillClient(base *http.Client) *http.Client {
+func httpSkillClient(base *http.Client, resolver HostResolver) *http.Client {
 	if base == nil {
 		base = &http.Client{}
 	}
@@ -229,7 +242,66 @@ func httpSkillClient(base *http.Client) *http.Client {
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
+	if transport := guardedTransport(base.Transport, resolver); transport != nil {
+		client.Transport = transport
+	}
 	return &client
+}
+
+func guardedTransport(base http.RoundTripper, resolver HostResolver) http.RoundTripper {
+	guard := &ssrfGuardedDialer{Resolver: resolver}
+	if base == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = guard.DialContext
+		return transport
+	}
+	transport, ok := base.(*http.Transport)
+	if !ok {
+		return nil
+	}
+	clone := transport.Clone()
+	clone.DialContext = guard.DialContext
+	return clone
+}
+
+type ssrfGuardedDialer struct {
+	Resolver HostResolver
+	Dialer   net.Dialer
+}
+
+func (d *ssrfGuardedDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if !isPublicAddr(addr) {
+			return nil, fmt.Errorf("%w: dial target %q is not allowed", ErrUnsafeResolvedHost, addr.String())
+		}
+		return d.Dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+	}
+	resolver := d.Resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	addrs, err := resolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var blocked []string
+	for _, resolved := range addrs {
+		addr, ok := netip.AddrFromSlice(resolved.IP)
+		if !ok || !isPublicAddr(addr) {
+			blocked = append(blocked, resolved.IP.String())
+			continue
+		}
+		return d.Dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("http skill host %q resolved no addresses", host)
+	}
+	return nil, fmt.Errorf("%w: host %q resolved only blocked addresses %q", ErrUnsafeResolvedHost, host, strings.Join(blocked, ","))
 }
 
 func readLimitedResponse(reader io.Reader, limit int64) (string, bool, error) {
@@ -269,6 +341,9 @@ func marshalObservation(observation httpSkillObservation) string {
 }
 
 func classifyHTTPClientError(ctx context.Context, err error) string {
+	if errors.Is(err, ErrUnsafeResolvedHost) {
+		return "ssrf_rejected"
+	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return "upstream_timeout"
 	}
@@ -319,6 +394,40 @@ func rejectUnsafeHTTPURL(rawURL string) error {
 	return nil
 }
 
+func rejectUnsafeResolvedHTTPHost(ctx context.Context, resolver HostResolver, rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	host := strings.Trim(strings.ToLower(parsed.Hostname()), "[]")
+	if host == "" {
+		return errors.New("http skill host is required")
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return nil
+	}
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	addrs, err := resolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("http skill host %q could not be resolved: %w", host, err)
+	}
+	if len(addrs) == 0 {
+		return fmt.Errorf("http skill host %q resolved no addresses", host)
+	}
+	for _, resolved := range addrs {
+		addr, ok := netip.AddrFromSlice(resolved.IP)
+		if !ok {
+			return fmt.Errorf("%w: host %q resolved to invalid address %q", ErrUnsafeResolvedHost, host, resolved.IP.String())
+		}
+		if !isPublicAddr(addr) {
+			return fmt.Errorf("%w: host %q resolved to private address %q", ErrUnsafeResolvedHost, host, addr.String())
+		}
+	}
+	return nil
+}
+
 func safeURLHost(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -341,11 +450,26 @@ func isMetadataHost(host string) bool {
 }
 
 func isPublicAddr(addr netip.Addr) bool {
-	if addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsPrivate() || addr.IsUnspecified() || addr.IsMulticast() {
-		return false
-	}
 	if addr.Is4In6() {
 		return isPublicAddr(addr.Unmap())
 	}
+	if isMetadataAddr(addr) {
+		return false
+	}
+	if addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsPrivate() || addr.IsUnspecified() || addr.IsMulticast() {
+		return false
+	}
 	return true
+}
+
+func isMetadataAddr(addr netip.Addr) bool {
+	if addr.Is4In6() {
+		return isMetadataAddr(addr.Unmap())
+	}
+	switch addr.String() {
+	case "169.254.169.254", "100.100.100.200":
+		return true
+	default:
+		return false
+	}
 }

@@ -165,6 +165,8 @@ Skill 存储分为四层：
 
 前端 `GET /api/skills` 不返回 secret。Runtime 通过 Control Plane 下发的内部 `RuntimeSkill` 获取执行所需 secret。当前本地开发允许把 bearer token 存入 `encrypted_value`；`secret_ref` 第一版支持 `env://ENV_NAME`，适合把 K8s Secret 或外部 Secret Operator 注入为环境变量后再解析。生产环境后续仍应接阿里云 KMS、Vault 或 External Secrets，并避免长期使用明文环境变量作为唯一 secret backend。
 
+HTTP Skill 默认只允许 `https` URL，禁用重定向，拒绝 URL 中携带用户名/密码，并阻断 `localhost`、`.local`、metadata host、字面量 private/link-local/loopback IP。Runtime 发出请求前还会解析目标 host；如果 DNS 结果包含 private、link-local、loopback、multicast 或 unspecified 地址，会返回 `ssrf_rejected` observation，不会发起外部请求。排查 HTTP Skill 失败时优先看 observation 的 `error_type`：`ssrf_rejected` 表示策略拒绝，`upstream_dns` 表示解析失败，`upstream_tls` 表示证书或 TLS 问题。
+
 `workspace.read` 是系统内置只读 skill。它不会让 Runtime 直接读取任意磁盘路径，而是通过 Control Plane 内部 API 列出当前 run 已登记 artifacts，并只读取文本 artifact 的内容摘要。读取会校验 active `attempt_id`，并复用 artifact metadata、workspace root、`output/` 路径限制、symlink escape 检查、regular file 检查、MIME 文本限制和读取大小限制。排查读取失败时优先看 artifact 是否已登记、文件是否仍在 workspace、MIME 是否是文本类型，以及路径是否在 `output/` 下。
 
 ## Postgres 模式排查
