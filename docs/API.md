@@ -204,6 +204,41 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 如果 OpenAPI security scheme 不是当前 HTTP Skill 支持的 bearer 类型，响应会标记 `unsupported_auth=true`，由后续导入 UI 引导用户重新配置鉴权。
 
+`POST /api/skills/import/mcp/preview`
+
+预览 MCP `tools/list` 结果或等价 manifest 中可转换为 NiceAgent skill manifest 的 tool。该接口只做 dry-run，不创建 skill、不保存 secret、不修改 grant，也不表示当前 Runtime 已能直接执行 MCP server。当前支持两种 JSON 形态：
+
+- `{"tools":[...]}`
+- `{"result":{"tools":[...]}}`
+
+请求体：
+
+```json
+{
+  "document": "{\"tools\":[{\"name\":\"weather.lookup\",\"inputSchema\":{\"type\":\"object\"}}]}"
+}
+```
+
+响应体：
+
+```json
+{
+  "candidates": [
+    {
+      "name": "weather.lookup",
+      "description": "Look up weather.",
+      "input_schema": "{\"type\":\"object\"}",
+      "output_schema": "{\"type\":\"object\"}",
+      "annotations": "{\"readOnlyHint\":true}",
+      "read_only_hint": true,
+      "open_world_hint": true
+    }
+  ]
+}
+```
+
+MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。真正保存、授权和执行 MCP tool 仍需要后续 MCP client/runtime adapter。
+
 `POST /api/skills/import/openapi`
 
 把预览中的某个 OpenAPI operation 保存为当前用户/项目下的 HTTP Skill。请求必须携带同一份 OpenAPI 文档，并用 `operation_id` 或 `method + path` 选择 operation；服务端会重新解析文档、生成 `HTTPSkillInput`、复用 HTTP Skill 校验和 secret redaction 存储路径。Bearer operation 必须提供 `bearer_token` 或 `bearer_token_secret_ref`，且二者只能选一个。`bearer_token_secret_ref` 支持 `env://ENV_NAME` 或受 `NICEAGENT_SECRET_FILE_ROOTS` 限制的 `file:///absolute/path`。
