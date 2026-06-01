@@ -124,7 +124,8 @@
 }
 
 .field small,
-.formError {
+.formError,
+.hint {
   color: var(--black);
   font-size: 12px;
   line-height: 1.4;
@@ -135,6 +136,11 @@
   border-left: 2px solid var(--black);
   margin: 0;
   padding: 8px 10px;
+}
+
+.hint {
+  color: var(--muted);
+  margin: 0;
 }
 
 .formRow {

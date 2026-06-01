@@ -146,7 +146,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 `POST /api/skills/http`
 
-创建当前用户的 HTTP Skill，并自动 grant 到当前项目。`bearer_token` 只进入后端 secret 存储，不会出现在后续前端 API 响应。
+创建当前用户的 HTTP Skill，并自动 grant 到当前项目。`bearer_token` 只进入后端 secret 存储，不会出现在后续前端 API 响应。生产环境建议优先传 `bearer_token_secret_ref`，当前 Runtime 支持 `env://ENV_NAME` 和 `file:///absolute/path` 两种本地 resolver 形式；`file://` 路径必须位于 `NICEAGENT_SECRET_FILE_ROOTS` 配置的目录下。
 
 ```json
 {
@@ -158,7 +158,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
   "retry_max_attempts": 3,
   "rate_limit_per_minute": 60,
   "auth_type": "bearer",
-  "bearer_token": "secret"
+  "bearer_token_secret_ref": "env://WEATHER_TOKEN"
 }
 ```
 
@@ -203,7 +203,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 `POST /api/skills/import/openapi`
 
-把预览中的某个 OpenAPI operation 保存为当前用户/项目下的 HTTP Skill。请求必须携带同一份 OpenAPI 文档，并用 `operation_id` 或 `method + path` 选择 operation；服务端会重新解析文档、生成 `HTTPSkillInput`、复用 HTTP Skill 校验和 secret redaction 存储路径。Bearer operation 必须提供 `bearer_token` 或 `bearer_token_secret_ref`。
+把预览中的某个 OpenAPI operation 保存为当前用户/项目下的 HTTP Skill。请求必须携带同一份 OpenAPI 文档，并用 `operation_id` 或 `method + path` 选择 operation；服务端会重新解析文档、生成 `HTTPSkillInput`、复用 HTTP Skill 校验和 secret redaction 存储路径。Bearer operation 必须提供 `bearer_token` 或 `bearer_token_secret_ref`，且二者只能选一个。`bearer_token_secret_ref` 支持 `env://ENV_NAME` 或受 `NICEAGENT_SECRET_FILE_ROOTS` 限制的 `file:///absolute/path`。
 
 请求体：
 
