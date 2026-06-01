@@ -34,6 +34,10 @@ type WorkspaceReader interface {
 	ReadArtifactText(ctx context.Context, runID, artifactID string, maxBytes int) (protocol.ArtifactTextResponse, error)
 }
 
+type ArtifactRegistrar interface {
+	RegisterArtifacts(ctx context.Context, runID string, artifacts []protocol.Artifact) ([]protocol.Artifact, error)
+}
+
 type ToolQuotaReserver interface {
 	ReserveToolQuota(ctx context.Context, runID string, input protocol.ToolQuotaReserveRequest) (protocol.ToolQuotaReserveResponse, error)
 }
@@ -196,6 +200,7 @@ func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, 
 		output, err = t.invokeBuiltin(ctx, argumentsInJSON)
 		ok = err == nil
 	}
+	output = t.registerArtifactsFromOutput(ctx, output)
 	payload := map[string]any{
 		"skill_id": skill.ID,
 		"tool":     toolName,
@@ -218,6 +223,27 @@ func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, 
 		"ok":       ok && err == nil,
 	})
 	return output, err
+}
+
+func (t *runtimeTool) registerArtifactsFromOutput(ctx context.Context, output string) string {
+	registrar, ok := t.sink.(ArtifactRegistrar)
+	if !ok {
+		return output
+	}
+	var result protocol.SandboxResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil || len(result.Artifacts) == 0 {
+		return output
+	}
+	artifacts, err := registrar.RegisterArtifacts(ctx, t.runID, result.Artifacts)
+	if err != nil || len(artifacts) == 0 {
+		return output
+	}
+	result.Artifacts = artifacts
+	body, err := json.Marshal(result)
+	if err != nil {
+		return output
+	}
+	return string(body)
 }
 
 func (t *runtimeTool) reserveToolQuota(ctx context.Context, skill protocol.Skill, argumentsInJSON string) (string, bool, error) {

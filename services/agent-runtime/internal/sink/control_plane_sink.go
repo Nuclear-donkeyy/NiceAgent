@@ -111,6 +111,18 @@ func (s *ControlPlaneSink) ReserveToolQuota(ctx context.Context, runID string, i
 	return response, err
 }
 
+func (s *ControlPlaneSink) RegisterArtifacts(ctx context.Context, runID string, artifacts []protocol.Artifact) ([]protocol.Artifact, error) {
+	if len(artifacts) == 0 {
+		return nil, nil
+	}
+	var response protocol.ArtifactListResponse
+	err := s.post(ctx, "/internal/runs/"+runID+"/artifacts", protocol.ArtifactWriteRequest{
+		AttemptID: s.AttemptID,
+		Artifacts: artifacts,
+	}, &response)
+	return response.Artifacts, err
+}
+
 func (s *ControlPlaneSink) ListArtifacts(ctx context.Context, runID string) ([]protocol.Artifact, error) {
 	values := url.Values{}
 	if s.AttemptID != "" {

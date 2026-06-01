@@ -1834,6 +1834,76 @@ func TestInternalArtifactAPIsListAndReadTextWithAttemptFencing(t *testing.T) {
 	}
 }
 
+func TestInternalRegisterRunArtifactsCreatesEventsAndIsAttemptFenced(t *testing.T) {
+	store, handler := newTestHandler()
+	chat := mustCreateChat(t, store, "demo-user", "incremental artifacts")
+	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "make artifact")
+	if err != nil {
+		t.Fatalf("add user message: %v", err)
+	}
+	if _, err := store.ClaimRunAttempt(run.ID, "attempt-artifact", "runtime-a", time.Now().UTC().Add(time.Minute)); err != nil {
+		t.Fatalf("claim run: %v", err)
+	}
+
+	register := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/artifacts", jsonBody(t, protocol.ArtifactWriteRequest{
+		AttemptID: "attempt-artifact",
+		Artifacts: []protocol.Artifact{{
+			Path:           "output/report.txt",
+			Name:           "report.txt",
+			MimeType:       "text/plain",
+			SizeBytes:      6,
+			StorageBackend: "local",
+		}},
+	}))
+	registerResponse := httptest.NewRecorder()
+	handler.ServeHTTP(registerResponse, register)
+	if registerResponse.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, body = %s", registerResponse.Code, registerResponse.Body.String())
+	}
+	var registered protocol.ArtifactListResponse
+	decodeJSON(t, registerResponse.Body, &registered)
+	if len(registered.Artifacts) != 1 {
+		t.Fatalf("registered artifacts = %#v", registered.Artifacts)
+	}
+	artifact := registered.Artifacts[0]
+	if artifact.ID == "" || artifact.RunID != run.ID || artifact.ChatID != chat.ID || artifact.UserID != "demo-user" || artifact.WorkspaceID != run.WorkspaceID {
+		t.Fatalf("registered artifact identity = %#v", artifact)
+	}
+	if countEvents(store.ListEvents(run.ID, 0), protocol.EventArtifactCreated) != 1 {
+		t.Fatalf("events = %#v, want one artifact.created", store.ListEvents(run.ID, 0))
+	}
+
+	complete := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/complete", jsonBody(t, protocol.RunCompleteRequest{
+		AttemptID: "attempt-artifact",
+		Content:   "done",
+		Artifacts: []protocol.Artifact{artifact},
+	}))
+	completeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(completeResponse, complete)
+	if completeResponse.Code != http.StatusOK {
+		t.Fatalf("complete status = %d, body = %s", completeResponse.Code, completeResponse.Body.String())
+	}
+	if countEvents(store.ListEvents(run.ID, 0), protocol.EventArtifactCreated) != 1 {
+		t.Fatalf("events = %#v, want still one artifact.created", store.ListEvents(run.ID, 0))
+	}
+	if len(store.ListArtifacts(run.ID)) != 1 {
+		t.Fatalf("artifacts = %#v, want one artifact", store.ListArtifacts(run.ID))
+	}
+
+	stale := httptest.NewRequest(http.MethodPost, "/internal/runs/"+run.ID+"/artifacts", jsonBody(t, protocol.ArtifactWriteRequest{
+		AttemptID: "stale",
+		Artifacts: []protocol.Artifact{{
+			Path:     "output/stale.txt",
+			MimeType: "text/plain",
+		}},
+	}))
+	staleResponse := httptest.NewRecorder()
+	handler.ServeHTTP(staleResponse, stale)
+	if staleResponse.Code != http.StatusConflict {
+		t.Fatalf("stale register status = %d, body = %s", staleResponse.Code, staleResponse.Body.String())
+	}
+}
+
 func TestInternalArtifactReadRejectsUnsafeOrBinaryArtifacts(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	t.Setenv("SANDBOX_WORKSPACE_ROOT", workspaceRoot)
@@ -2115,4 +2185,14 @@ func containsEvent(events []protocol.RunEvent, typ protocol.RunEventType) bool {
 		}
 	}
 	return false
+}
+
+func countEvents(events []protocol.RunEvent, typ protocol.RunEventType) int {
+	count := 0
+	for _, event := range events {
+		if event.Type == typ {
+			count++
+		}
+	}
+	return count
 }

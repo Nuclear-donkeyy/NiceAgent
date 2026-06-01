@@ -639,6 +639,29 @@ Agent Runtime 的 `workspace.read` 使用该接口列出当前 run 已登记 art
 
 响应体复用 `ArtifactListResponse`。
 
+`POST /internal/runs/{run_id}/artifacts`
+
+Agent Runtime 在 sandbox/CLI tool 调用结束后使用该接口增量登记本次工具调用产生的 artifact metadata。Control Plane 会校验 active `attempt_id`，补齐 run/chat/user/workspace/project 归属，写入 `artifacts`，并为每个新 artifact 写入 `artifact.created` event。若后续 `complete` 再携带相同 artifact id，Control Plane 会按已有 artifact 处理，不重复发 `artifact.created`。
+
+请求体：
+
+```json
+{
+  "attempt_id": "attempt_xxx",
+  "artifacts": [
+    {
+      "path": "output/report.txt",
+      "name": "report.txt",
+      "mime_type": "text/plain",
+      "size_bytes": 128,
+      "sha256": "..."
+    }
+  ]
+}
+```
+
+响应体复用 `ArtifactListResponse`，返回已保存并补齐 ID/归属字段的 artifacts。
+
 `workspace.read` 当前支持三个 action：
 
 - `summary`：返回当前 run/workspace 的 artifact metadata 摘要，包括 artifact 数量、总大小、MIME 分布、文本 artifact 数量、latest artifact 和 artifact 路径清单；不读取文件内容。
