@@ -140,6 +140,16 @@ MODEL_API_KEY=sk-...
 MODEL_NAME=<以 DeepSeek 官方文档为准>
 ```
 
+真实 key 冒烟使用可选脚本，不把密钥写入仓库：
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+export DEEPSEEK_MODEL="<以 DeepSeek 官方文档为准>"
+make smoke-deepseek-runtime
+```
+
+该命令会启动临时 Agent Runtime，开启一次主动 model health probe，并轮询 `/healthz` 的 `model_provider` 快照。未设置 key 或模型名时会安全 `SKIP`，避免 CI 或本地默认检查产生真实模型调用。详细流程、结果记录和错误分类见 [DeepSeek Runtime 冒烟 Runbook](runbooks/deepseek-runtime-smoke.md)。
+
 Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，优先采集 provider response 中的真实 token usage；缺失 usage 时按 run 的输入/输出文本做估算并标记 `estimated=true`、`token_estimator=heuristic_rune_div4`。如果配置了价格，Runtime 会在 `RunUsage.cost` 和 `RunUsage.currency` 中回写本次 run 的估算费用；模型价格仍以服务商官方控制台/文档为准，不在仓库中硬编码。
 
 `RunUsage` 也会记录 run 级工具/sandbox 聚合：tool 调用数、tool 错误数、sandbox 命令数、sandbox 执行耗时、stdout/stderr 输出字节数、sandbox CPU/内存使用摘要以及 artifact 数量/大小。它们来自 Eino tool observation 和 `SandboxResult`，用于排障、审计和配额/账单聚合。Runtime 执行 tool 前会先向 Control Plane 预占一次 `tool_calls`；`cli.exec` 还会按 timeout 预占 `sandbox_seconds`。如果预占被拒绝，Runtime 不会执行真实 tool，而是把中文 quota deny 作为 tool observation 交给模型。run 完成时会用实际 `RunUsage` 覆盖预占快照。当前还没有更细的按 skill/provider 计费和分布式强一致 token bucket。
