@@ -1,6 +1,11 @@
 const path = require("node:path");
 const { HtmlRspackPlugin } = require("@rspack/core");
 
+const controlPlaneProxyTarget =
+  process.env.NICEAGENT_UI_SMOKE_CONTROL_URL ||
+  process.env.CONTROL_PLANE_PROXY_TARGET ||
+  "http://127.0.0.1:8080";
+
 module.exports = {
   context: __dirname,
   entry: "./src/main.tsx",
@@ -101,7 +106,7 @@ module.exports = {
     proxy: [
       {
         context: ["/api", "/healthz"],
-        target: "http://127.0.0.1:8080",
+        target: controlPlaneProxyTarget,
       },
     ],
   },
