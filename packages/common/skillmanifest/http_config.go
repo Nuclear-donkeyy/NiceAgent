@@ -14,14 +14,31 @@ import (
 const (
 	DefaultHTTPSkillTimeoutSeconds = 15
 	MaxHTTPSkillTimeoutSeconds     = 60
+	DefaultHTTPRetryBaseDelayMS    = 200
+	DefaultHTTPRetryMaxDelayMS     = 2000
+	MaxHTTPRetryAttempts           = 5
+	MaxHTTPRetryDelayMS            = 10000
+	MaxHTTPRateLimitPerMinute      = 600
 )
 
 type HTTPSkillRuntimeConfig struct {
-	Type           string `json:"type,omitempty"`
-	Method         string `json:"method"`
-	URL            string `json:"url"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	AuthType       string `json:"auth_type"`
+	Type           string                   `json:"type,omitempty"`
+	Method         string                   `json:"method"`
+	URL            string                   `json:"url"`
+	TimeoutSeconds int                      `json:"timeout_seconds"`
+	AuthType       string                   `json:"auth_type"`
+	Retry          HTTPSkillRetryConfig     `json:"retry,omitempty"`
+	RateLimit      HTTPSkillRateLimitConfig `json:"rate_limit,omitempty"`
+}
+
+type HTTPSkillRetryConfig struct {
+	MaxAttempts int `json:"max_attempts,omitempty"`
+	BaseDelayMS int `json:"base_delay_ms,omitempty"`
+	MaxDelayMS  int `json:"max_delay_ms,omitempty"`
+}
+
+type HTTPSkillRateLimitConfig struct {
+	RequestsPerMinute int `json:"requests_per_minute,omitempty"`
 }
 
 func NewHTTPSkillRuntimeConfig(input protocol.HTTPSkillInput) (HTTPSkillRuntimeConfig, error) {
@@ -31,6 +48,12 @@ func NewHTTPSkillRuntimeConfig(input protocol.HTTPSkillInput) (HTTPSkillRuntimeC
 		URL:            strings.TrimSpace(input.URL),
 		TimeoutSeconds: input.TimeoutSeconds,
 		AuthType:       strings.TrimSpace(input.AuthType),
+		Retry: HTTPSkillRetryConfig{
+			MaxAttempts: input.RetryMaxAttempts,
+		},
+		RateLimit: HTTPSkillRateLimitConfig{
+			RequestsPerMinute: input.RateLimitPerMinute,
+		},
 	}
 	if cfg.Method == "" {
 		cfg.Method = http.MethodPost
@@ -41,6 +64,7 @@ func NewHTTPSkillRuntimeConfig(input protocol.HTTPSkillInput) (HTTPSkillRuntimeC
 	if cfg.AuthType == "" {
 		cfg.AuthType = "none"
 	}
+	cfg.Retry = normalizeHTTPRetryConfig(cfg.Retry)
 	if err := cfg.Validate(); err != nil {
 		return HTTPSkillRuntimeConfig{}, err
 	}
@@ -67,6 +91,7 @@ func ParseHTTPSkillRuntimeConfig(raw string) (HTTPSkillRuntimeConfig, error) {
 	if cfg.AuthType == "" {
 		cfg.AuthType = "none"
 	}
+	cfg.Retry = normalizeHTTPRetryConfig(cfg.Retry)
 	if err := cfg.Validate(); err != nil {
 		return HTTPSkillRuntimeConfig{}, err
 	}
@@ -100,7 +125,37 @@ func (c HTTPSkillRuntimeConfig) Validate() error {
 	default:
 		return errors.New("auth_type must be none or bearer")
 	}
+	if c.Retry.MaxAttempts <= 0 || c.Retry.MaxAttempts > MaxHTTPRetryAttempts {
+		return fmt.Errorf("retry.max_attempts must be between 1 and %d", MaxHTTPRetryAttempts)
+	}
+	if c.Retry.BaseDelayMS < 0 || c.Retry.BaseDelayMS > MaxHTTPRetryDelayMS {
+		return fmt.Errorf("retry.base_delay_ms must be between 0 and %d", MaxHTTPRetryDelayMS)
+	}
+	if c.Retry.MaxDelayMS < 0 || c.Retry.MaxDelayMS > MaxHTTPRetryDelayMS {
+		return fmt.Errorf("retry.max_delay_ms must be between 0 and %d", MaxHTTPRetryDelayMS)
+	}
+	if c.Retry.MaxDelayMS > 0 && c.Retry.BaseDelayMS > c.Retry.MaxDelayMS {
+		return errors.New("retry.base_delay_ms must be less than or equal to retry.max_delay_ms")
+	}
+	if c.RateLimit.RequestsPerMinute < 0 || c.RateLimit.RequestsPerMinute > MaxHTTPRateLimitPerMinute {
+		return fmt.Errorf("rate_limit.requests_per_minute must be between 0 and %d", MaxHTTPRateLimitPerMinute)
+	}
 	return nil
+}
+
+func normalizeHTTPRetryConfig(cfg HTTPSkillRetryConfig) HTTPSkillRetryConfig {
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = 1
+	}
+	if cfg.MaxAttempts > 1 {
+		if cfg.BaseDelayMS <= 0 {
+			cfg.BaseDelayMS = DefaultHTTPRetryBaseDelayMS
+		}
+		if cfg.MaxDelayMS <= 0 {
+			cfg.MaxDelayMS = DefaultHTTPRetryMaxDelayMS
+		}
+	}
+	return cfg
 }
 
 func (c HTTPSkillRuntimeConfig) JSONString() string {

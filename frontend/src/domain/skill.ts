@@ -41,6 +41,9 @@ export interface HTTPSkillInput {
   url: string;
   input_schema?: string;
   output_schema?: string;
+  timeout_seconds?: number;
+  retry_max_attempts?: number;
+  rate_limit_per_minute?: number;
   auth_type: "none" | "bearer";
   bearer_token?: string;
 }
