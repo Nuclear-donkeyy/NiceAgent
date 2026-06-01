@@ -13,6 +13,17 @@ type Config struct {
 	Addr                             string
 	Environment                      string
 	AuthMode                         string
+	OIDCIssuerURL                    string
+	OIDCAudience                     string
+	OIDCJWKSURL                      string
+	OIDCDefaultProjectID             string
+	OIDCDefaultOrgID                 string
+	OIDCUserIDClaim                  string
+	OIDCProjectIDClaim               string
+	OIDCOrgIDClaim                   string
+	OIDCRolesClaim                   string
+	OIDCEmailClaim                   string
+	OIDCNameClaim                    string
 	StoreDriver                      string
 	DatabaseURL                      string
 	DispatchMode                     string
@@ -53,6 +64,17 @@ func FromEnv() Config {
 		Addr:                             env("CONTROL_PLANE_ADDR", ":8080"),
 		Environment:                      environment,
 		AuthMode:                         env("AUTH_MODE", "demo"),
+		OIDCIssuerURL:                    strings.TrimSpace(os.Getenv("OIDC_ISSUER_URL")),
+		OIDCAudience:                     strings.TrimSpace(os.Getenv("OIDC_AUDIENCE")),
+		OIDCJWKSURL:                      strings.TrimSpace(os.Getenv("OIDC_JWKS_URL")),
+		OIDCDefaultProjectID:             strings.TrimSpace(os.Getenv("OIDC_DEFAULT_PROJECT_ID")),
+		OIDCDefaultOrgID:                 strings.TrimSpace(os.Getenv("OIDC_DEFAULT_ORG_ID")),
+		OIDCUserIDClaim:                  strings.TrimSpace(env("OIDC_USER_ID_CLAIM", "sub")),
+		OIDCProjectIDClaim:               strings.TrimSpace(env("OIDC_PROJECT_ID_CLAIM", "niceagent_project_id")),
+		OIDCOrgIDClaim:                   strings.TrimSpace(env("OIDC_ORG_ID_CLAIM", "niceagent_org_id")),
+		OIDCRolesClaim:                   strings.TrimSpace(env("OIDC_ROLES_CLAIM", "niceagent_roles")),
+		OIDCEmailClaim:                   strings.TrimSpace(env("OIDC_EMAIL_CLAIM", "email")),
+		OIDCNameClaim:                    strings.TrimSpace(env("OIDC_NAME_CLAIM", "name")),
 		StoreDriver:                      env("STORE_DRIVER", "memory"),
 		DatabaseURL:                      os.Getenv("DATABASE_URL"),
 		DispatchMode:                     env("DISPATCH_MODE", "http"),
@@ -90,6 +112,14 @@ func FromEnv() Config {
 func (c Config) Validate() error {
 	if c.InternalTokenRequired && strings.TrimSpace(c.InternalAPIToken) == "" {
 		return fmt.Errorf("INTERNAL_API_TOKEN is required when INTERNAL_API_TOKEN_REQUIRED=true or NICEAGENT_ENV is non-local")
+	}
+	if strings.EqualFold(strings.TrimSpace(c.AuthMode), "oidc") {
+		if strings.TrimSpace(c.OIDCIssuerURL) == "" {
+			return fmt.Errorf("OIDC_ISSUER_URL is required when AUTH_MODE=oidc")
+		}
+		if strings.TrimSpace(c.OIDCAudience) == "" {
+			return fmt.Errorf("OIDC_AUDIENCE is required when AUTH_MODE=oidc")
+		}
 	}
 	switch strings.ToLower(strings.TrimSpace(c.InvitationEmailMode)) {
 	case "", "disabled", "smtp":

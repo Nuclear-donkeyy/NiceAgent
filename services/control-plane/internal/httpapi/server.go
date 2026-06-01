@@ -30,6 +30,7 @@ type Server struct {
 	log              *slog.Logger
 	metrics          *platform.Metrics
 	authMode         string
+	oidcVerifier     *OIDCVerifier
 	controlPlaneURL  string
 	internalToken    string
 	invitationMailer app.InvitationMailer
@@ -46,6 +47,7 @@ type ServerOptions struct {
 	RunQuota              RunQuota
 	QuotaLimiter          quotapkg.Limiter
 	TokenReservation      TokenReservationOptions
+	OIDC                  OIDCConfig
 }
 
 const defaultAttemptLeaseSeconds = 600
@@ -68,12 +70,22 @@ func NewServer(repo app.Repository, dispatcher app.RunDispatcher, log *slog.Logg
 }
 
 func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log *slog.Logger, opts ServerOptions) *Server {
+	authMode := normalizeAuthMode(opts.AuthMode)
+	var oidcVerifier *OIDCVerifier
+	if authMode == "oidc" {
+		verifier, err := NewOIDCVerifier(opts.OIDC)
+		if err != nil {
+			panic(err)
+		}
+		oidcVerifier = verifier
+	}
 	return &Server{
 		repo:             repo,
 		dispatcher:       dispatcher,
 		log:              log,
 		metrics:          platform.NewMetrics("control_plane"),
-		authMode:         normalizeAuthMode(opts.AuthMode),
+		authMode:         authMode,
+		oidcVerifier:     oidcVerifier,
 		controlPlaneURL:  strings.TrimRight(opts.ControlPlanePublicURL, "/"),
 		internalToken:    internalToken(opts.InternalAPIToken),
 		invitationMailer: opts.InvitationMailer,
@@ -1512,7 +1524,9 @@ type actorContextKey struct{}
 
 func normalizeAuthMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "oidc", "trusted-header", "trusted_header":
+	case "oidc":
+		return "oidc"
+	case "trusted-header", "trusted_header":
 		return "trusted-header"
 	default:
 		return "demo"
@@ -1725,9 +1739,26 @@ func (s *Server) withActor(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
 			return
 		}
-		actor, ok := actorFromTrustedHeaders(r)
-		if !ok {
-			s.writeAuditEvent(r, app.ActorContext{}, "auth.authenticate", "request", r.URL.Path, "", protocol.AuditDecisionDeny, "missing trusted actor headers", nil)
+		var actor app.ActorContext
+		switch s.authMode {
+		case "trusted-header":
+			var ok bool
+			actor, ok = actorFromTrustedHeaders(r)
+			if !ok {
+				s.writeAuditEvent(r, app.ActorContext{}, "auth.authenticate", "request", r.URL.Path, "", protocol.AuditDecisionDeny, "missing trusted actor headers", nil)
+				platform.WriteError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+		case "oidc":
+			var err error
+			actor, err = s.actorFromOIDCRequest(r)
+			if err != nil {
+				s.writeAuditEvent(r, app.ActorContext{}, "auth.authenticate", "request", r.URL.Path, "", protocol.AuditDecisionDeny, err.Error(), nil)
+				platform.WriteError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+		default:
+			s.writeAuditEvent(r, app.ActorContext{}, "auth.authenticate", "request", r.URL.Path, "", protocol.AuditDecisionDeny, "unsupported auth mode", map[string]any{"auth_mode": s.authMode})
 			platform.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
@@ -1793,6 +1824,17 @@ func (s *Server) bindActorIdentity(w http.ResponseWriter, r *http.Request, actor
 	}
 	platform.WriteError(w, http.StatusInternalServerError, err.Error())
 	return false
+}
+
+func (s *Server) actorFromOIDCRequest(r *http.Request) (app.ActorContext, error) {
+	if s.oidcVerifier == nil {
+		return app.ActorContext{}, errors.New("OIDC verifier is not configured")
+	}
+	token := bearerToken(r)
+	if token == "" {
+		return app.ActorContext{}, errors.New("missing bearer token")
+	}
+	return s.oidcVerifier.ActorFromBearer(r.Context(), token)
 }
 
 func (s *Server) loadPersistentActorRoles(actor app.ActorContext, path string) []string {

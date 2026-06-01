@@ -34,6 +34,61 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: AUTH_MODE
+            - name: OIDC_ISSUER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_ISSUER_URL
+            - name: OIDC_AUDIENCE
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_AUDIENCE
+            - name: OIDC_JWKS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_JWKS_URL
+            - name: OIDC_DEFAULT_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_DEFAULT_PROJECT_ID
+            - name: OIDC_DEFAULT_ORG_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_DEFAULT_ORG_ID
+            - name: OIDC_USER_ID_CLAIM
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_USER_ID_CLAIM
+            - name: OIDC_PROJECT_ID_CLAIM
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_PROJECT_ID_CLAIM
+            - name: OIDC_ORG_ID_CLAIM
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_ORG_ID_CLAIM
+            - name: OIDC_ROLES_CLAIM
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_ROLES_CLAIM
+            - name: OIDC_EMAIL_CLAIM
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_EMAIL_CLAIM
+            - name: OIDC_NAME_CLAIM
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_NAME_CLAIM
             - name: DISPATCH_MODE
               valueFrom:
                 configMapKeyRef:

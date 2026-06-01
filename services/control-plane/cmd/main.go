@@ -59,6 +59,19 @@ func main() {
 			Mode:         cfg.QuotaModelTokenReservationMode,
 			OutputBuffer: cfg.QuotaModelTokenOutputBuffer,
 		},
+		OIDC: httpapi.OIDCConfig{
+			Issuer:           cfg.OIDCIssuerURL,
+			Audience:         cfg.OIDCAudience,
+			JWKSURL:          cfg.OIDCJWKSURL,
+			DefaultProjectID: cfg.OIDCDefaultProjectID,
+			DefaultOrgID:     cfg.OIDCDefaultOrgID,
+			UserIDClaim:      cfg.OIDCUserIDClaim,
+			ProjectIDClaim:   cfg.OIDCProjectIDClaim,
+			OrgIDClaim:       cfg.OIDCOrgIDClaim,
+			RolesClaim:       cfg.OIDCRolesClaim,
+			EmailClaim:       cfg.OIDCEmailClaim,
+			NameClaim:        cfg.OIDCNameClaim,
+		},
 	})
 
 	logger.Info("starting control plane", "addr", cfg.Addr, "auth_mode", cfg.AuthMode)
