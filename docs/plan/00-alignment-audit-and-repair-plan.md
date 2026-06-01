@@ -200,7 +200,7 @@ PR 1 的文档状态收口后，近期更适合继续推进这些真实生产化
 2. NiceAgent 内置 OIDC login/session/refresh token，补齐从 API resource server 到浏览器登录产品链路的缺口。
 3. 邮件投递模板、退信处理和队列化发送，让邀请流程从最小闭环走向可运营。
 4. 真实 tokenizer/按模型动态估算、强一致账单级 quota、外部告警路由和值班系统。
-5. Sandbox container 默认执行路径、egress policy、镜像白名单和复杂 artifact 预览。
+5. Sandbox container 默认执行路径、egress policy、复杂 artifact 预览和更完整容量建议；镜像白名单与 healthz 可观测已落地。
 
 ## 最小验收命令
 

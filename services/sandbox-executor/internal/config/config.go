@@ -28,6 +28,7 @@ type Config struct {
 	ContainerNoNewPrivs    bool
 	ContainerTmpfs         string
 	ContainerLocalFallback bool
+	ContainerAllowedImages []string
 }
 
 func FromEnv() Config {
@@ -53,12 +54,31 @@ func FromEnv() Config {
 		ContainerNoNewPrivs:    envBool("SANDBOX_CONTAINER_NO_NEW_PRIVILEGES", true),
 		ContainerTmpfs:         env("SANDBOX_CONTAINER_TMPFS", "/tmp:rw,noexec,nosuid,size=64m"),
 		ContainerLocalFallback: envBool("SANDBOX_CONTAINER_LOCAL_FALLBACK", true),
+		ContainerAllowedImages: csvEnv("SANDBOX_CONTAINER_ALLOWED_IMAGES"),
 	}
 }
 
 func (c Config) Validate() error {
 	if c.InternalTokenRequired && strings.TrimSpace(c.InternalAPIToken) == "" {
 		return fmt.Errorf("INTERNAL_API_TOKEN is required when INTERNAL_API_TOKEN_REQUIRED=true or NICEAGENT_ENV is non-local")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.ExecutorMode)) {
+	case "", "local", "container":
+	default:
+		return fmt.Errorf("unsupported EXECUTOR_MODE %q", c.ExecutorMode)
+	}
+	if strings.ToLower(strings.TrimSpace(c.ExecutorMode)) == "container" && len(c.ContainerAllowedImages) > 0 {
+		image := strings.TrimSpace(c.ContainerImage)
+		allowedImage := false
+		for _, allowed := range c.ContainerAllowedImages {
+			if image == allowed {
+				allowedImage = true
+				break
+			}
+		}
+		if !allowedImage {
+			return fmt.Errorf("SANDBOX_CONTAINER_IMAGE %q is not in SANDBOX_CONTAINER_ALLOWED_IMAGES", image)
+		}
 	}
 	return nil
 }
@@ -107,6 +127,22 @@ func envBool(key string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func csvEnv(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func isNonLocalEnvironment(environment string) bool {

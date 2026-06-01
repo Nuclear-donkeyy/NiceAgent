@@ -177,6 +177,17 @@ Kubernetes 模板包含 `deployments/k8s/sandbox-hardening.yaml`，由 `make k8s
 
 这只是 K8s 层的最小防线，不等同于强多租户安全沙箱。生产环境继续建议把 sandbox worker 放到独立节点池，并按风险等级评估 gVisor/Kata/Firecracker、RuntimeClass、egress policy、镜像白名单和更细的审计。
 
+Sandbox Executor 支持 `EXECUTOR_MODE=local|container`。本地和 Compose 默认仍是 `local`，避免没有 Docker CLI/socket 的开发容器直接失效；切到 `container` 前应先确保宿主 Docker 可用，并配置：
+
+```bash
+EXECUTOR_MODE=container
+SANDBOX_CONTAINER_IMAGE=alpine:3.20
+SANDBOX_CONTAINER_ALLOWED_IMAGES=alpine:3.20
+SANDBOX_CONTAINER_LOCAL_FALLBACK=false
+```
+
+`SANDBOX_CONTAINER_ALLOWED_IMAGES` 是逗号分隔白名单；当 `EXECUTOR_MODE=container` 且白名单非空时，Sandbox Executor 启动会拒绝不在白名单内的 `SANDBOX_CONTAINER_IMAGE`。`GET /healthz` 会返回 `executor_mode`、`container_image` 和 `container_allowed_images`，用于确认当前执行路径和镜像策略。生产环境建议关闭 `SANDBOX_CONTAINER_LOCAL_FALLBACK`，避免 Docker 不可用时静默回退到本地执行。
+
 ## Skill 与 Secret 排查
 
 Skill 存储分为四层：

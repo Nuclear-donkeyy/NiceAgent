@@ -12,10 +12,22 @@ import (
 )
 
 type Handler struct {
-	executor Executor
-	token    string
-	metrics  *platform.Metrics
-	logger   *slog.Logger
+	executor   Executor
+	token      string
+	metrics    *platform.Metrics
+	logger     *slog.Logger
+	healthInfo HealthInfo
+}
+
+type HealthInfo struct {
+	ExecutorMode           string   `json:"executor_mode,omitempty"`
+	ContainerImage         string   `json:"container_image,omitempty"`
+	ContainerAllowedImages []string `json:"container_allowed_images,omitempty"`
+}
+
+type HandlerOptions struct {
+	Logger *slog.Logger
+	Health HealthInfo
 }
 
 type Executor interface {
@@ -27,7 +39,11 @@ func NewHandler(executor Executor, token string) http.Handler {
 }
 
 func NewHandlerWithLogger(executor Executor, token string, logger *slog.Logger) http.Handler {
-	h := Handler{executor: executor, token: token, metrics: platform.NewMetrics("sandbox_executor"), logger: logger}
+	return NewHandlerWithOptions(executor, token, HandlerOptions{Logger: logger})
+}
+
+func NewHandlerWithOptions(executor Executor, token string, opts HandlerOptions) http.Handler {
+	h := Handler{executor: executor, token: token, metrics: platform.NewMetrics("sandbox_executor"), logger: opts.Logger, healthInfo: opts.Health}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", platform.Method(http.MethodGet, h.health))
 	mux.Handle("/metrics", h.metrics.Handler())
@@ -39,7 +55,17 @@ func NewHandlerWithLogger(executor Executor, token string, logger *slog.Logger) 
 }
 
 func (h Handler) health(w http.ResponseWriter, _ *http.Request) {
-	platform.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	response := map[string]any{"status": "ok"}
+	if h.healthInfo.ExecutorMode != "" {
+		response["executor_mode"] = h.healthInfo.ExecutorMode
+	}
+	if h.healthInfo.ContainerImage != "" {
+		response["container_image"] = h.healthInfo.ContainerImage
+	}
+	if len(h.healthInfo.ContainerAllowedImages) > 0 {
+		response["container_allowed_images"] = h.healthInfo.ContainerAllowedImages
+	}
+	platform.WriteJSON(w, http.StatusOK, response)
 }
 
 func (h Handler) exec(w http.ResponseWriter, r *http.Request) {
