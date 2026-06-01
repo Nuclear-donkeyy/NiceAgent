@@ -22,6 +22,7 @@ type SkillKind string
 const (
 	SkillKindBuiltin SkillKind = "builtin"
 	SkillKindHTTP    SkillKind = "http"
+	SkillKindMCP     SkillKind = "mcp"
 )
 
 type SkillStatus string
@@ -141,6 +142,20 @@ type OpenAPIImportPreviewResponse struct {
 
 type MCPImportPreviewInput struct {
 	Document string `json:"document"`
+}
+
+type MCPImportCreateInput struct {
+	Document             string `json:"document"`
+	ToolName             string `json:"tool_name"`
+	ServerURL            string `json:"server_url"`
+	Name                 string `json:"name,omitempty"`
+	Description          string `json:"description,omitempty"`
+	AuthType             string `json:"auth_type,omitempty"`
+	BearerToken          string `json:"bearer_token,omitempty"`
+	BearerTokenSecretRef string `json:"bearer_token_secret_ref,omitempty"`
+	TimeoutSeconds       int    `json:"timeout_seconds,omitempty"`
+	RetryMaxAttempts     int    `json:"retry_max_attempts,omitempty"`
+	RateLimitPerMinute   int    `json:"rate_limit_per_minute,omitempty"`
 }
 
 type MCPSkillImportCandidate struct {

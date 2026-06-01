@@ -25,11 +25,11 @@ docs                         中文架构、API、开发、路线图和运维文
 
 - Control Plane 默认使用 memory store，适合本地演示；配置 `STORE_DRIVER=postgres` 和 `DATABASE_URL` 后可切到 Postgres 持久化。
 - Control Plane 的主路径是 HTTP dispatcher，可通过 `AGENT_RUNTIME_URL` 调度独立 Agent Runtime；未配置时回退到本地 demo dispatcher。
-- Agent Runtime 使用 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel`；mock provider 用于本地/CI，OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，ToolBridge 负责执行系统 CLI 和用户 HTTP Skill。
+- Agent Runtime 使用 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel`；mock provider 用于本地/CI，OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，ToolBridge 负责执行系统 CLI、用户 HTTP Skill 和最小 MCP HTTP JSON-RPC Skill。
 - Sandbox 当前提供独立 Sandbox Executor 服务、local executor 和 container executor 入口；系统 CLI 是 agent runtime 的无用户授权工具，按只读网络型策略执行或拒绝命令。
 - Artifact 支持 workspace metadata、列表、下载、内容预览、可选 `expires_at`、内部过期 metadata 清理和本地 workspace 文件回收；对象存储归档/生命周期后续继续补齐。
-- Frontend 使用 React + Rspack + TypeScript + SCSS Modules，支持会话搜索、归档/恢复、最近 run replay、系统能力/我的能力分组展示和 HTTP Skill 添加入口；主界面以聊天和 agent 当前状态为中心。
-- Skill 元数据采用 Postgres/memory 双实现，按用户/项目 grant 加载；HTTP Skill 的 bearer token 不返回前端，当前支持明文开发密钥、`env://` 和受限 `file://` secret ref，并可用 Redis 做跨 Runtime 的 per-skill rate limit；生产级 KMS/Vault/External Secret 原生 resolver 后续补齐。
+- Frontend 使用 React + Rspack + TypeScript + SCSS Modules，支持会话搜索、归档/恢复、最近 run replay、系统能力/我的能力分组展示、HTTP Skill 添加入口和 MCP tools/list 导入入口；主界面以聊天和 agent 当前状态为中心。
+- Skill 元数据采用 Postgres/memory 双实现，按用户/项目 grant 加载；HTTP/MCP Skill 的 bearer token 不返回前端，当前支持明文开发密钥、`env://` 和受限 `file://` secret ref，并可用 Redis 做跨 Runtime 的 per-skill rate limit；生产级 KMS/Vault/External Secret 原生 resolver 后续补齐。
 - 三服务已支持 `X-Trace-ID`、标准 `traceparent`、`/metrics` 和可选 OpenTelemetry OTLP HTTP exporter；OTel 已覆盖 HTTP 入口、调度/回写、run/tool/model、HTTP Skill、Sandbox 和 Redis queue 关键 span，默认关闭 exporter，本地/CI 不依赖外部 collector。
 - Redis Streams 已有 Control Plane 入队、Agent Runtime worker、attempt/lease fencing 和跨副本 event fanout 最小闭环；集中式 secret backend、NiceAgent 内置登录、多租户商业化配额和完整审批恢复仍在后续阶段。
 

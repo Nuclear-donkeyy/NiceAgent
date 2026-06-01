@@ -10,6 +10,7 @@ import (
 
 	"niceagent/common/platform"
 	"niceagent/common/protocol"
+	"niceagent/common/skillmanifest"
 	"niceagent/control-plane/internal/app"
 )
 
@@ -2051,6 +2052,58 @@ func (s *PostgresStore) CreateHTTPSkill(userID, projectID string, input protocol
 	return redactSkill(skill), nil
 }
 
+func (s *PostgresStore) CreateMCPSkill(userID, projectID string, input protocol.MCPImportCreateInput) (protocol.Skill, error) {
+	skill, _, secret, hasSecret, err := skillmanifest.BuildMCPSkillInput(input)
+	if err != nil {
+		return protocol.Skill{}, err
+	}
+	skill.ID = platform.NewID("skill")
+	skill.Slug = skill.ID
+	skill.Scope = protocol.SkillScopeUser
+	skill.Kind = protocol.SkillKindMCP
+	skill.OwnerUserID = userID
+	skill.ProjectID = projectID
+	skill.Status = protocol.SkillStatusEnabled
+	skill.CurrentVersionID = platform.NewID("skv")
+	skill.Enabled = true
+	now := time.Now().UTC()
+	tx, err := s.begin()
+	if err != nil {
+		return protocol.Skill{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`
+		INSERT INTO skills (id, slug, scope, kind, owner_user_id, project_id, status, current_version_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		skill.ID, skill.Slug, skill.Scope, skill.Kind, skill.OwnerUserID, skill.ProjectID, skill.Status, skill.CurrentVersionID, now, now); err != nil {
+		return protocol.Skill{}, err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO skill_versions (id, skill_id, version, name, description, risk, input_schema, output_schema, annotations, runtime_config, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::jsonb, NULLIF($8, '')::jsonb, NULLIF($9, '')::jsonb, NULLIF($10, '')::jsonb, $11)`,
+		skill.CurrentVersionID, skill.ID, skill.Version, skill.Name, skill.Description, skill.Risk, skill.InputSchema, skill.OutputSchema, skill.Annotations, skill.RuntimeConfig, now); err != nil {
+		return protocol.Skill{}, err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO skill_grants (id, user_id, project_id, skill_id, enabled, created_at)
+		VALUES ($1, $2, $3, $4, true, $5)`,
+		platform.NewID("grant"), userID, projectID, skill.ID, now); err != nil {
+		return protocol.Skill{}, err
+	}
+	if hasSecret {
+		if _, err := tx.Exec(`
+			INSERT INTO skill_secrets (id, skill_id, secret_key, secret_ref, encrypted_value, created_at, updated_at)
+			VALUES ($1, $2, 'bearer_token', NULLIF($3, ''), NULLIF($4, ''), $5, $6)`,
+			platform.NewID("secret"), skill.ID, secret.SecretRef, secret.EncryptedValue, now, now); err != nil {
+			return protocol.Skill{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return protocol.Skill{}, err
+	}
+	return redactSkill(skill), nil
+}
+
 func (s *PostgresStore) UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkillInput) (protocol.Skill, error) {
 	var current protocol.Skill
 	var scope, kind, status, projectID string
@@ -2129,7 +2182,7 @@ func (s *PostgresStore) SetSkillEnabled(userID, skillID string, enabled bool) (p
 	if affected == 0 {
 		return protocol.Skill{}, app.ErrNotFound
 	}
-	return s.getOwnedHTTPSkill(userID, skillID)
+	return s.getOwnedSkill(userID, skillID)
 }
 
 func (s *PostgresStore) RecordSkillInvocation(input protocol.SkillInvocationRecordInput) (protocol.SkillInvocationRecord, error) {
@@ -2409,7 +2462,7 @@ func (s *PostgresStore) getOrganizationMember(orgID, userID string) (protocol.Or
 	return member, nil
 }
 
-func (s *PostgresStore) getOwnedHTTPSkill(userID, skillID string) (protocol.Skill, error) {
+func (s *PostgresStore) getOwnedSkill(userID, skillID string) (protocol.Skill, error) {
 	var skill protocol.Skill
 	var scope, kind, status, risk string
 	if err := s.queryRow(`
@@ -2420,7 +2473,7 @@ func (s *PostgresStore) getOwnedHTTPSkill(userID, skillID string) (protocol.Skil
 		       COALESCE(v.annotations::text, ''), COALESCE(v.runtime_config::text, '')
 		FROM skills s
 		JOIN skill_versions v ON v.id = s.current_version_id
-		WHERE s.id = $1 AND s.owner_user_id = $2 AND s.kind = 'http'`, skillID, userID).Scan(
+		WHERE s.id = $1 AND s.owner_user_id = $2`, skillID, userID).Scan(
 		&skill.ID, &skill.Slug, &scope, &kind, &skill.OwnerUserID, &skill.ProjectID,
 		&status, &skill.CurrentVersionID, &skill.Name, &skill.Version, &skill.Description,
 		&risk, &skill.RequiresAuth, &skill.InputSchema, &skill.OutputSchema, &skill.Annotations,

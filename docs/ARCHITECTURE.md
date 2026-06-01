@@ -51,7 +51,9 @@ Agent Runtime 是独立部署的 agent 实例服务，不应由 Control Plane �
 - `internal/tools`：平台 skill 到 runtime tool 的桥，以及 SandboxExecutor 端口。
 - `internal/sink`：Control Plane event/status/complete/fail 回写客户端。
 
-当前主路径已经接入 Eino ADK `ChatModelAgent + Runner`。Runtime 会接收 Control Plane 下发的 `RuntimeSkill` manifest，通过 ToolBridge 构造 Eino tools；系统 CLI 和用户 HTTP Skill 都作为 tool 被 agentic loop 调用。模型层已切到 Eino 原生 `ToolCallingChatModel`：mock provider 直接实现 Eino 接口，OpenAI-compatible provider 通过 `github.com/cloudwego/eino-ext/components/model/openai` 接入。
+当前主路径已经接入 Eino ADK `ChatModelAgent + Runner`。Runtime 会接收 Control Plane 下发的 `RuntimeSkill` manifest，通过 ToolBridge 构造 Eino tools；系统 CLI、用户 HTTP Skill 和用户 MCP Skill 都作为 tool 被 agentic loop 调用。模型层已切到 Eino 原生 `ToolCallingChatModel`：mock provider 直接实现 Eino 接口，OpenAI-compatible provider 通过 `github.com/cloudwego/eino-ext/components/model/openai` 接入。
+
+MCP Skill 当前是最小 HTTP JSON-RPC adapter：Control Plane 从 `tools/list` manifest 保存 tool schema、annotations 和 server runtime config；Runtime 执行时调用远端 `tools/call`。该路径尚未实现 MCP stdio/SSE transport、initialize/session negotiation 或动态 `tools/list_changed` cache invalidation。
 
 ## Sandbox Executor
 
@@ -66,7 +68,7 @@ Sandbox Executor 独立部署，负责命令执行策略。当前 `packages/comm
 
 ## 前端
 
-前端位于 `frontend`，使用 React + Rspack + TypeScript + SCSS Modules。设计风格参考 ChatGPT 网页版：左侧会话、系统能力和我的能力，右侧主对话区和输入框。底层 `RunEvent` 通过 SSE 接收，但会折叠成 assistant 流式文本和 agent 当前状态，不再默认展示原始事件列表或 CLI 调试输出。HTTP Skill 可以在“我的能力”中最小化添加和启停。视觉以黑、白、微黄色为主，减少圆角，强调面性和线性结构。
+前端位于 `frontend`，使用 React + Rspack + TypeScript + SCSS Modules。设计风格参考 ChatGPT 网页版：左侧会话、系统能力和我的能力，右侧主对话区和输入框。底层 `RunEvent` 通过 SSE 接收，但会折叠成 assistant 流式文本和 agent 当前状态，不再默认展示原始事件列表或 CLI 调试输出。HTTP Skill 可以在“我的能力”中最小化添加和启停，MCP tools/list 可以导入为用户 MCP Skill。视觉以黑、白、微黄色为主，减少圆角，强调面性和线性结构。
 
 前端目录按职责分层：
 

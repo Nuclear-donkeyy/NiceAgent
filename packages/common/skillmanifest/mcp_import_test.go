@@ -3,6 +3,8 @@ package skillmanifest
 import (
 	"strings"
 	"testing"
+
+	"niceagent/common/protocol"
 )
 
 func TestPreviewMCPTools(t *testing.T) {
@@ -87,5 +89,36 @@ func TestPreviewMCPToolsRejectsInvalidInput(t *testing.T) {
 				t.Fatal("expected error")
 			}
 		})
+	}
+}
+
+func TestBuildMCPSkillInput(t *testing.T) {
+	document := `{
+		"tools": [{
+			"name": "weather.lookup",
+			"description": "Look up weather.",
+			"inputSchema": {"type":"object","required":["city"],"properties":{"city":{"type":"string"}}},
+			"outputSchema": {"type":"object","properties":{"summary":{"type":"string"}}},
+			"annotations": {"readOnlyHint": true, "openWorldHint": true}
+		}]
+	}`
+	skill, candidate, secret, hasSecret, err := BuildMCPSkillInput(protocol.MCPImportCreateInput{
+		Document:             document,
+		ToolName:             "weather.lookup",
+		ServerURL:            "https://mcp.example.com/rpc",
+		AuthType:             "bearer",
+		BearerTokenSecretRef: "env://MCP_TOKEN",
+	})
+	if err != nil {
+		t.Fatalf("build mcp skill input: %v", err)
+	}
+	if candidate.Name != "weather.lookup" || skill.Risk != protocol.SkillRiskMedium || !skill.RequiresAuth {
+		t.Fatalf("skill = %#v candidate = %#v", skill, candidate)
+	}
+	if !strings.Contains(skill.RuntimeConfig, `"tool_name":"weather.lookup"`) || !strings.Contains(skill.RuntimeConfig, `"type":"mcp"`) {
+		t.Fatalf("runtime config = %s", skill.RuntimeConfig)
+	}
+	if !hasSecret || secret.SecretRef != "env://MCP_TOKEN" || secret.EncryptedValue != "" {
+		t.Fatalf("secret = %#v hasSecret = %v", secret, hasSecret)
 	}
 }

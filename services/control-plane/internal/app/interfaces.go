@@ -113,6 +113,7 @@ type Repository interface {
 	ListSkillsForUser(userID, projectID string) []protocol.Skill
 	ListRuntimeSkillsForUser(userID, projectID string) []protocol.RuntimeSkill
 	CreateHTTPSkill(userID, projectID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
+	CreateMCPSkill(userID, projectID string, input protocol.MCPImportCreateInput) (protocol.Skill, error)
 	UpdateHTTPSkill(userID, skillID string, input protocol.HTTPSkillInput) (protocol.Skill, error)
 	SetSkillEnabled(userID, skillID string, enabled bool) (protocol.Skill, error)
 	RecordSkillInvocation(input protocol.SkillInvocationRecordInput) (protocol.SkillInvocationRecord, error)

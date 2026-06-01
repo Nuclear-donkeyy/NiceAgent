@@ -47,6 +47,7 @@ export default function App() {
           groups={workspace.skillGroups}
           onCreateHTTPSkill={workspace.createHTTPSkill}
           onCreateOpenAPIImportedSkill={workspace.createOpenAPIImportedSkill}
+          onCreateMCPImportedSkill={workspace.createMCPImportedSkill}
           onPreviewOpenAPIImport={workspace.previewOpenAPIImport}
           onPreviewMCPImport={workspace.previewMCPImport}
           onSetSkillEnabled={workspace.setSkillEnabled}

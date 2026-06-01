@@ -200,6 +200,8 @@ func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, 
 	switch skill.Kind {
 	case protocol.SkillKindHTTP:
 		output, ok, err = t.invokeHTTP(ctx, argumentsInJSON)
+	case protocol.SkillKindMCP:
+		output, ok, err = t.invokeMCP(ctx, argumentsInJSON)
 	default:
 		output, err = t.invokeBuiltin(ctx, argumentsInJSON)
 		ok = err == nil

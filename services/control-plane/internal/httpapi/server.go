@@ -1171,6 +1171,10 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.createOpenAPIImportedSkill(w, r)
 		return
 	}
+	if len(parts) == 2 && parts[0] == "import" && parts[1] == "mcp" && r.Method == http.MethodPost {
+		s.createMCPImportedSkill(w, r)
+		return
+	}
 	if len(parts) == 1 && r.Method == http.MethodPatch {
 		s.updateHTTPSkill(w, r, parts[0])
 		return
@@ -1283,6 +1287,31 @@ func (s *Server) createOpenAPIImportedSkill(w http.ResponseWriter, r *http.Reque
 		"auth_type":     skillInput.AuthType,
 		"secret_bound":  skillInput.BearerToken != "" || skillInput.BearerTokenSecretRef != "",
 		"security_hint": candidate.SecurityScheme,
+	})
+	platform.WriteJSON(w, http.StatusCreated, skill)
+}
+
+func (s *Server) createMCPImportedSkill(w http.ResponseWriter, r *http.Request) {
+	actor := actorFromRequest(r)
+	if !s.requireWriteRole(w, r, "skill.import.mcp.create", "skill", "", "") {
+		return
+	}
+	var input protocol.MCPImportCreateInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	skill, err := s.repo.CreateMCPSkill(actor.UserID, actor.ProjectID, input)
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.auditAllow(r, "skill.import.mcp.create", "skill", skill.ID, "", map[string]any{
+		"kind":         string(skill.Kind),
+		"source":       "mcp",
+		"tool_name":    strings.TrimSpace(input.ToolName),
+		"auth_type":    input.AuthType,
+		"secret_bound": input.BearerToken != "" || input.BearerTokenSecretRef != "",
 	})
 	platform.WriteJSON(w, http.StatusCreated, skill)
 }
