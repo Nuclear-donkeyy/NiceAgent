@@ -82,11 +82,15 @@ func TestFromEnvReadsQuotaCounterConfig(t *testing.T) {
 
 func TestFromEnvReadsArtifactRetention(t *testing.T) {
 	t.Setenv("ARTIFACT_RETENTION_DAYS", "14")
+	t.Setenv("ARTIFACT_CLEANUP_DELETE_FILES", "true")
 
 	cfg := FromEnv()
 
 	if cfg.ArtifactRetentionDays != 14 {
 		t.Fatalf("artifact retention days = %d, want 14", cfg.ArtifactRetentionDays)
+	}
+	if !cfg.ArtifactCleanupDeleteFiles {
+		t.Fatal("artifact cleanup delete files = false, want true")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1994,6 +1995,8 @@ func TestInternalRegisterRunArtifactsCreatesEventsAndIsAttemptFenced(t *testing.
 }
 
 func TestInternalRegisterRunArtifactsAppliesRetentionAndCleanup(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	t.Setenv("SANDBOX_WORKSPACE_ROOT", workspaceRoot)
 	store, handler := newTestHandlerWithOptions(ServerOptions{ArtifactRetention: time.Hour})
 	chat := mustCreateChat(t, store, "demo-user", "expiring artifacts")
 	_, run, err := store.AddUserMessage(chat.ID, "demo-user", "make artifact")
@@ -2024,25 +2027,43 @@ func TestInternalRegisterRunArtifactsAppliesRetentionAndCleanup(t *testing.T) {
 	}
 
 	expiredAt := time.Now().UTC().Add(-time.Minute)
+	outputDir := filepath.Join(workspaceRoot, run.WorkspaceID, "output")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	expiredFile := filepath.Join(outputDir, "old.txt")
+	if err := os.WriteFile(expiredFile, []byte("old"), 0o644); err != nil {
+		t.Fatalf("write expired artifact: %v", err)
+	}
 	expired, err := store.AddArtifact(protocol.Artifact{
-		RunID:     run.ID,
-		Path:      "output/old.txt",
-		MimeType:  "text/plain",
-		ExpiresAt: &expiredAt,
+		RunID:          run.ID,
+		Path:           "output/old.txt",
+		MimeType:       "text/plain",
+		StorageBackend: "local",
+		ExpiresAt:      &expiredAt,
 	})
 	if err != nil {
 		t.Fatalf("add expired artifact: %v", err)
 	}
-	cleanup := httptest.NewRequest(http.MethodPost, "/internal/artifacts/cleanup-expired", jsonBody(t, protocol.ArtifactCleanupRequest{Limit: 10}))
+	cleanup := httptest.NewRequest(http.MethodPost, "/internal/artifacts/cleanup-expired", jsonBody(t, protocol.ArtifactCleanupRequest{
+		Limit:       10,
+		DeleteFiles: true,
+	}))
 	cleanupResponse := httptest.NewRecorder()
 	handler.ServeHTTP(cleanupResponse, cleanup)
 	if cleanupResponse.Code != http.StatusOK {
 		t.Fatalf("cleanup status = %d, body = %s", cleanupResponse.Code, cleanupResponse.Body.String())
 	}
-	var cleaned protocol.ArtifactListResponse
+	var cleaned protocol.ArtifactCleanupResponse
 	decodeJSON(t, cleanupResponse.Body, &cleaned)
 	if len(cleaned.Artifacts) != 1 || cleaned.Artifacts[0].ID != expired.ID || cleaned.Artifacts[0].DeletedAt == nil {
 		t.Fatalf("cleaned artifacts = %#v, want expired artifact marked deleted", cleaned.Artifacts)
+	}
+	if cleaned.DeletedFiles != 1 || len(cleaned.FileErrors) != 0 {
+		t.Fatalf("cleanup file result = deleted:%d errors:%v, want one deleted file", cleaned.DeletedFiles, cleaned.FileErrors)
+	}
+	if _, err := os.Stat(expiredFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expired file stat err = %v, want not exist", err)
 	}
 }
 

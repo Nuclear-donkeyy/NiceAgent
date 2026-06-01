@@ -712,15 +712,25 @@ Agent Runtime 的 `workspace.read` 使用该接口读取已登记文本 artifact
 
 `POST /internal/artifacts/cleanup-expired`
 
-Control Plane 运维/后台任务使用该接口把已过期 artifact metadata 标记为删除。请求需要内部 bearer token；第一版只更新 metadata 的 `deleted_at`，不会删除本地文件或对象存储中的真实文件。
+Control Plane 运维/后台任务使用该接口清理已过期 artifact。请求需要内部 bearer token；默认会把 metadata 标记为 `deleted_at`。如果请求传 `delete_files=true`，或 Control Plane 配置 `ARTIFACT_CLEANUP_DELETE_FILES=true`，还会对 `storage_backend` 为空或 `local` 的 artifact 做本地文件回收。文件回收会复用 workspace root、`output/` 相对路径和 symlink escape 校验；对象存储对象仍需要后续生命周期策略处理。
 
 请求体：
 
 ```json
-{ "limit": 100 }
+{ "limit": 100, "delete_files": true }
 ```
 
-响应体复用 `ArtifactListResponse`，返回本次被标记删除的 artifacts。`limit` 默认 100，最大 1000。
+响应体：
+
+```json
+{
+  "artifacts": [],
+  "deleted_files": 0,
+  "file_errors": []
+}
+```
+
+`artifacts` 返回本次被标记删除的 metadata；`deleted_files` 是本次成功删除的本地文件数；`file_errors` 是不能安全删除或删除失败的 artifact 摘要。`limit` 默认 100，最大 1000。
 
 响应体：
 

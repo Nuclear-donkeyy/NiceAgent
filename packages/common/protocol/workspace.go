@@ -41,7 +41,14 @@ type ArtifactWriteRequest struct {
 }
 
 type ArtifactCleanupRequest struct {
-	Limit int `json:"limit,omitempty"`
+	Limit       int  `json:"limit,omitempty"`
+	DeleteFiles bool `json:"delete_files,omitempty"`
+}
+
+type ArtifactCleanupResponse struct {
+	Artifacts    []Artifact `json:"artifacts"`
+	DeletedFiles int        `json:"deleted_files"`
+	FileErrors   []string   `json:"file_errors,omitempty"`
 }
 
 type ArtifactTextResponse struct {
