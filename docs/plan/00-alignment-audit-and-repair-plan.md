@@ -134,9 +134,12 @@ artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也
 - 可返回当前 run/workspace 的 artifact metadata 摘要，不读取文件内容。
 - 所有读取走 Control Plane artifact metadata 和 workspace path 安全校验。
 
-仍待验收/后续补强：
+已补强验收：
 
-- 跨用户/跨项目 artifact 不可读。
+- 外部 artifact list/get/download API 已有跨用户和跨项目隔离回归测试，越权访问统一返回 `404`。
+
+仍待后续补强：
+
 - 非文本 artifact 预览。
 
 ### PR 5：Auth/RBAC/Quota/OTel 生产化补齐
