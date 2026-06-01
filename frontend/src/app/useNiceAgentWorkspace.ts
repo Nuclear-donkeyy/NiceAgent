@@ -39,6 +39,7 @@ export function useNiceAgentWorkspace() {
   const lastSeqByRunRef = useRef<Map<string, number>>(new Map());
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runStatusRef = useRef<RunStatus>("idle");
+  const reconnectingRef = useRef(false);
 
   useEffect(() => {
     runStatusRef.current = runStatus;
@@ -236,15 +237,27 @@ export function useNiceAgentWorkspace() {
 
   function openEvents(id: string, chatIdForRefresh = activeChatId, refreshOnTerminal = false) {
     closeEvents();
+    reconnectingRef.current = false;
     setAgentStatus("正在连接 Agent Runtime");
     const afterSeq = lastSeqByRunRef.current.get(id) || 0;
     const params = afterSeq > 0 ? `?after=${encodeURIComponent(String(afterSeq))}` : "";
     const source = new EventSource(`/api/runs/${encodeURIComponent(id)}/events${params}`);
     sourceRef.current = source;
-    source.onopen = () => setAgentStatus("Agent Runtime 已连接");
+    source.onopen = () => {
+      if (sourceRef.current !== source || terminalRunStatuses.has(runStatusRef.current)) return;
+      if (reconnectingRef.current) {
+        reconnectingRef.current = false;
+        setAgentStatus("连接已恢复，正在补齐事件");
+        setNotice("连接已恢复");
+        return;
+      }
+      setAgentStatus("Agent Runtime 已连接");
+    };
     source.onerror = () => {
-      if (!terminalRunStatuses.has(runStatusRef.current))
-        setNotice("连接暂时中断，浏览器会自动重连");
+      if (sourceRef.current !== source || terminalRunStatuses.has(runStatusRef.current)) return;
+      reconnectingRef.current = true;
+      setAgentStatus("连接暂时中断，正在重连");
+      setNotice("连接暂时中断，浏览器会自动重连");
     };
     runEventTypes.forEach((type) => {
       source.addEventListener(type, (raw) => {
@@ -296,6 +309,7 @@ export function useNiceAgentWorkspace() {
       sourceRef.current.close();
       sourceRef.current = null;
     }
+    reconnectingRef.current = false;
   }
 
   function resetRunPanels() {

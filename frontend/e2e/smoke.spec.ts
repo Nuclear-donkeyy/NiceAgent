@@ -64,11 +64,14 @@ test("smoke covers chat, CLI state, artifacts, HTTP Skill and refresh recovery",
 
   await expect(page.getByText("请用 CLI 获取信息并生成报告")).toBeVisible();
   await expect(page.getByText("正在通过系统 CLI 获取信息：curl https://example.com")).toBeVisible();
+  await expect(page.getByText("连接暂时中断，正在重连")).toBeVisible();
+  await expect(page.getByText("连接已恢复，正在补齐事件")).toBeVisible();
   await expect(page.getByRole("link", { name: "下载 report.txt" })).toHaveAttribute(
     "href",
     "/api/artifacts/art-run/download",
   );
   await expect(page.getByText("报告已生成。")).toBeVisible();
+  await expect(page.getByText("报告已生成。报告已生成。")).toHaveCount(0);
 
   await page.getByRole("button", { name: "添加" }).click();
   await page.getByRole("button", { name: "保存 HTTP Skill" }).click();
@@ -160,6 +163,7 @@ async function installMockEventSource(page: Page) {
       onopen: ((event: Event) => void) | null = null;
       readyState = 0;
       url: string;
+      private openCount = 0;
 
       constructor(url: string) {
         super();
@@ -173,13 +177,47 @@ async function installMockEventSource(page: Page) {
 
       private open() {
         if (this.readyState === 2) return;
+        this.openCount += 1;
         this.readyState = 1;
         const openEvent = new Event("open");
         this.onopen?.(openEvent);
         this.dispatchEvent(openEvent);
-        for (const item of streams[this.url] || []) {
+        const items = this.itemsForConnection();
+        for (const item of items) {
           setTimeout(() => this.emit(item), item.delay);
         }
+        if (this.url === "/api/runs/run-cli/events" && this.openCount === 1) {
+          setTimeout(() => this.disconnect(), 220);
+        }
+      }
+
+      private itemsForConnection(): StreamItem[] {
+        const items = streams[this.url] || [];
+        if (this.url !== "/api/runs/run-cli/events") return items;
+        if (this.openCount === 1)
+          return items.filter(
+            (item) => item.type === "run.started" || item.type === "tool.started",
+          );
+        return [
+          {
+            delay: 20,
+            type: "tool.started",
+            data: runEvent(2, "evt-tool-duplicate", "run-cli", "tool.started", "重复工具事件", {
+              command: ["curl", "https://example.com"],
+              skill_id: "system.cli",
+            }),
+          },
+          ...items.filter((item) => item.type !== "run.started" && item.type !== "tool.started"),
+        ];
+      }
+
+      private disconnect() {
+        if (this.readyState === 2) return;
+        this.readyState = 0;
+        const errorEvent = new Event("error");
+        this.onerror?.(errorEvent);
+        this.dispatchEvent(errorEvent);
+        setTimeout(() => this.open(), 180);
       }
 
       private emit(item: StreamItem) {
