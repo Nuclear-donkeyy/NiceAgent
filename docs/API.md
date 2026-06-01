@@ -567,6 +567,12 @@ Agent Runtime 的 `workspace.read` 使用该接口列出当前 run 已登记 art
 
 响应体复用 `ArtifactListResponse`。
 
+`workspace.read` 当前支持三个 action：
+
+- `summary`：返回当前 run/workspace 的 artifact metadata 摘要，包括 artifact 数量、总大小、MIME 分布、文本 artifact 数量、latest artifact 和 artifact 路径清单；不读取文件内容。
+- `list`：返回已登记 artifact metadata 列表。
+- `read`：读取指定文本 artifact 的内容摘要，需要传 `artifact_id`，可选 `max_bytes`。
+
 `GET /internal/artifacts/{artifact_id}/content`
 
 Agent Runtime 的 `workspace.read` 使用该接口读取已登记文本 artifact 的内容摘要。查询参数：

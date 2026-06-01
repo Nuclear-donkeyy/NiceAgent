@@ -63,6 +63,37 @@ func TestWorkspaceReadListsAndReadsArtifacts(t *testing.T) {
 		t.Fatalf("list output = %s", listOutput)
 	}
 
+	summaryOutput, err := workspaceTool.InvokableRun(context.Background(), `{"action":"summary"}`)
+	if err != nil {
+		t.Fatalf("summary artifacts: %v", err)
+	}
+	var summary struct {
+		RunID           string `json:"run_id"`
+		WorkspaceID     string `json:"workspace_id"`
+		ArtifactSummary struct {
+			Count             int            `json:"count"`
+			TotalSizeBytes    int64          `json:"total_size_bytes"`
+			MimeTypeCounts    map[string]int `json:"mime_type_counts"`
+			TextArtifactCount int            `json:"text_artifact_count"`
+			Artifacts         []struct {
+				ID   string `json:"id"`
+				Path string `json:"path"`
+			} `json:"artifacts"`
+		} `json:"artifact_summary"`
+	}
+	if err := json.Unmarshal([]byte(summaryOutput), &summary); err != nil {
+		t.Fatalf("decode summary output: %v", err)
+	}
+	if summary.RunID != "run_1" || summary.WorkspaceID != "ws_1" {
+		t.Fatalf("summary identity = %#v", summary)
+	}
+	if summary.ArtifactSummary.Count != 1 || summary.ArtifactSummary.TotalSizeBytes != 12 || summary.ArtifactSummary.MimeTypeCounts["text/plain"] != 1 || summary.ArtifactSummary.TextArtifactCount != 1 {
+		t.Fatalf("summary output = %s", summaryOutput)
+	}
+	if len(summary.ArtifactSummary.Artifacts) != 1 || summary.ArtifactSummary.Artifacts[0].Path != "output/report.txt" {
+		t.Fatalf("summary artifacts = %#v", summary.ArtifactSummary.Artifacts)
+	}
+
 	readOutput, err := workspaceTool.InvokableRun(context.Background(), `{"action":"read","artifact_id":"art_1","max_bytes":20}`)
 	if err != nil {
 		t.Fatalf("read artifact: %v", err)

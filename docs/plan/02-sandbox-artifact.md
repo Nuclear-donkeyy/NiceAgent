@@ -36,7 +36,7 @@ Kubernetes 生产层可用 Job/Pod 承载 sandbox task，并通过 requests/limi
 
 Sandbox 执行后会扫描 workspace `output/` 下的新增或修改文件，生成 artifact metadata 和 workspace diff。Agent Runtime 会从 tool observation 中提取 artifacts，并在 run complete 时交给 Control Plane 持久化；Control Plane 会写入 `artifact.created` event。前端已有 artifact domain/API、`ArtifactList` 展示和下载入口，刷新后可按 run 恢复 artifact metadata。
 
-`workspace.read` 已能通过 Control Plane 内部 API 列出当前 run artifacts，并安全读取已登记文本 artifact 的内容摘要。读取路径复用 artifact metadata、workspace root、`output/` 限制、symlink escape 检查、MIME 文本限制和最大读取字节数。
+`workspace.read` 已能通过 Control Plane 内部 API 列出当前 run artifacts，返回 workspace/artifact 元数据摘要，并安全读取已登记文本 artifact 的内容摘要。摘要 action 不读取文件内容，只汇总 artifact 数量、总大小、MIME 分布、文本 artifact 数量、latest artifact 和 artifact 路径清单；读取路径复用 artifact metadata、workspace root、`output/` 限制、symlink escape 检查、MIME 文本限制和最大读取字节数。
 
 ## 扩展点
 
@@ -44,7 +44,7 @@ Sandbox 执行后会扫描 workspace `output/` 下的新增或修改文件，生
 - `SandboxResult` 扩展 artifact、workspace diff、resource usage、audit id、policy decision。
 - Control Plane 增加 `artifacts` 表、artifact repository、list/download API。
 - Runtime 在 tool 调用后根据 Sandbox result 写入 `artifact.created`。
-- `workspace.read` 继续扩展更多 workspace 元数据，但仍只能读取已登记 artifact 或经过 Control Plane 校验的只读资源。
+- `workspace.read` 继续扩展更多 workspace 元数据和 artifact preview，但仍只能读取已登记 artifact 或经过 Control Plane 校验的只读资源。
 - K8s 已有基础 NetworkPolicy、ResourceQuota、LimitRange 和 securityContext；后续补 RuntimeClass、独立节点池、egress policy 和镜像白名单示例。
 
 ## 技术架构
@@ -101,7 +101,7 @@ Artifact 元数据建议包括：
 
 ## 分阶段落地
 
-1. 持久化与只读闭环：`artifacts` 表、workspace 记录、artifact list/download API、`artifact.created` event、`workspace.read` artifact list/text read。
+1. 持久化与只读闭环：`artifacts` 表、workspace 记录、artifact list/download API、`artifact.created` event、`workspace.read` artifact summary/list/text read。
 2. 容器默认执行：Sandbox Executor 接入 ContainerExecutor，加资源、网络和 security flags。
 3. Artifact 产品化：前端展示、下载、失败提示、过期状态、run replay 恢复。
 4. K8s 加固：基础 NetworkPolicy、ResourceQuota、LimitRange 和 Sandbox Executor securityContext 已落地；后续继续补 RuntimeClass、独立节点池、egress policy 和镜像白名单。

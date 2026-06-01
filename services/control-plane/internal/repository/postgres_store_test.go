@@ -396,7 +396,7 @@ func TestPostgresStoreListsUserSkillGrantsWhenConfigured(t *testing.T) {
 	if len(skills) == 0 {
 		t.Fatal("expected demo user skills")
 	}
-	var foundCLI bool
+	var foundCLI, foundWorkspace bool
 	for _, skill := range skills {
 		if skill.ID == "cli.exec" {
 			foundCLI = true
@@ -404,9 +404,18 @@ func TestPostgresStoreListsUserSkillGrantsWhenConfigured(t *testing.T) {
 				t.Fatalf("cli.exec requires auth = true, want false")
 			}
 		}
+		if skill.ID == "workspace.read" {
+			foundWorkspace = true
+			if !strings.Contains(skill.InputSchema, `"summary"`) {
+				t.Fatalf("workspace.read input schema = %s, want summary action", skill.InputSchema)
+			}
+		}
 	}
 	if !foundCLI {
 		t.Fatalf("skills = %#v, want cli.exec", skills)
+	}
+	if !foundWorkspace {
+		t.Fatalf("skills = %#v, want workspace.read", skills)
 	}
 }
 

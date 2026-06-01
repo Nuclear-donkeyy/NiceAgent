@@ -58,7 +58,7 @@ VALUES
     'Workspace Reader',
     'Inspect files and artifacts attached to a run workspace.',
     'low',
-    NULL,
+    '{"type":"object","properties":{"action":{"type":"string","enum":["summary","list","read"],"description":"summary returns workspace artifact metadata; list returns artifacts; read returns text artifact content"},"artifact_id":{"type":"string"},"max_bytes":{"type":"integer","minimum":1,"maximum":262144}}}',
     '{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}',
     '{"type":"builtin"}'
   )

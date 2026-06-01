@@ -281,6 +281,17 @@ func (t *runtimeTool) invokeWorkspaceRead(ctx context.Context, argumentsInJSON s
 		action = "list"
 	}
 	switch action {
+	case "summary":
+		artifacts, err := reader.ListArtifacts(ctx, t.runID)
+		if err != nil {
+			return "", err
+		}
+		body, _ := json.Marshal(workspaceSummary{
+			RunID:        t.runID,
+			WorkspaceID:  t.workspaceID,
+			ArtifactMeta: summarizeArtifacts(artifacts),
+		})
+		return string(body), nil
 	case "list":
 		artifacts, err := reader.ListArtifacts(ctx, t.runID)
 		if err != nil {
@@ -306,6 +317,82 @@ func (t *runtimeTool) invokeWorkspaceRead(ctx context.Context, argumentsInJSON s
 		return string(body), nil
 	default:
 		return "", fmt.Errorf("unsupported workspace.read action %q", action)
+	}
+}
+
+type workspaceSummary struct {
+	RunID        string          `json:"run_id"`
+	WorkspaceID  string          `json:"workspace_id"`
+	ArtifactMeta artifactSummary `json:"artifact_summary"`
+}
+
+type artifactSummary struct {
+	Count             int             `json:"count"`
+	TotalSizeBytes    int64           `json:"total_size_bytes"`
+	MimeTypeCounts    map[string]int  `json:"mime_type_counts"`
+	TextArtifactCount int             `json:"text_artifact_count"`
+	LatestArtifact    *artifactBrief  `json:"latest_artifact,omitempty"`
+	Artifacts         []artifactBrief `json:"artifacts"`
+}
+
+type artifactBrief struct {
+	ID        string `json:"id"`
+	Path      string `json:"path"`
+	Name      string `json:"name,omitempty"`
+	MimeType  string `json:"mime_type"`
+	SizeBytes int64  `json:"size_bytes"`
+	CreatedAt string `json:"created_at,omitempty"`
+}
+
+func summarizeArtifacts(artifacts []protocol.Artifact) artifactSummary {
+	summary := artifactSummary{
+		Count:          len(artifacts),
+		MimeTypeCounts: map[string]int{},
+		Artifacts:      make([]artifactBrief, 0, len(artifacts)),
+	}
+	var latest *artifactBrief
+	var latestTime time.Time
+	for _, artifact := range artifacts {
+		mimeType := strings.TrimSpace(artifact.MimeType)
+		if mimeType == "" {
+			mimeType = "unknown"
+		}
+		summary.TotalSizeBytes += artifact.SizeBytes
+		summary.MimeTypeCounts[mimeType]++
+		if isTextMimeType(mimeType) {
+			summary.TextArtifactCount++
+		}
+		brief := artifactBrief{
+			ID:        artifact.ID,
+			Path:      artifact.Path,
+			Name:      artifact.Name,
+			MimeType:  mimeType,
+			SizeBytes: artifact.SizeBytes,
+		}
+		if !artifact.CreatedAt.IsZero() {
+			brief.CreatedAt = artifact.CreatedAt.UTC().Format(time.RFC3339)
+		}
+		summary.Artifacts = append(summary.Artifacts, brief)
+		if latest == nil || artifact.CreatedAt.After(latestTime) {
+			copy := brief
+			latest = &copy
+			latestTime = artifact.CreatedAt
+		}
+	}
+	summary.LatestArtifact = latest
+	return summary
+}
+
+func isTextMimeType(mimeType string) bool {
+	mimeType = strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+	if strings.HasPrefix(mimeType, "text/") {
+		return true
+	}
+	switch mimeType {
+	case "application/json", "application/xml", "application/yaml", "application/x-yaml", "application/csv", "application/javascript":
+		return true
+	default:
+		return false
 	}
 }
 

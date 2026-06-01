@@ -69,6 +69,7 @@
 - 让 Sandbox Executor 默认走容器执行路径，local executor 只作为测试和 fallback。
 - 按 run/workspace 隔离工作目录，记录命令、退出码、耗时、输出截断状态和文件变更摘要。
 - 将生成文件登记为 `Artifact`，由 Control Plane 保存元数据并通过前端展示。
+- `workspace.read` 已能返回 artifact summary/list/text read，后续继续补增量 artifact 可见性和非文本预览。
 - 强化策略：只读网络型命令白名单、写磁盘范围限制、资源限制、超时和环境变量过滤。
 
 验收标准：
