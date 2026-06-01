@@ -139,6 +139,26 @@ type OpenAPIImportPreviewResponse struct {
 	Candidates []HTTPSkillImportCandidate `json:"candidates"`
 }
 
+type MCPImportPreviewInput struct {
+	Document string `json:"document"`
+}
+
+type MCPSkillImportCandidate struct {
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	InputSchema  string `json:"input_schema,omitempty"`
+	OutputSchema string `json:"output_schema,omitempty"`
+	Annotations  string `json:"annotations,omitempty"`
+	ReadOnlyHint bool   `json:"read_only_hint,omitempty"`
+	Destructive  bool   `json:"destructive_hint,omitempty"`
+	Idempotent   bool   `json:"idempotent_hint,omitempty"`
+	OpenWorld    bool   `json:"open_world_hint,omitempty"`
+}
+
+type MCPImportPreviewResponse struct {
+	Candidates []MCPSkillImportCandidate `json:"candidates"`
+}
+
 type SkillInvocation struct {
 	ID             string     `json:"id"`
 	RunID          string     `json:"run_id"`

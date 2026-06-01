@@ -1380,6 +1380,42 @@ func TestServerPreviewsOpenAPIImport(t *testing.T) {
 	}
 }
 
+func TestServerPreviewsMCPImport(t *testing.T) {
+	store, handler := newTestHandler()
+	document := `{
+		"tools": [{
+			"name": "weather.lookup",
+			"description": "Look up weather.",
+			"inputSchema": {"type":"object","properties":{"city":{"type":"string"}}},
+			"annotations": {"readOnlyHint": true, "openWorldHint": true}
+		}]
+	}`
+	request := httptest.NewRequest(http.MethodPost, "/api/skills/import/mcp/preview", jsonBody(t, protocol.MCPImportPreviewInput{
+		Document: document,
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var output protocol.MCPImportPreviewResponse
+	decodeJSON(t, response.Body, &output)
+	if len(output.Candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one", output.Candidates)
+	}
+	candidate := output.Candidates[0]
+	if candidate.Name != "weather.lookup" || !candidate.ReadOnlyHint || !candidate.OpenWorld {
+		t.Fatalf("candidate = %#v, want MCP weather candidate", candidate)
+	}
+	if !strings.Contains(candidate.InputSchema, `"city"`) {
+		t.Fatalf("input schema = %s", candidate.InputSchema)
+	}
+	auditEvents := store.ListAuditEvents(app.DemoActor(), app.AuditEventListOptions{Action: "skill.import.mcp.preview"})
+	if len(auditEvents) != 1 || auditEvents[0].Metadata["candidate_count"] != 1 {
+		t.Fatalf("audit events = %#v", auditEvents)
+	}
+}
+
 func TestServerCreatesOpenAPIImportedSkill(t *testing.T) {
 	store, handler := newTestHandler()
 	document := `{

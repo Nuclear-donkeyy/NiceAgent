@@ -1149,6 +1149,10 @@ func (s *Server) skillSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.previewOpenAPIImport(w, r)
 		return
 	}
+	if len(parts) == 3 && parts[0] == "import" && parts[1] == "mcp" && parts[2] == "preview" && r.Method == http.MethodPost {
+		s.previewMCPImport(w, r)
+		return
+	}
 	if len(parts) == 2 && parts[0] == "import" && parts[1] == "openapi" && r.Method == http.MethodPost {
 		s.createOpenAPIImportedSkill(w, r)
 		return
@@ -1214,6 +1218,26 @@ func (s *Server) previewOpenAPIImport(w http.ResponseWriter, r *http.Request) {
 		"candidate_count": len(candidates),
 	})
 	platform.WriteJSON(w, http.StatusOK, protocol.OpenAPIImportPreviewResponse{Candidates: candidates})
+}
+
+func (s *Server) previewMCPImport(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWriteRole(w, r, "skill.import.mcp.preview", "skill", "", "") {
+		return
+	}
+	var input protocol.MCPImportPreviewInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	candidates, err := skillmanifest.PreviewMCPTools(input.Document)
+	if err != nil {
+		platform.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.auditAllow(r, "skill.import.mcp.preview", "skill", "", "", map[string]any{
+		"candidate_count": len(candidates),
+	})
+	platform.WriteJSON(w, http.StatusOK, protocol.MCPImportPreviewResponse{Candidates: candidates})
 }
 
 func (s *Server) createOpenAPIImportedSkill(w http.ResponseWriter, r *http.Request) {
