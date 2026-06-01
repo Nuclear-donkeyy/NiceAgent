@@ -254,6 +254,7 @@ make test
 make check-js
 make smoke-three-services
 make smoke-three-services-ui
+make smoke-control-plane-fanout
 make compose-config
 git diff --check
 ```
@@ -271,6 +272,14 @@ make smoke-three-services-redis
 ```
 
 该命令会使用唯一 stream/group，执行两次 `/cli echo ...`，并校验每个 run 的 `claimed_by` 都来自预期 Runtime consumer；当启动多个 Runtime 时，还会确认至少两个 consumer 实际 claim 到工作。
+
+需要验证多 Control Plane 进程之间的 Redis event fanout 时运行：
+
+```bash
+make smoke-control-plane-fanout
+```
+
+该命令会启动临时 Postgres、Redis、两个 Control Plane、Agent Runtime 和 Sandbox Executor。请求从第一个 Control Plane 创建 run，Runtime 回写第一个 Control Plane；脚本从第二个 Control Plane 订阅同一个 run 的 SSE，并验证 `tool.output`、`model.token` 和 `run.succeeded` 能通过 Redis nudge + 共享 Postgres 被补齐。
 
 需要验证真实浏览器 UI 与三服务联动时运行：
 
