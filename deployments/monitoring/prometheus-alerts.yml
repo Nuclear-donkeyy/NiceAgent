@@ -1,0 +1,152 @@
+groups:
+  - name: niceagent-service-health
+    rules:
+      - alert: NiceAgentHighHTTP5xxRate
+        expr: |
+          sum by (service) (rate(niceagent_http_requests_total{status=~"5.."}[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: http
+        annotations:
+          summary: "NiceAgent {{ $labels.service }} has elevated 5xx responses"
+          description: "More than 0.05 HTTP 5xx responses per second for 10 minutes."
+
+      - alert: NiceAgentHighHTTPLatency
+        expr: |
+          (
+            sum by (service) (rate(niceagent_http_request_duration_seconds_sum[5m]))
+            /
+            clamp_min(sum by (service) (rate(niceagent_http_request_duration_seconds_count[5m])), 0.001)
+          ) > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: http
+        annotations:
+          summary: "NiceAgent {{ $labels.service }} average HTTP latency is high"
+          description: "Average HTTP request latency is above 5 seconds over 10 minutes."
+
+  - name: niceagent-runtime-model
+    rules:
+      - alert: NiceAgentRuntimeRunFailures
+        expr: |
+          sum by (service) (rate(niceagent_runtime_runs_total{status="failed"}[5m])) > 0.02
+        for: 10m
+        labels:
+          severity: warning
+          component: agent-runtime
+        annotations:
+          summary: "NiceAgent runtime runs are failing"
+          description: "Runtime failed runs are increasing for service {{ $labels.service }}."
+
+      - alert: NiceAgentModelProviderErrors
+        expr: |
+          sum by (provider, model, error_class) (
+            rate(niceagent_model_runs_total{status="failed",error_class!="none"}[5m])
+          ) > 0.02
+        for: 10m
+        labels:
+          severity: warning
+          component: model-provider
+        annotations:
+          summary: "NiceAgent model provider errors for {{ $labels.provider }}/{{ $labels.model }}"
+          description: "Model calls are failing with error class {{ $labels.error_class }}."
+
+      - alert: NiceAgentModelHealthProbeFailures
+        expr: |
+          sum by (provider, model, error_class) (
+            rate(niceagent_model_health_probe_total{status="error"}[5m])
+          ) > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: model-provider
+        annotations:
+          summary: "NiceAgent model health probe is failing for {{ $labels.provider }}/{{ $labels.model }}"
+          description: "Active model health probes have reported failures for 10 minutes."
+
+      - alert: NiceAgentModelLatencyHigh
+        expr: |
+          (
+            sum by (provider, model) (rate(niceagent_model_latency_seconds_sum[5m]))
+            /
+            clamp_min(sum by (provider, model) (rate(niceagent_model_latency_seconds_count[5m])), 0.001)
+          ) > 20
+        for: 10m
+        labels:
+          severity: warning
+          component: model-provider
+        annotations:
+          summary: "NiceAgent model latency is high for {{ $labels.provider }}/{{ $labels.model }}"
+          description: "Average model latency is above 20 seconds over 10 minutes."
+
+  - name: niceagent-redis-queue
+    rules:
+      - alert: NiceAgentRedisQueueErrors
+        expr: |
+          sum by (stream, group, stage) (rate(niceagent_redis_queue_errors_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: redis-queue
+        annotations:
+          summary: "NiceAgent Redis queue errors on {{ $labels.stream }}"
+          description: "Redis queue worker errors are increasing at stage {{ $labels.stage }}."
+
+      - alert: NiceAgentRedisQueuePendingBacklog
+        expr: |
+          sum by (stream, group) (niceagent_redis_queue_pending_entries) > 100
+        for: 15m
+        labels:
+          severity: warning
+          component: redis-queue
+        annotations:
+          summary: "NiceAgent Redis queue pending backlog on {{ $labels.stream }}"
+          description: "Pending entries are above 100 for 15 minutes."
+
+      - alert: NiceAgentRedisQueueDLQNotEmpty
+        expr: |
+          sum by (stream, group, dlq_stream) (niceagent_redis_queue_dlq_length) > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: redis-queue
+        annotations:
+          summary: "NiceAgent Redis DLQ has messages"
+          description: "DLQ stream {{ $labels.dlq_stream }} contains messages."
+
+      - alert: NiceAgentRedisQueueDLQWrites
+        expr: |
+          sum by (stream, group, reason) (rate(niceagent_redis_queue_dlq_messages_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: redis-queue
+        annotations:
+          summary: "NiceAgent Redis worker is writing to DLQ"
+          description: "Messages are being dead-lettered because {{ $labels.reason }}."
+
+  - name: niceagent-quota-sandbox
+    rules:
+      - alert: NiceAgentQuotaDenials
+        expr: |
+          sum by (quota) (rate(niceagent_quota_denials_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: info
+          component: quota
+        annotations:
+          summary: "NiceAgent quota denials are increasing"
+          description: "Quota {{ $labels.quota }} is denying requests at a sustained rate."
+
+      - alert: NiceAgentSandboxFailures
+        expr: |
+          sum by (exit_code) (rate(niceagent_sandbox_exec_total{exit_code!~"0"}[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: sandbox
+        annotations:
+          summary: "NiceAgent sandbox command failures are elevated"
+          description: "Sandbox command failures are increasing with exit code {{ $labels.exit_code }}."

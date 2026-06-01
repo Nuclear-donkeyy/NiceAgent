@@ -3,7 +3,7 @@ IMAGE_TAG ?= local
 KIND_CLUSTER ?= niceagent
 K8S_NAMESPACE ?= niceagent
 
-.PHONY: run-control run-runtime run-sandbox run-web build-web test smoke-three-services smoke-three-services-ui smoke-three-services-redis smoke-control-plane-fanout compose-up compose-down compose-config check-js docker-build docker-build-control docker-build-runtime docker-build-sandbox kind-create kind-delete kind-load k8s-apply k8s-status k8s-port-forward kind-deploy
+.PHONY: run-control run-runtime run-sandbox run-web build-web test smoke-three-services smoke-three-services-ui smoke-three-services-redis smoke-control-plane-fanout compose-up compose-down compose-config check-js check-alerts docker-build docker-build-control docker-build-runtime docker-build-sandbox kind-create kind-delete kind-load k8s-apply k8s-status k8s-port-forward kind-deploy
 
 run-control:
 	cd services/control-plane && go run ./cmd
@@ -41,6 +41,9 @@ check-js:
 	else \
 		echo "未安装 frontend/node_modules，跳过 React/Rspack 构建检查；先运行 cd frontend && npm install。"; \
 	fi
+
+check-alerts:
+	python3 scripts/check_prometheus_alerts.py deployments/monitoring/prometheus-alerts.yml
 
 compose-up:
 	docker compose -f deployments/docker-compose.yml up

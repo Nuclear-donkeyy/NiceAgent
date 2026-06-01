@@ -272,7 +272,13 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 - `niceagent_redis_queue_dlq_length`：Agent Runtime 采样到的 DLQ stream 长度。
 - `niceagent_sandbox_exec_total`：Sandbox Executor 命令执行结果次数。
 
-这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。Redis queue 告警可以先从 DLQ 写入速率、reclaimed 速率、worker errors 速率、ack/message 比例、pending entries 总量和 DLQ 长度开始。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span、主要 agent 执行内部 span、Redis 低层命令 span 和 Postgres repository `db.command` span；后续还需要继续补外部告警系统接入。
+这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。仓库提供了基础 Prometheus 告警规则文件：`deployments/monitoring/prometheus-alerts.yml`，覆盖 HTTP 5xx/延迟、runtime 失败、模型 provider 错误/探针失败/延迟、Redis queue error/pending/DLQ、quota denial 和 sandbox failure。可以用下面的仓库内检查做结构验证：
+
+```bash
+make check-alerts
+```
+
+生产环境建议再用 Prometheus 自带的 `promtool check rules deployments/monitoring/prometheus-alerts.yml` 做最终校验，并把告警路由到 Alertmanager、短信/电话/IM 或云监控。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span、主要 agent 执行内部 span、Redis 低层命令 span 和 Postgres repository `db.command` span；外部告警系统接入时优先把 `request_id`、`trace_id`、`run_id` 放入排障模板。
 
 ## Sandbox 安全边界
 
