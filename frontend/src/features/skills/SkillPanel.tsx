@@ -5,6 +5,9 @@ import { SectionTitle } from "../../components/SectionTitle";
 import type {
   HTTPSkillImportCandidate,
   HTTPSkillInput,
+  MCPImportPreviewInput,
+  MCPImportPreviewResponse,
+  MCPSkillImportCandidate,
   OpenAPIImportCreateInput,
   OpenAPIImportPreviewInput,
   OpenAPIImportPreviewResponse,
@@ -27,6 +30,8 @@ type FieldName = "name" | "description" | "url" | "bearer_token" | "bearer_token
 type FieldErrors = Partial<Record<FieldName, string>>;
 type ImportFieldName = "document" | "selected" | "bearer_token" | "bearer_token_secret_ref";
 type ImportFieldErrors = Partial<Record<ImportFieldName, string>>;
+type MCPPreviewFieldName = "document";
+type MCPPreviewFieldErrors = Partial<Record<MCPPreviewFieldName, string>>;
 
 interface ImportFormState {
   document: string;
@@ -44,6 +49,14 @@ const defaultImportForm: ImportFormState = {
   bearer_token_secret_ref: "",
 };
 
+interface MCPPreviewFormState {
+  document: string;
+}
+
+const defaultMCPPreviewForm: MCPPreviewFormState = {
+  document: "",
+};
+
 interface SkillPanelProps {
   groups: SkillGroups;
   onCreateHTTPSkill: (input: HTTPSkillInput) => Promise<void>;
@@ -51,6 +64,7 @@ interface SkillPanelProps {
   onPreviewOpenAPIImport: (
     input: OpenAPIImportPreviewInput,
   ) => Promise<OpenAPIImportPreviewResponse>;
+  onPreviewMCPImport: (input: MCPImportPreviewInput) => Promise<MCPImportPreviewResponse>;
   onSetSkillEnabled: (skillID: string, enabled: boolean) => Promise<void>;
 }
 
@@ -59,6 +73,7 @@ export function SkillPanel({
   onCreateHTTPSkill,
   onCreateOpenAPIImportedSkill,
   onPreviewOpenAPIImport,
+  onPreviewMCPImport,
   onSetSkillEnabled,
 }: SkillPanelProps) {
   const [formOpen, setFormOpen] = useState(false);
@@ -73,6 +88,12 @@ export function SkillPanel({
   const [importError, setImportError] = useState("");
   const [previewingImport, setPreviewingImport] = useState(false);
   const [savingImport, setSavingImport] = useState(false);
+  const [mcpPreviewOpen, setMCPPreviewOpen] = useState(false);
+  const [mcpPreviewForm, setMCPPreviewForm] = useState<MCPPreviewFormState>(defaultMCPPreviewForm);
+  const [mcpPreviewErrors, setMCPPreviewErrors] = useState<MCPPreviewFieldErrors>({});
+  const [mcpCandidates, setMCPCandidates] = useState<MCPSkillImportCandidate[]>([]);
+  const [mcpPreviewError, setMCPPreviewError] = useState("");
+  const [previewingMCP, setPreviewingMCP] = useState(false);
   const [pendingSkillID, setPendingSkillID] = useState("");
   const [actionError, setActionError] = useState("");
 
@@ -170,6 +191,26 @@ export function SkillPanel({
     }
   }
 
+  async function previewMCP(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const errors = validateMCPPreviewForm(mcpPreviewForm);
+    setMCPPreviewErrors(errors);
+    setMCPPreviewError("");
+    setMCPCandidates([]);
+    if (Object.keys(errors).length > 0) return;
+    setPreviewingMCP(true);
+    try {
+      const response = await onPreviewMCPImport({
+        document: mcpPreviewForm.document,
+      });
+      setMCPCandidates(response.candidates || []);
+    } catch (error) {
+      setMCPPreviewError(errorMessage(error));
+    } finally {
+      setPreviewingMCP(false);
+    }
+  }
+
   function updateForm<K extends keyof HTTPSkillInput>(field: K, value: HTTPSkillInput[K]) {
     setForm((prev) => ({ ...prev, [field]: value }));
     setServerError("");
@@ -182,6 +223,15 @@ export function SkillPanel({
     setImportForm((prev) => ({ ...prev, [field]: value }));
     setImportError("");
     setImportErrors((prev) => withoutImportFieldError(prev, field));
+  }
+
+  function updateMCPPreviewForm<K extends keyof MCPPreviewFormState>(
+    field: K,
+    value: MCPPreviewFormState[K],
+  ) {
+    setMCPPreviewForm((prev) => ({ ...prev, [field]: value }));
+    setMCPPreviewError("");
+    setMCPPreviewErrors((prev) => withoutMCPPreviewFieldError(prev, field));
   }
 
   return (
@@ -434,6 +484,68 @@ export function SkillPanel({
         </form>
       )}
 
+      <div className={styles.sectionRow}>
+        <SectionTitle text="MCP 预览" />
+        <button
+          className={styles.miniButton}
+          disabled={previewingMCP}
+          onClick={() => setMCPPreviewOpen((value) => !value)}
+          type="button"
+        >
+          {mcpPreviewOpen ? "收起" : "预览"}
+        </button>
+      </div>
+
+      {mcpPreviewOpen && (
+        <form className={styles.form} noValidate onSubmit={previewMCP}>
+          <label className={styles.field}>
+            <span>MCP tools/list JSON</span>
+            <textarea
+              aria-invalid={Boolean(mcpPreviewErrors.document)}
+              disabled={previewingMCP}
+              value={mcpPreviewForm.document}
+              onChange={(event) => updateMCPPreviewForm("document", event.target.value)}
+              placeholder='粘贴 {"tools":[...]} 或 JSON-RPC {"result":{"tools":[...]}}'
+              rows={6}
+            />
+            {mcpPreviewErrors.document && <small>{mcpPreviewErrors.document}</small>}
+          </label>
+          <button className={styles.secondaryButton} disabled={previewingMCP} type="submit">
+            {previewingMCP ? "预览中..." : "预览 MCP 能力"}
+          </button>
+          <p className={styles.hint}>
+            当前只做 manifest dry-run，不保存 Skill，也不会连接 MCP server 或保存 secret。
+          </p>
+          {mcpCandidates.length > 0 && (
+            <div className={styles.previewList}>
+              {mcpCandidates.map((candidate) => (
+                <article className={styles.previewCard} key={candidate.name}>
+                  <div className={styles.head}>
+                    <strong>{candidate.name}</strong>
+                    <span>{candidate.open_world ? "开放世界" : "受限上下文"}</span>
+                  </div>
+                  <p>{candidate.description || "暂无说明"}</p>
+                  <div className={styles.tagRow}>
+                    <span>{candidate.read_only ? "只读" : "可写"}</span>
+                    {candidate.destructive && <span>破坏性</span>}
+                    {candidate.idempotent && <span>幂等</span>}
+                  </div>
+                  <details className={styles.schemaDetails}>
+                    <summary>查看 schema 摘要</summary>
+                    <pre>{formatMCPSchemaPreview(candidate)}</pre>
+                  </details>
+                </article>
+              ))}
+            </div>
+          )}
+          {mcpPreviewError && (
+            <p className={styles.formError} role="alert">
+              MCP 预览失败：{mcpPreviewError}
+            </p>
+          )}
+        </form>
+      )}
+
       {actionError && (
         <p className={styles.formError} role="alert">
           {actionError}
@@ -491,6 +603,12 @@ function validateImportForm(
   if (form.bearer_token_secret_ref.trim() && !isSupportedSecretRef(form.bearer_token_secret_ref)) {
     errors.bearer_token_secret_ref = "Secret Ref 需使用 env:// 或 file://";
   }
+  return errors;
+}
+
+function validateMCPPreviewForm(form: MCPPreviewFormState): MCPPreviewFieldErrors {
+  const errors: MCPPreviewFieldErrors = {};
+  if (!form.document.trim()) errors.document = "请粘贴 MCP tools/list JSON";
   return errors;
 }
 
@@ -571,6 +689,15 @@ function withoutImportFieldError(
   return next;
 }
 
+function withoutMCPPreviewFieldError(
+  current: MCPPreviewFieldErrors,
+  field: keyof MCPPreviewFormState,
+): MCPPreviewFieldErrors {
+  const next = { ...current };
+  if (field === "document") delete next.document;
+  return next;
+}
+
 function hasBearerSecret(form: Pick<ImportFormState, "bearer_token" | "bearer_token_secret_ref">) {
   return Boolean(form.bearer_token.trim() || form.bearer_token_secret_ref.trim());
 }
@@ -590,6 +717,24 @@ function selectedImportCandidate(
   key: string,
 ): HTTPSkillImportCandidate | null {
   return candidates.find((candidate) => candidateKey(candidate) === key) || null;
+}
+
+function formatMCPSchemaPreview(candidate: MCPSkillImportCandidate): string {
+  const summary = {
+    input_schema: parseJSONSummary(candidate.input_schema),
+    output_schema: parseJSONSummary(candidate.output_schema),
+    annotations: parseJSONSummary(candidate.annotations),
+  };
+  return JSON.stringify(summary, null, 2);
+}
+
+function parseJSONSummary(value: string | undefined): unknown {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
 }
 
 function errorMessage(error: unknown): string {

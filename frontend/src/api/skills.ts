@@ -1,6 +1,8 @@
 import { api } from "./client";
 import type {
   HTTPSkillInput,
+  MCPImportPreviewInput,
+  MCPImportPreviewResponse,
   OpenAPIImportCreateInput,
   OpenAPIImportPreviewInput,
   OpenAPIImportPreviewResponse,
@@ -37,6 +39,13 @@ export function previewOpenAPIImport(
 
 export function createOpenAPIImportedSkill(input: OpenAPIImportCreateInput): Promise<Skill> {
   return api<Skill>("/api/skills/import/openapi", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function previewMCPImport(input: MCPImportPreviewInput): Promise<MCPImportPreviewResponse> {
+  return api<MCPImportPreviewResponse>("/api/skills/import/mcp/preview", {
     method: "POST",
     body: JSON.stringify(input),
   });
