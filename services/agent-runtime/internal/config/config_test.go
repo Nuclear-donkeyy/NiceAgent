@@ -79,3 +79,32 @@ func TestValidateRejectsNegativeModelRateLimitConfig(t *testing.T) {
 		t.Fatal("expected negative model requests per minute to fail validation")
 	}
 }
+
+func TestFromEnvReadsSkillRateLimitConfig(t *testing.T) {
+	t.Setenv("SKILL_RATE_LIMIT_MODE", "redis")
+	t.Setenv("SKILL_RATE_LIMIT_PREFIX", "custom:skill-rate")
+	t.Setenv("REDIS_ADDR", "redis:6379")
+
+	cfg := FromEnv()
+
+	if cfg.SkillRateLimitMode != "redis" || cfg.SkillRateLimitPrefix != "custom:skill-rate" {
+		t.Fatalf("skill rate limit config = mode:%q prefix:%q", cfg.SkillRateLimitMode, cfg.SkillRateLimitPrefix)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate redis skill limiter config: %v", err)
+	}
+}
+
+func TestValidateRequiresRedisAddrForRedisSkillRateLimiter(t *testing.T) {
+	cfg := Config{SkillRateLimitMode: "redis"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected redis skill limiter without REDIS_ADDR to fail validation")
+	}
+}
+
+func TestValidateRejectsUnsupportedSkillRateLimitMode(t *testing.T) {
+	cfg := Config{SkillRateLimitMode: "memcached", RedisAddr: "redis:6379"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected unsupported skill rate limit mode to fail validation")
+	}
+}

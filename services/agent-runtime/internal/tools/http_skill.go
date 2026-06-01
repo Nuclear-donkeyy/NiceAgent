@@ -191,7 +191,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 			Message:   err.Error(),
 		}), false, nil
 	}
-	if !t.allowHTTPSkill(cfg) {
+	if !t.allowHTTPSkill(ctx, cfg) {
 		return marshalObservation(httpSkillObservation{
 			OK:        false,
 			ErrorType: "rate_limited",
@@ -289,7 +289,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 	}), true, nil
 }
 
-func (t *runtimeTool) allowHTTPSkill(cfg skillmanifest.HTTPSkillRuntimeConfig) bool {
+func (t *runtimeTool) allowHTTPSkill(ctx context.Context, cfg skillmanifest.HTTPSkillRuntimeConfig) bool {
 	if cfg.RateLimit.RequestsPerMinute <= 0 {
 		return true
 	}
@@ -301,7 +301,7 @@ func (t *runtimeTool) allowHTTPSkill(cfg skillmanifest.HTTPSkillRuntimeConfig) b
 	if key == "" {
 		key = safeURLHost(cfg.URL)
 	}
-	return limiter.Allow(key, cfg.RateLimit.RequestsPerMinute)
+	return limiter.Allow(ctx, key, cfg.RateLimit.RequestsPerMinute)
 }
 
 func (t *runtimeTool) doHTTPSkillRequest(ctx context.Context, cfg skillmanifest.HTTPSkillRuntimeConfig, argumentsInJSON, bearerToken string) (*http.Response, int, error) {
