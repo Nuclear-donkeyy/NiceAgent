@@ -92,7 +92,9 @@ INVITATION_EMAIL_RETRY_ATTEMPTS=3
 INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS=250
 ```
 
-`outbox` 模式会把投递任务写入 `invitation_email_outbox` 表。后台 worker 会 claim due jobs、发送 SMTP、成功后标记 `sent`；失败时按指数退避重新置为 `pending`，超过最大次数后标记 `failed`。如果 Control Plane 在发送前或发送失败后重启，锁过期后其他 worker 可以重新 claim。当前 outbox 只覆盖投递重试和重启恢复，还没有接入退信 webhook、邮件服务商事件回调或管理后台重发按钮。
+`outbox` 模式会把投递任务写入 `invitation_email_outbox` 表。后台 worker 会 claim due jobs、发送 SMTP、成功后标记 `sent`；失败时按指数退避重新置为 `pending`，超过最大次数后标记 `failed`。如果 Control Plane 在发送前或发送失败后重启，锁过期后其他 worker 可以重新 claim。
+
+邮件服务商的 delivery/bounce/complaint/drop 事件可以通过 `POST /api/organizations/{organization_id}/invitation-email-events` 写入 `invitation_email_events`。其中 `bounced`、`complaint` 和 `dropped` 会把对应 outbox delivery 标记为 `bounced`，并把 provider 返回的原因写入 `last_error`；`delivered` 会把 delivery 标记为 `sent`。当前接口仍是 provider-neutral 的管理/回调入口，生产接入具体服务商 webhook 时需要在网关层完成签名校验和字段映射；管理后台重发按钮仍待后续补齐。
 
 run 配额是最小治理边界，默认关闭。env 配置是 fallback：
 

@@ -221,6 +221,25 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if claimedDeliveries = reloaded.ClaimDueInvitationEmails(1, "postgres-worker-c", time.Now().UTC().Add(time.Minute)); len(claimedDeliveries) != 0 {
 		t.Fatalf("sent delivery was claimed again: %#v", claimedDeliveries)
 	}
+	emailEvent, err := reloaded.RecordInvitationEmailEvent(protocol.InvitationEmailEventInput{
+		InvitationID:      orgInvitation.ID,
+		DeliveryID:        delivery.ID,
+		Provider:          "smtp-test",
+		ProviderMessageID: "postgres-message-a",
+		Type:              string(protocol.InvitationEmailEventComplaint),
+		Reason:            "recipient complained",
+		Payload:           map[string]any{"provider_event_id": "evt-a"},
+	})
+	if err != nil {
+		t.Fatalf("record invitation email event: %v", err)
+	}
+	if emailEvent.Type != protocol.InvitationEmailEventComplaint || emailEvent.ProviderMessageID != "postgres-message-a" {
+		t.Fatalf("email event = %#v, want complaint event", emailEvent)
+	}
+	emailEvents := reloaded.ListInvitationEmailEvents(app.DemoOrgID, app.InvitationEmailEventListOptions{InvitationID: orgInvitation.ID})
+	if len(emailEvents) != 1 || emailEvents[0].Reason != "recipient complained" {
+		t.Fatalf("listed email events = %#v, want recorded complaint", emailEvents)
+	}
 	invitations := reloaded.ListInvitations(app.DemoOrgID)
 	if len(invitations) == 0 || invitations[0].Token != "" {
 		t.Fatalf("listed invitations = %#v, want redacted token", invitations)

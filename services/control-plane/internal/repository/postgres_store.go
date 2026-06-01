@@ -1078,8 +1078,167 @@ func (s *PostgresStore) MarkInvitationEmailFailed(deliveryID, lastError string, 
 	return nil
 }
 
+func (s *PostgresStore) RecordInvitationEmailEvent(input protocol.InvitationEmailEventInput) (protocol.InvitationEmailEvent, error) {
+	eventType := normalizeInvitationEmailEventType(input.Type)
+	if eventType == "" {
+		return protocol.InvitationEmailEvent{}, app.ErrInvalidInput
+	}
+	invitationID := strings.TrimSpace(input.InvitationID)
+	deliveryID := strings.TrimSpace(input.DeliveryID)
+	now := time.Now().UTC()
+	occurredAt := now
+	if input.OccurredAt != nil && !input.OccurredAt.IsZero() {
+		occurredAt = input.OccurredAt.UTC()
+	}
+	payload := input.Payload
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return protocol.InvitationEmailEvent{}, app.ErrInvalidInput
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return protocol.InvitationEmailEvent{}, err
+	}
+	defer tx.Rollback()
+	if invitationID == "" && deliveryID != "" {
+		if err := tx.QueryRow(`SELECT invitation_id FROM invitation_email_outbox WHERE id = $1`, deliveryID).Scan(&invitationID); err != nil {
+			if err == sql.ErrNoRows {
+				return protocol.InvitationEmailEvent{}, app.ErrNotFound
+			}
+			return protocol.InvitationEmailEvent{}, err
+		}
+	}
+	if invitationID == "" {
+		return protocol.InvitationEmailEvent{}, app.ErrInvalidInput
+	}
+	var exists bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1)`, invitationID).Scan(&exists); err != nil {
+		return protocol.InvitationEmailEvent{}, err
+	}
+	if !exists {
+		return protocol.InvitationEmailEvent{}, app.ErrNotFound
+	}
+	if deliveryID != "" {
+		var deliveryInvitationID string
+		if err := tx.QueryRow(`SELECT invitation_id FROM invitation_email_outbox WHERE id = $1`, deliveryID).Scan(&deliveryInvitationID); err != nil {
+			if err == sql.ErrNoRows {
+				return protocol.InvitationEmailEvent{}, app.ErrNotFound
+			}
+			return protocol.InvitationEmailEvent{}, err
+		}
+		if deliveryInvitationID != invitationID {
+			return protocol.InvitationEmailEvent{}, app.ErrNotFound
+		}
+	}
+	event := protocol.InvitationEmailEvent{
+		ID:                platform.NewID("invmailevt"),
+		InvitationID:      invitationID,
+		DeliveryID:        deliveryID,
+		Provider:          strings.TrimSpace(input.Provider),
+		ProviderMessageID: strings.TrimSpace(input.ProviderMessageID),
+		Type:              eventType,
+		Reason:            strings.TrimSpace(input.Reason),
+		Payload:           payload,
+		OccurredAt:        occurredAt,
+		CreatedAt:         now,
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO invitation_email_events (
+			id, invitation_id, delivery_id, provider, provider_message_id, type, reason, payload, occurred_at, created_at
+		)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, NULLIF($7, ''), $8::jsonb, $9, $10)`,
+		event.ID, event.InvitationID, event.DeliveryID, event.Provider, event.ProviderMessageID, string(event.Type), event.Reason, string(payloadJSON), event.OccurredAt, event.CreatedAt); err != nil {
+		return protocol.InvitationEmailEvent{}, err
+	}
+	if deliveryID != "" {
+		switch eventType {
+		case protocol.InvitationEmailEventDelivered:
+			if _, err := tx.Exec(`
+				UPDATE invitation_email_outbox
+				SET status = 'sent', locked_by = NULL, locked_until = NULL, last_error = NULL, sent_at = $1, updated_at = $2
+				WHERE id = $3`, occurredAt, now, deliveryID); err != nil {
+				return protocol.InvitationEmailEvent{}, err
+			}
+		case protocol.InvitationEmailEventBounced, protocol.InvitationEmailEventComplaint, protocol.InvitationEmailEventDropped:
+			if _, err := tx.Exec(`
+				UPDATE invitation_email_outbox
+				SET status = 'bounced', locked_by = NULL, locked_until = NULL, last_error = $1, updated_at = $2
+				WHERE id = $3`, firstNonEmpty(event.Reason, string(event.Type)), now, deliveryID); err != nil {
+				return protocol.InvitationEmailEvent{}, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return protocol.InvitationEmailEvent{}, err
+	}
+	return event, nil
+}
+
+func (s *PostgresStore) ListInvitationEmailEvents(orgID string, opts app.InvitationEmailEventListOptions) []protocol.InvitationEmailEvent {
+	orgID = strings.TrimSpace(orgID)
+	opts.InvitationID = strings.TrimSpace(opts.InvitationID)
+	opts.DeliveryID = strings.TrimSpace(opts.DeliveryID)
+	if opts.Limit <= 0 {
+		opts.Limit = 100
+	}
+	rows, err := s.query(`
+		SELECT e.id, e.invitation_id, COALESCE(e.delivery_id, ''), COALESCE(e.provider, ''),
+		       COALESCE(e.provider_message_id, ''), e.type, COALESCE(e.reason, ''),
+		       e.payload, e.occurred_at, e.created_at
+		FROM invitation_email_events e
+		JOIN invitations i ON i.id = e.invitation_id
+		WHERE i.organization_id = $1
+		  AND ($2 = '' OR e.invitation_id = $2)
+		  AND ($3 = '' OR e.delivery_id = $3)
+		ORDER BY e.occurred_at DESC, e.created_at DESC
+		LIMIT $4`, orgID, opts.InvitationID, opts.DeliveryID, opts.Limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	events := []protocol.InvitationEmailEvent{}
+	for rows.Next() {
+		event, err := scanInvitationEmailEvent(rows)
+		if err == nil {
+			events = append(events, event)
+		}
+	}
+	return events
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+func scanInvitationEmailEvent(row rowScanner) (protocol.InvitationEmailEvent, error) {
+	var event protocol.InvitationEmailEvent
+	var typ string
+	var rawPayload []byte
+	if err := row.Scan(
+		&event.ID,
+		&event.InvitationID,
+		&event.DeliveryID,
+		&event.Provider,
+		&event.ProviderMessageID,
+		&typ,
+		&event.Reason,
+		&rawPayload,
+		&event.OccurredAt,
+		&event.CreatedAt,
+	); err != nil {
+		return protocol.InvitationEmailEvent{}, err
+	}
+	event.Type = protocol.InvitationEmailEventType(typ)
+	if len(rawPayload) > 0 {
+		var payload map[string]any
+		if err := json.Unmarshal(rawPayload, &payload); err == nil {
+			event.Payload = payload
+		}
+	}
+	return event, nil
 }
 
 func scanInvitationEmailDelivery(row rowScanner, delivery *protocol.InvitationEmailDelivery) error {

@@ -28,6 +28,7 @@ type Store struct {
 	artifacts       map[string]protocol.Artifact
 	invitations     map[string]protocol.Invitation
 	emailDeliveries map[string]protocol.InvitationEmailDelivery
+	emailEvents     []protocol.InvitationEmailEvent
 	skills          map[string]protocol.Skill
 	skillGrants     map[string][]string
 	skillSecrets    map[string]map[string]protocol.RuntimeSecret
@@ -55,6 +56,7 @@ func NewStore() *Store {
 		artifacts:       map[string]protocol.Artifact{},
 		invitations:     map[string]protocol.Invitation{},
 		emailDeliveries: map[string]protocol.InvitationEmailDelivery{},
+		emailEvents:     []protocol.InvitationEmailEvent{},
 		skills:          map[string]protocol.Skill{},
 		skillGrants:     map[string][]string{},
 		skillSecrets:    map[string]map[string]protocol.RuntimeSecret{},
@@ -776,6 +778,127 @@ func (s *Store) MarkInvitationEmailFailed(deliveryID, lastError string, nextAtte
 	delivery.UpdatedAt = now
 	s.emailDeliveries[deliveryID] = delivery
 	return nil
+}
+
+func (s *Store) RecordInvitationEmailEvent(input protocol.InvitationEmailEventInput) (protocol.InvitationEmailEvent, error) {
+	eventType := normalizeInvitationEmailEventType(input.Type)
+	if eventType == "" {
+		return protocol.InvitationEmailEvent{}, app.ErrInvalidInput
+	}
+	invitationID := strings.TrimSpace(input.InvitationID)
+	deliveryID := strings.TrimSpace(input.DeliveryID)
+	now := time.Now().UTC()
+	occurredAt := now
+	if input.OccurredAt != nil && !input.OccurredAt.IsZero() {
+		occurredAt = input.OccurredAt.UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if invitationID == "" && deliveryID != "" {
+		delivery, ok := s.emailDeliveries[deliveryID]
+		if !ok {
+			return protocol.InvitationEmailEvent{}, app.ErrNotFound
+		}
+		invitationID = delivery.InvitationID
+	}
+	if invitationID == "" {
+		return protocol.InvitationEmailEvent{}, app.ErrInvalidInput
+	}
+	if _, ok := invitationByID(s.invitations, invitationID); !ok {
+		return protocol.InvitationEmailEvent{}, app.ErrNotFound
+	}
+	if deliveryID != "" {
+		delivery, ok := s.emailDeliveries[deliveryID]
+		if !ok || delivery.InvitationID != invitationID {
+			return protocol.InvitationEmailEvent{}, app.ErrNotFound
+		}
+	}
+	event := protocol.InvitationEmailEvent{
+		ID:                platform.NewID("invmailevt"),
+		InvitationID:      invitationID,
+		DeliveryID:        deliveryID,
+		Provider:          strings.TrimSpace(input.Provider),
+		ProviderMessageID: strings.TrimSpace(input.ProviderMessageID),
+		Type:              eventType,
+		Reason:            strings.TrimSpace(input.Reason),
+		Payload:           cloneMap(input.Payload),
+		OccurredAt:        occurredAt,
+		CreatedAt:         now,
+	}
+	s.emailEvents = append(s.emailEvents, event)
+	if deliveryID != "" {
+		if delivery, ok := s.emailDeliveries[deliveryID]; ok {
+			switch eventType {
+			case protocol.InvitationEmailEventDelivered:
+				delivery.Status = protocol.InvitationEmailSent
+				delivery.LastError = ""
+				delivery.LockedBy = ""
+				delivery.LockedUntil = nil
+				delivery.SentAt = &occurredAt
+			case protocol.InvitationEmailEventBounced, protocol.InvitationEmailEventComplaint, protocol.InvitationEmailEventDropped:
+				delivery.Status = protocol.InvitationEmailBounced
+				delivery.LastError = firstNonEmpty(event.Reason, string(eventType))
+				delivery.LockedBy = ""
+				delivery.LockedUntil = nil
+			}
+			delivery.UpdatedAt = now
+			s.emailDeliveries[deliveryID] = delivery
+		}
+	}
+	return event, nil
+}
+
+func (s *Store) ListInvitationEmailEvents(orgID string, opts app.InvitationEmailEventListOptions) []protocol.InvitationEmailEvent {
+	orgID = strings.TrimSpace(orgID)
+	opts.InvitationID = strings.TrimSpace(opts.InvitationID)
+	opts.DeliveryID = strings.TrimSpace(opts.DeliveryID)
+	if opts.Limit <= 0 {
+		opts.Limit = 100
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	events := make([]protocol.InvitationEmailEvent, 0, opts.Limit)
+	for i := len(s.emailEvents) - 1; i >= 0 && len(events) < opts.Limit; i-- {
+		event := s.emailEvents[i]
+		invitation, ok := invitationByID(s.invitations, event.InvitationID)
+		if !ok || invitation.OrganizationID != orgID {
+			continue
+		}
+		if opts.InvitationID != "" && event.InvitationID != opts.InvitationID {
+			continue
+		}
+		if opts.DeliveryID != "" && event.DeliveryID != opts.DeliveryID {
+			continue
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func normalizeInvitationEmailEventType(raw string) protocol.InvitationEmailEventType {
+	switch protocol.InvitationEmailEventType(strings.ToLower(strings.TrimSpace(raw))) {
+	case protocol.InvitationEmailEventDelivered:
+		return protocol.InvitationEmailEventDelivered
+	case protocol.InvitationEmailEventBounced:
+		return protocol.InvitationEmailEventBounced
+	case protocol.InvitationEmailEventComplaint:
+		return protocol.InvitationEmailEventComplaint
+	case protocol.InvitationEmailEventDropped:
+		return protocol.InvitationEmailEventDropped
+	default:
+		return ""
+	}
+}
+
+func cloneMap(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	output := make(map[string]any, len(input))
+	for k, v := range input {
+		output[k] = v
+	}
+	return output
 }
 
 func invitationByID(invitations map[string]protocol.Invitation, invitationID string) (protocol.Invitation, bool) {
