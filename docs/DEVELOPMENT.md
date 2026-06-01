@@ -255,6 +255,7 @@ make test
 make check-js
 make smoke-three-services
 make smoke-three-services-ui
+make smoke-three-services-redis
 make smoke-control-plane-fanout
 make compose-config
 git diff --check
