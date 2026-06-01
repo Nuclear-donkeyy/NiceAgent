@@ -36,7 +36,7 @@ Control Plane 已经支持：
 
 创建/更新 HTTP Skill 时已经校验 `name`、`GET|POST`、`auth_type`、`https` URL、URL 不含 credentials、timeout 范围、`input_schema` 和 `output_schema`。`runtime_config` 会由 `HTTPSkillRuntimeConfig` 统一生成，避免 token 进入 runtime config。OpenAPI/MCP 导入仍未实现。
 
-Agent Runtime 的 `ToolBridge` 已能把 `RuntimeSkill` 转成 Eino tool。builtin skill 调 `cli.exec` 或 `workspace.read`；HTTP Skill 会按 `runtime_config` 构造请求，支持 bearer token，响应限制为 64KB。Runtime 调用 HTTP Skill 前会校验 arguments；返回后会按 `output_schema` 校验 structured output；非 2xx、DNS、TLS、timeout、响应过大、schema 错误会转成结构化 observation。HTTP Skill 默认只允许 `https`，禁用重定向，拒绝 loopback、`.local`、metadata host、字面量 private/link-local IP，并会在发出请求前解析域名，拒绝解析到 private/link-local/loopback/metadata 类地址的 host。当前仍缺 per-skill retry/rate limit 和导入能力。
+Agent Runtime 的 `ToolBridge` 已能把 `RuntimeSkill` 转成 Eino tool。builtin skill 调 `cli.exec` 或 `workspace.read`；HTTP Skill 会按 `runtime_config` 构造请求，支持 bearer token，响应限制为 64KB。Runtime 调用 HTTP Skill 前会校验 arguments；返回后会按 `output_schema` 校验 structured output；非 2xx、DNS、TLS、timeout、响应过大、schema 错误会转成结构化 observation。HTTP Skill 默认只允许 `https`，禁用重定向，拒绝 loopback、`.local`、metadata host、字面量 private/link-local IP，并会在发出请求前解析域名，拒绝解析到 private/link-local/loopback/metadata 类地址的 host。HTTP Skill 还支持可选 `retry.max_attempts` 和 `rate_limit.requests_per_minute`，当前 rate limit 是 Agent Runtime 进程内固定窗口。当前仍缺 OpenAPI/MCP 导入、跨副本强一致 skill rate limit 和更细审计能力。
 
 HTTP dispatcher 已经把完整 `RuntimeSkill` 下发给 Runtime。Redis queue 路径已经收敛为最小 `run_id/attempt_id` payload，并由 Agent Runtime worker 通过 Control Plane execution context API 拉取当前授权后的完整 `RuntimeSkill`，因此 HTTP Skill 执行材料不再依赖 queue payload。
 
@@ -89,6 +89,8 @@ event/log 中只允许出现脱敏后的 endpoint、status、duration、size、e
 - Runtime 调用前用 schema 校验 arguments，失败则返回 agent 可读 observation，不发起 HTTP 请求。
 - Runtime 调用 HTTP Skill 时禁用或限制 redirect，默认拒绝私网、link-local、metadata IP。
 - 非 2xx、DNS、TLS、timeout、响应过大、输出 schema 不匹配统一映射成结构化错误。
+- HTTP Skill 可配置 `retry.max_attempts`，只对 429、5xx 和网络/超时类错误重试，并在 observation 中返回 `retry_count`。
+- HTTP Skill 可配置 `rate_limit.requests_per_minute`，按 Runtime 进程内 skill id 做固定窗口限流，命中时返回 `rate_limited` observation。
 - Secret 解析从 repository 读取迁移到 `SecretResolver`，repository 只负责返回 secret ref 或本地开发密文。
 
 OpenAPI/MCP 导入放在下一层：
@@ -102,7 +104,7 @@ OpenAPI/MCP 导入放在下一层：
 1. 最小生产闭环：schema validation、HTTP Skill 错误模型、secret redaction、Runtime 输入校验。
 2. Secret resolver：本地开发继续支持 `encrypted_value`，`env://` secret_ref 已可用；生产继续补阿里云 KMS/Vault/External Secrets 原生 resolver。
 3. 导入能力：实现 OpenAPI/MCP manifest 转换器和 dry-run API。
-4. 治理能力：skill invocation 审计、per-skill rate limit、风险策略和 metrics/tracing。
+4. 治理能力：Runtime 进程内 per-skill rate limit 已有最小闭环；后续继续补跨副本强一致 skill rate limit、skill invocation 审计、风险策略和 metrics/tracing。
 
 ## 风险与验收
 
@@ -121,6 +123,8 @@ OpenAPI/MCP 导入放在下一层：
 - invalid tool arguments 不发起 HTTP 请求。
 - timeout、DNS、TLS、非 2xx、invalid output 均转成结构化 tool observation。
 - HTTP Skill 默认拒绝 private/link-local/metadata IP，并在 DNS 解析后再次拦截解析到私网/本机/metadata 类地址的 host。
+- HTTP Skill 对 429、5xx、网络/超时错误按配置重试，且 `retry_count` 可观测。
+- HTTP Skill 命中 per-skill rate limit 时返回 `rate_limited` observation 且不发起请求。
 - HTTP dispatcher 和未来 queue dispatcher 都能让 Runtime 拿到完整授权后的 skill manifest。
 
 ## 参考资料

@@ -162,6 +162,100 @@ func TestHTTPSkillValidatesOutputSchema(t *testing.T) {
 	}
 }
 
+func TestHTTPSkillRetriesRetryableStatus(t *testing.T) {
+	var calls int
+	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		status := http.StatusBadGateway
+		body := `{"ok":false}`
+		if calls == 2 {
+			status = http.StatusOK
+			body = `{"ok":true}`
+		}
+		return &http.Response{
+			StatusCode: status,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	}))
+	runtimeTool.runtimeSkill.Skill.RuntimeConfig = `{"type":"http","method":"POST","url":"https://api.example.com/weather","timeout_seconds":15,"auth_type":"none","retry":{"max_attempts":2,"base_delay_ms":1,"max_delay_ms":1}}`
+
+	output, ok, err := runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil {
+		t.Fatalf("invoke http skill: %v", err)
+	}
+	if !ok {
+		t.Fatalf("ok = false, output = %s", output)
+	}
+	observation := decodeObservation(t, output)
+	if !observation.OK || observation.StatusCode != http.StatusOK || observation.RetryCount != 1 {
+		t.Fatalf("observation = %#v, want ok after one retry", observation)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+}
+
+func TestHTTPSkillDoesNotRetryRequestErrorStatus(t *testing.T) {
+	var calls int
+	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(strings.NewReader(`{"ok":false}`)),
+			Header:     make(http.Header),
+		}, nil
+	}))
+	runtimeTool.runtimeSkill.Skill.RuntimeConfig = `{"type":"http","method":"POST","url":"https://api.example.com/weather","timeout_seconds":15,"auth_type":"none","retry":{"max_attempts":3,"base_delay_ms":1,"max_delay_ms":1}}`
+
+	output, ok, err := runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil {
+		t.Fatalf("invoke http skill: %v", err)
+	}
+	if ok {
+		t.Fatal("ok = true, want false")
+	}
+	observation := decodeObservation(t, output)
+	if observation.OK || observation.ErrorType != "upstream_status" || observation.RetryCount != 0 {
+		t.Fatalf("observation = %#v, want non-retried upstream_status", observation)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestHTTPSkillRateLimitReturnsObservationWithoutRequest(t *testing.T) {
+	var calls int
+	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Header:     make(http.Header),
+		}, nil
+	}))
+	runtimeTool.runtimeSkill.Skill.RuntimeConfig = `{"type":"http","method":"POST","url":"https://api.example.com/weather","timeout_seconds":15,"auth_type":"none","rate_limit":{"requests_per_minute":1}}`
+
+	output, ok, err := runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil || !ok {
+		t.Fatalf("first invoke = ok:%v output:%s err:%v", ok, output, err)
+	}
+	output, ok, err = runtimeTool.invokeHTTP(context.Background(), `{"query":"weather"}`)
+	if err != nil {
+		t.Fatalf("second invoke http skill: %v", err)
+	}
+	if ok {
+		t.Fatal("second ok = true, want false")
+	}
+	observation := decodeObservation(t, output)
+	if observation.OK || observation.ErrorType != "rate_limited" {
+		t.Fatalf("observation = %#v, want rate_limited", observation)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want only first request", calls)
+	}
+}
+
 func TestHTTPSkillRejectsPrivateAddressWithoutRequest(t *testing.T) {
 	var calls int
 	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {

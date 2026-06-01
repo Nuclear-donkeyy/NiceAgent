@@ -92,6 +92,8 @@ type HTTPSkillInput struct {
 	InputSchema          string `json:"input_schema,omitempty"`
 	OutputSchema         string `json:"output_schema,omitempty"`
 	TimeoutSeconds       int    `json:"timeout_seconds,omitempty"`
+	RetryMaxAttempts     int    `json:"retry_max_attempts,omitempty"`
+	RateLimitPerMinute   int    `json:"rate_limit_per_minute,omitempty"`
 	AuthType             string `json:"auth_type,omitempty"`
 	BearerToken          string `json:"bearer_token,omitempty"`
 	BearerTokenSecretRef string `json:"bearer_token_secret_ref,omitempty"`

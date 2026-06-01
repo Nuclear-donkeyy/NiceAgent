@@ -129,10 +129,15 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
   "description": "Fetch weather information",
   "method": "POST",
   "url": "https://example.com/weather",
+  "timeout_seconds": 15,
+  "retry_max_attempts": 3,
+  "rate_limit_per_minute": 60,
   "auth_type": "bearer",
   "bearer_token": "secret"
 }
 ```
+
+`retry_max_attempts` 可选，默认 1，最大 5；Runtime 只会对 HTTP Skill 的 429、5xx 和网络/超时类错误重试。`rate_limit_per_minute` 可选，默认 0 表示不启用，最大 600；当前是 Agent Runtime 进程内的 per-skill 最小限流，不是跨副本强一致配额。
 
 `PATCH /api/skills/{skill_id}`
 

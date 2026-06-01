@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -53,6 +54,7 @@ type DefaultToolBridge struct {
 	Sandbox        SandboxExecutor
 	Client         *http.Client
 	Resolver       HostResolver
+	RateLimiter    *SkillRateLimiter
 	SecretResolver SecretResolver
 }
 
@@ -61,8 +63,47 @@ func NewDefaultToolBridge(executor SandboxExecutor) *DefaultToolBridge {
 		Sandbox:        executor,
 		Client:         &http.Client{Timeout: 15 * time.Second},
 		Resolver:       net.DefaultResolver,
+		RateLimiter:    NewSkillRateLimiter(),
 		SecretResolver: LocalSecretResolver{},
 	}
+}
+
+type SkillRateLimiter struct {
+	mu      sync.Mutex
+	windows map[string]skillRateWindow
+	now     func() time.Time
+}
+
+type skillRateWindow struct {
+	start time.Time
+	count int
+}
+
+func NewSkillRateLimiter() *SkillRateLimiter {
+	return &SkillRateLimiter{
+		windows: map[string]skillRateWindow{},
+		now:     time.Now,
+	}
+}
+
+func (l *SkillRateLimiter) Allow(key string, limitPerMinute int) bool {
+	if l == nil || limitPerMinute <= 0 {
+		return true
+	}
+	now := l.now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	window := l.windows[key]
+	if window.start.IsZero() || now.Sub(window.start) >= time.Minute {
+		l.windows[key] = skillRateWindow{start: now, count: 1}
+		return true
+	}
+	if window.count >= limitPerMinute {
+		return false
+	}
+	window.count++
+	l.windows[key] = window
+	return true
 }
 
 func (b *DefaultToolBridge) Definitions(ctx context.Context, skills []protocol.RuntimeSkill) ([]Definition, error) {

@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +64,7 @@ type httpSkillObservation struct {
 	StatusCode int    `json:"status_code"`
 	ErrorType  string `json:"error_type,omitempty"`
 	Message    string `json:"message,omitempty"`
+	RetryCount int    `json:"retry_count,omitempty"`
 	Data       any    `json:"data"`
 }
 
@@ -103,6 +106,13 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 			Message:   err.Error(),
 		}), false, nil
 	}
+	if !t.allowHTTPSkill(cfg) {
+		return marshalObservation(httpSkillObservation{
+			OK:        false,
+			ErrorType: "rate_limited",
+			Message:   fmt.Sprintf("HTTP skill rate limit exceeded: %d requests per minute", cfg.RateLimit.RequestsPerMinute),
+		}), false, nil
+	}
 
 	var secretValues []string
 	var bearerToken string
@@ -124,24 +134,15 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 		"method":   cfg.Method,
 		"host":     safeURLHost(cfg.URL),
 	})
-	request, err := buildHTTPSkillRequest(ctx, cfg, argumentsInJSON, bearerToken)
-	if err != nil {
-		endSpan(err, nil)
-		return marshalObservation(httpSkillObservation{
-			OK:        false,
-			ErrorType: "invalid_runtime_config",
-			Message:   err.Error(),
-		}), false, nil
-	}
-	platform.InjectTraceHeaders(ctx, request.Header)
-	response, err := httpSkillClient(t.bridge.Client, t.bridge.Resolver).Do(request)
+	response, retryCount, err := t.doHTTPSkillRequest(ctx, cfg, argumentsInJSON, bearerToken)
 	if err != nil {
 		errorType := classifyHTTPClientError(ctx, err)
 		endSpan(err, platform.Labels{"error_type": errorType})
 		return marshalObservation(httpSkillObservation{
-			OK:        false,
-			ErrorType: errorType,
-			Message:   "HTTP skill request failed: " + redactError(err, secretValues),
+			OK:         false,
+			ErrorType:  errorType,
+			RetryCount: retryCount,
+			Message:    "HTTP skill request failed: " + redactError(err, secretValues),
 		}), false, nil
 	}
 	defer response.Body.Close()
@@ -155,6 +156,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 			OK:         false,
 			StatusCode: response.StatusCode,
 			ErrorType:  "upstream_read_error",
+			RetryCount: retryCount,
 			Message:    "HTTP skill response could not be read: " + redactError(readErr, secretValues),
 		}), false, nil
 	}
@@ -164,6 +166,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 			OK:         false,
 			StatusCode: response.StatusCode,
 			ErrorType:  "response_too_large",
+			RetryCount: retryCount,
 			Message:    fmt.Sprintf("HTTP skill response exceeded %d bytes", maxHTTPSkillResponseBytes),
 		}), false, nil
 	}
@@ -174,6 +177,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 			OK:         false,
 			StatusCode: response.StatusCode,
 			ErrorType:  "upstream_status",
+			RetryCount: retryCount,
 			Message:    fmt.Sprintf("HTTP skill returned status %d", response.StatusCode),
 			Data:       data,
 		}), false, nil
@@ -185,6 +189,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 				OK:         false,
 				StatusCode: response.StatusCode,
 				ErrorType:  "invalid_output",
+				RetryCount: retryCount,
 				Message:    "HTTP skill response does not match output_schema: " + err.Error(),
 				Data:       data,
 			}), false, nil
@@ -194,8 +199,56 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 	return marshalObservation(httpSkillObservation{
 		OK:         true,
 		StatusCode: response.StatusCode,
+		RetryCount: retryCount,
 		Data:       data,
 	}), true, nil
+}
+
+func (t *runtimeTool) allowHTTPSkill(cfg skillmanifest.HTTPSkillRuntimeConfig) bool {
+	if cfg.RateLimit.RequestsPerMinute <= 0 {
+		return true
+	}
+	limiter := t.bridge.RateLimiter
+	if limiter == nil {
+		return true
+	}
+	key := t.runtimeSkill.Skill.ID
+	if key == "" {
+		key = safeURLHost(cfg.URL)
+	}
+	return limiter.Allow(key, cfg.RateLimit.RequestsPerMinute)
+}
+
+func (t *runtimeTool) doHTTPSkillRequest(ctx context.Context, cfg skillmanifest.HTTPSkillRuntimeConfig, argumentsInJSON, bearerToken string) (*http.Response, int, error) {
+	maxAttempts := cfg.Retry.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	var retryCount int
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		request, err := buildHTTPSkillRequest(ctx, cfg, argumentsInJSON, bearerToken)
+		if err != nil {
+			return nil, retryCount, err
+		}
+		platform.InjectTraceHeaders(ctx, request.Header)
+		response, err := httpSkillClient(t.bridge.Client, t.bridge.Resolver).Do(request)
+		if !shouldRetryHTTPSkill(ctx, response, err) || attempt == maxAttempts {
+			return response, retryCount, err
+		}
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		lastErr = err
+		retryCount++
+		if sleepErr := sleepHTTPRetry(ctx, cfg.Retry, attempt, response); sleepErr != nil {
+			if lastErr != nil {
+				return nil, retryCount, lastErr
+			}
+			return nil, retryCount, sleepErr
+		}
+	}
+	return nil, retryCount, lastErr
 }
 
 func (t *runtimeTool) resolveSecret(ctx context.Context, key string) (string, error) {
@@ -262,6 +315,79 @@ func guardedTransport(base http.RoundTripper, resolver HostResolver) http.RoundT
 	clone := transport.Clone()
 	clone.DialContext = guard.DialContext
 	return clone
+}
+
+func shouldRetryHTTPSkill(ctx context.Context, response *http.Response, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if err != nil {
+		errorType := classifyHTTPClientError(ctx, err)
+		return errorType == "upstream_timeout" || errorType == "upstream_network_error"
+	}
+	if response == nil {
+		return false
+	}
+	switch response.StatusCode {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func sleepHTTPRetry(ctx context.Context, cfg skillmanifest.HTTPSkillRetryConfig, attempt int, response *http.Response) error {
+	delay := httpRetryDelay(cfg, attempt, response)
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func httpRetryDelay(cfg skillmanifest.HTTPSkillRetryConfig, attempt int, response *http.Response) time.Duration {
+	maxDelay := time.Duration(cfg.MaxDelayMS) * time.Millisecond
+	if maxDelay <= 0 {
+		maxDelay = time.Duration(skillmanifest.DefaultHTTPRetryMaxDelayMS) * time.Millisecond
+	}
+	if response != nil {
+		if delay := retryAfterDelay(response.Header.Get("Retry-After")); delay > 0 {
+			if delay > maxDelay {
+				return maxDelay
+			}
+			return delay
+		}
+	}
+	baseDelay := time.Duration(cfg.BaseDelayMS) * time.Millisecond
+	if baseDelay <= 0 {
+		baseDelay = time.Duration(skillmanifest.DefaultHTTPRetryBaseDelayMS) * time.Millisecond
+	}
+	power := math.Pow(2, float64(attempt-1))
+	delay := time.Duration(float64(baseDelay) * power)
+	if delay > maxDelay {
+		return maxDelay
+	}
+	return delay
+}
+
+func retryAfterDelay(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		return time.Until(when)
+	}
+	return 0
 }
 
 type ssrfGuardedDialer struct {
