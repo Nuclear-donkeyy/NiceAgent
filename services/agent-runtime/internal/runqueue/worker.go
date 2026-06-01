@@ -45,6 +45,7 @@ type Config struct {
 	ReclaimCount      int64
 	MaxDeliveries     int64
 	DeadLetterStream  string
+	DeadLetterMaxLen  int64
 	LeaseSeconds      int
 	HeartbeatInterval time.Duration
 }
@@ -219,7 +220,7 @@ func (w *RedisWorker) deadLetter(ctx context.Context, message redisStreamMessage
 	} else {
 		values["payload"] = string(payload)
 	}
-	_, err = w.client.XAdd(ctx, stream, values)
+	_, err = w.client.XAdd(ctx, stream, values, w.cfg.DeadLetterMaxLen)
 	return err
 }
 
@@ -463,7 +464,7 @@ type redisQueueClient interface {
 	XReadGroup(ctx context.Context, stream, group, consumer string, count int64, block time.Duration) (redisStreamMessage, error)
 	XAutoClaim(ctx context.Context, stream, group, consumer string, minIdle time.Duration, start string, count int64) ([]redisStreamMessage, string, error)
 	XPendingExt(ctx context.Context, stream, group, start, end string, count int64) ([]redisPendingEntry, error)
-	XAdd(ctx context.Context, stream string, values map[string]any) (string, error)
+	XAdd(ctx context.Context, stream string, values map[string]any, maxLen int64) (string, error)
 	XAck(ctx context.Context, stream, group string, ids ...string) (int64, error)
 	Close() error
 }
@@ -549,11 +550,16 @@ func (c *goRedisQueueClient) XPendingExt(ctx context.Context, stream, group, sta
 	return result, nil
 }
 
-func (c *goRedisQueueClient) XAdd(ctx context.Context, stream string, values map[string]any) (string, error) {
-	return c.client.XAdd(ctx, &redis.XAddArgs{
+func (c *goRedisQueueClient) XAdd(ctx context.Context, stream string, values map[string]any, maxLen int64) (string, error) {
+	args := &redis.XAddArgs{
 		Stream: stream,
 		Values: values,
-	}).Result()
+	}
+	if maxLen > 0 {
+		args.MaxLen = maxLen
+		args.Approx = true
+	}
+	return c.client.XAdd(ctx, args).Result()
 }
 
 func (c *goRedisQueueClient) Close() error {

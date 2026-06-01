@@ -27,6 +27,7 @@ services:
       DISPATCH_MODE: http
       EVENT_FANOUT_MODE: redis
       EVENT_FANOUT_PREFIX: niceagent:run-events
+      RUN_QUEUE_MAX_LEN: "0"
       STORE_DRIVER: postgres
       AGENT_RUNTIME_URL: http://agent-runtime:8081
       CONTROL_PLANE_PUBLIC_URL: http://control-plane:8080
@@ -97,10 +98,12 @@ services:
       RUN_QUEUE_STREAM: niceagent:runs
       RUN_QUEUE_GROUP: agent-runtimes
       RUN_QUEUE_CONSUMER: agent-runtime-compose
+      RUN_QUEUE_MAX_LEN: "0"
       RUN_QUEUE_RECLAIM_MIN_IDLE_SECONDS: "60"
       RUN_QUEUE_RECLAIM_COUNT: "1"
       RUN_QUEUE_MAX_DELIVERIES: "5"
       RUN_QUEUE_DLQ_STREAM: niceagent:runs:dlq
+      RUN_QUEUE_DLQ_MAX_LEN: "0"
       RUN_ATTEMPT_LEASE_SECONDS: "600"
       RUN_ATTEMPT_HEARTBEAT_SECONDS: "60"
       SANDBOX_WORKSPACE_ROOT: /workspace/workspaces

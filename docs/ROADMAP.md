@@ -1,6 +1,6 @@
 # NiceAgent 路线图
 
-本文记录 NiceAgent 的当前工程状态、主要差距和下一阶段开发顺序。长期产品目标见 [`target.md`](../target.md)，当前架构边界见 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)。
+本文记录 NiceAgent 的当前工程状态、主要差距和下一阶段开发顺序。长期产品目标见 [`target.md`](../target.md)，当前架构边界见 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)，更细的对齐审计见 [`docs/plan/00-alignment-audit-and-repair-plan.md`](plan/00-alignment-audit-and-repair-plan.md)。
 
 ## 当前状态快照
 
@@ -21,7 +21,7 @@
 - Skill registry 已有 metadata、version、grant、secret 存储模型，但 schema validation、HTTP Skill 错误模型、secret backend 抽象、OpenAPI/MCP 导入还不完整。
 - Sandbox 还不是强隔离生产沙箱。当前 CLI 策略偏本地开发可用，仍需容器默认执行路径、workspace 隔离、artifact 归档、网络策略和资源配额。
 - 前端已经隐藏原始事件面板，但 artifact 展示、skill 配置校验、端到端测试和错误恢复体验还需要补强。
-- Control Plane 仍缺完整认证、多用户/项目权限、配额、Redis Runtime worker/重试/lease、跨副本 event fanout、审计日志、metrics 和 tracing；Redis run queue 已有基础入队 adapter。
+- Control Plane 仍缺 NiceAgent 内置 OIDC/session/JWT、邮件发送、强一致账单级 quota、DB/Redis 低层 spans、日志关联和外部告警；Redis Runtime worker、重试/lease、跨副本 event fanout、审计、基础 metrics/tracing 已有最小闭环。
 - 云部署目前适合作为近云验证，不应把 memory demo 或未完成 sandbox 当作生产方案直接发布。
 
 ## 下一阶段优先级
@@ -92,8 +92,8 @@
 
 - 引入真实认证边界，替代固定 `demo-user`。
 - 完善 organization/project/user 权限模型，让 skill grants、runs、workspaces 都有明确租户边界。
-- 将 Redis Streams 从基础入队 adapter 推进到 Runtime worker、重试/lease 和多 Control Plane event fanout 的可运行路径。
-- 增加结构化审计日志、metrics、trace id、run replay 和基础管理排障视图。
+- 把 Redis Streams 从可运行路径继续推进到生产运维能力：stream 保留策略、高可用 Redis、DLQ 告警、pending entries 观测和容量压测。
+- 在已有 audit、metrics、trace id、run replay 基础上补 DB/Redis 低层 spans、日志关联、外部告警和基础管理排障视图。
 
 验收标准：
 

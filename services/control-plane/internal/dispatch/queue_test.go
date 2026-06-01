@@ -11,6 +11,7 @@ import (
 func TestRedisStreamsRunQueueEnqueueWritesStreamFields(t *testing.T) {
 	client := &fakeRedisRunQueueClient{}
 	queue := newRedisStreamsRunQueueWithClient(client, "niceagent:runs:test", "workers", "consumer-a")
+	queue.MaxLen = 1000
 	enqueuedAt := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
 
 	err := queue.Enqueue(context.Background(), QueuedRun{
@@ -27,6 +28,9 @@ func TestRedisStreamsRunQueueEnqueueWritesStreamFields(t *testing.T) {
 	add := client.adds[0]
 	if add.stream != "niceagent:runs:test" {
 		t.Fatalf("stream = %q, want niceagent:runs:test", add.stream)
+	}
+	if add.maxLen != 1000 {
+		t.Fatalf("max len = %d, want 1000", add.maxLen)
 	}
 	if add.values["run_id"] != "run_1" || add.values["attempt_id"] != "attempt_1" {
 		t.Fatalf("identity fields = %#v", add.values)
@@ -105,6 +109,7 @@ type fakeRedisRunQueueClient struct {
 type fakeXAdd struct {
 	stream string
 	values map[string]any
+	maxLen int64
 }
 
 type fakeXGroup struct {
@@ -113,8 +118,8 @@ type fakeXGroup struct {
 	start  string
 }
 
-func (c *fakeRedisRunQueueClient) XAdd(_ context.Context, stream string, values map[string]any) (string, error) {
-	c.adds = append(c.adds, fakeXAdd{stream: stream, values: values})
+func (c *fakeRedisRunQueueClient) XAdd(_ context.Context, stream string, values map[string]any, maxLen int64) (string, error) {
+	c.adds = append(c.adds, fakeXAdd{stream: stream, values: values, maxLen: maxLen})
 	return "1700000000000-0", nil
 }
 

@@ -185,11 +185,13 @@ RUN_QUEUE_RECLAIM_MIN_IDLE_SECONDS=60
 RUN_QUEUE_RECLAIM_COUNT=1
 RUN_QUEUE_MAX_DELIVERIES=5
 RUN_QUEUE_DLQ_STREAM=niceagent:runs:dlq
+RUN_QUEUE_MAX_LEN=0
+RUN_QUEUE_DLQ_MAX_LEN=0
 RUN_ATTEMPT_LEASE_SECONDS=600
 RUN_ATTEMPT_HEARTBEAT_SECONDS=60
 ```
 
-当普通 `XREADGROUP` 没有新消息时，Runtime 会用 `XAUTOCLAIM` 回收 idle pending message。回收消息会生成新的 `attempt_id` 并重新 claim run；超过最大投递次数的消息会写入 DLQ stream 后 ack。执行中的 run 会按 heartbeat 周期续租 lease，续租失败时停止当前 attempt。
+当普通 `XREADGROUP` 没有新消息时，Runtime 会用 `XAUTOCLAIM` 回收 idle pending message。回收消息会生成新的 `attempt_id` 并重新 claim run；超过最大投递次数的消息会写入 DLQ stream 后 ack。执行中的 run 会按 heartbeat 周期续租 lease，续租失败时停止当前 attempt。`RUN_QUEUE_MAX_LEN` 和 `RUN_QUEUE_DLQ_MAX_LEN` 为 `0` 时不裁剪；大于 `0` 时分别对主 queue stream 和 DLQ stream 使用 Redis 近似裁剪，方便本地模拟生产保留窗口。
 
 如果只想本机直接连接已有 Postgres：
 

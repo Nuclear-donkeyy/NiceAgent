@@ -26,6 +26,7 @@ type Config struct {
 	RunQueueReclaimCount         int64
 	RunQueueMaxDeliveries        int64
 	RunQueueDLQStream            string
+	RunQueueDLQMaxLen            int64
 	RunAttemptLeaseSeconds       int
 	RunAttemptHeartbeat          time.Duration
 	ModelProvider                string
@@ -77,6 +78,7 @@ func FromEnv() Config {
 		RunQueueReclaimCount:         int64FromEnv("RUN_QUEUE_RECLAIM_COUNT", 1),
 		RunQueueMaxDeliveries:        int64FromEnv("RUN_QUEUE_MAX_DELIVERIES", 5),
 		RunQueueDLQStream:            os.Getenv("RUN_QUEUE_DLQ_STREAM"),
+		RunQueueDLQMaxLen:            int64FromEnv("RUN_QUEUE_DLQ_MAX_LEN", 0),
 		RunAttemptLeaseSeconds:       intFromEnv("RUN_ATTEMPT_LEASE_SECONDS", 600),
 		RunAttemptHeartbeat:          secondsDuration("RUN_ATTEMPT_HEARTBEAT_SECONDS", 60*time.Second),
 		ModelProvider:                modelProvider,

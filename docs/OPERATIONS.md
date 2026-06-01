@@ -181,15 +181,17 @@ RUN_QUEUE_STREAM=niceagent:runs
 RUN_QUEUE_GROUP=agent-runtimes
 RUN_QUEUE_CONSUMER=agent-runtime-1
 AGENT_RUNTIME_ID=agent-runtime-1
+RUN_QUEUE_MAX_LEN=100000
 RUN_QUEUE_RECLAIM_MIN_IDLE_SECONDS=60
 RUN_QUEUE_RECLAIM_COUNT=1
 RUN_QUEUE_MAX_DELIVERIES=5
 RUN_QUEUE_DLQ_STREAM=niceagent:runs:dlq
+RUN_QUEUE_DLQ_MAX_LEN=10000
 RUN_ATTEMPT_LEASE_SECONDS=600
 RUN_ATTEMPT_HEARTBEAT_SECONDS=60
 ```
 
-该模式需要 Control Plane 和 Agent Runtime module 的 `github.com/redis/go-redis/v9` 依赖。Control Plane 只负责 `XADD` 最小 payload；Agent Runtime worker 负责 `XGROUP CREATE MKSTREAM`、`XREADGROUP`、通过 `/internal/runs/{run_id}/execution-context` 拉取执行上下文，随后调用 `/internal/runs/{run_id}/claim` claim 当前 attempt，并在处理成功后 `XACK`。获取 execution context、claim 或执行失败时不 ack，消息保留在 pending entries 中。普通读取没有新消息时，worker 会按 `RUN_QUEUE_RECLAIM_MIN_IDLE_SECONDS` 使用 `XAUTOCLAIM` 回收 pending message；回收后会生成新的 `attempt_id`，避免旧 runtime 迟到回写覆盖新 attempt。超过 `RUN_QUEUE_MAX_DELIVERIES` 的消息会写入 `RUN_QUEUE_DLQ_STREAM` 后 ack，避免无限重试。
+该模式需要 Control Plane 和 Agent Runtime module 的 `github.com/redis/go-redis/v9` 依赖。Control Plane 只负责 `XADD` 最小 payload；如果 `RUN_QUEUE_MAX_LEN>0`，入队时会使用 Redis Streams 近似裁剪控制主 stream 长度。Agent Runtime worker 负责 `XGROUP CREATE MKSTREAM`、`XREADGROUP`、通过 `/internal/runs/{run_id}/execution-context` 拉取执行上下文，随后调用 `/internal/runs/{run_id}/claim` claim 当前 attempt，并在处理成功后 `XACK`。获取 execution context、claim 或执行失败时不 ack，消息保留在 pending entries 中。普通读取没有新消息时，worker 会按 `RUN_QUEUE_RECLAIM_MIN_IDLE_SECONDS` 使用 `XAUTOCLAIM` 回收 pending message；回收后会生成新的 `attempt_id`，避免旧 runtime 迟到回写覆盖新 attempt。超过 `RUN_QUEUE_MAX_DELIVERIES` 的消息会写入 `RUN_QUEUE_DLQ_STREAM` 后 ack，避免无限重试；如果 `RUN_QUEUE_DLQ_MAX_LEN>0`，DLQ stream 也会近似裁剪。`0` 表示不主动裁剪，适合本地调试；生产应结合 Redis 持久化、备份、告警和业务保留窗口设置非零值。
 
 attempt fencing 字段保存在 `runs` 上：`active_attempt_id`、`claimed_by`、`lease_expires_at`、`attempt_count`。如果旧 runtime 用旧 `attempt_id` 回写 event、complete 或 fail，Control Plane 会返回 `409 Conflict`，不会写 assistant message 或 terminal event。
 
@@ -208,6 +210,13 @@ make smoke-control-plane-fanout
 ```
 
 该脚本会启动临时 Postgres、Redis、两个 Control Plane、Agent Runtime 和 Sandbox Executor，验证第二个 Control Plane 能通过 Redis nudge + 共享 Postgres 补齐第一个 Control Plane 写入的 `tool.output`、`model.token` 和 `run.succeeded` SSE 事件。CI 的 `Test and build` 已把 `smoke-three-services-redis` 和 `smoke-control-plane-fanout` 纳入默认门禁；生产仍需要 Redis 高可用、保留策略和告警。
+
+Redis stream 保留策略建议：
+
+- 本地或 CI：`RUN_QUEUE_MAX_LEN=0`、`RUN_QUEUE_DLQ_MAX_LEN=0`，便于排查。
+- 生产：根据峰值 `runs_per_hour * 保留小时数` 设置 `RUN_QUEUE_MAX_LEN`，根据告警处理窗口设置 `RUN_QUEUE_DLQ_MAX_LEN`。
+- 不要把 Redis stream 当作权威 run/event 存储；run、message、event 和 artifact 权威状态仍在 Postgres。
+- 对 `RUN_QUEUE_DLQ_STREAM` 长度、Redis 内存、pending entries 数量和 worker reclaim 失败建立告警。
 
 清理本地持久化数据：
 

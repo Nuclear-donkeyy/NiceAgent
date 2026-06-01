@@ -107,6 +107,7 @@ func startQueueWorker(cfg config.Config, agentEngine engine.AgentEngine, logger 
 		ReclaimCount:      cfg.RunQueueReclaimCount,
 		MaxDeliveries:     cfg.RunQueueMaxDeliveries,
 		DeadLetterStream:  cfg.RunQueueDLQStream,
+		DeadLetterMaxLen:  cfg.RunQueueDLQMaxLen,
 		LeaseSeconds:      cfg.RunAttemptLeaseSeconds,
 		HeartbeatInterval: cfg.RunAttemptHeartbeat,
 	}, agentEngine, logger)
@@ -118,6 +119,7 @@ func startQueueWorker(cfg config.Config, agentEngine engine.AgentEngine, logger 
 		"consumer", cfg.RunQueueConsumer,
 		"reclaim_min_idle", cfg.RunQueueReclaimMinIdle.String(),
 		"max_deliveries", cfg.RunQueueMaxDeliveries,
+		"dlq_max_len", cfg.RunQueueDLQMaxLen,
 	)
 	go worker.Run(context.Background())
 }

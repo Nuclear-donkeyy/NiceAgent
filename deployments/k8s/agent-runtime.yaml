@@ -158,6 +158,11 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: RUN_QUEUE_GROUP
+            - name: RUN_QUEUE_MAX_LEN
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_MAX_LEN
             - name: RUN_QUEUE_CONSUMER
               valueFrom:
                 fieldRef:
@@ -182,6 +187,11 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: RUN_QUEUE_DLQ_STREAM
+            - name: RUN_QUEUE_DLQ_MAX_LEN
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: RUN_QUEUE_DLQ_MAX_LEN
             - name: RUN_ATTEMPT_LEASE_SECONDS
               valueFrom:
                 configMapKeyRef:
