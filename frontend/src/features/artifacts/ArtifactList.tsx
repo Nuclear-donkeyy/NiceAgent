@@ -31,11 +31,25 @@ export function ArtifactList({ artifacts, error, loading }: ArtifactListProps) {
         <div className={styles.list}>
           {artifacts.map((artifact) => {
             const displayName = artifact.name || artifact.path || artifact.id;
+            const downloadPath = artifactDownloadPath(artifact.id);
+            const isImage = isImageArtifact(artifact);
             return (
               <article className={styles.item} key={artifact.id || artifact.path}>
-                <div className={styles.meta}>
-                  <strong>{displayName}</strong>
-                  <span>{artifact.path || "output"}</span>
+                <div className={styles.content}>
+                  {artifact.id && isImage && (
+                    <a
+                      className={styles.preview}
+                      href={downloadPath}
+                      aria-label={`预览 ${displayName}`}
+                    >
+                      <img alt={displayName} loading="lazy" src={downloadPath} />
+                    </a>
+                  )}
+                  <div className={styles.meta}>
+                    <strong>{displayName}</strong>
+                    <span>{artifact.path || "output"}</span>
+                    {isImage && <span>图片预览</span>}
+                  </div>
                 </div>
                 <div className={styles.actions}>
                   <span>{formatBytes(artifact.size_bytes)}</span>
@@ -43,7 +57,7 @@ export function ArtifactList({ artifacts, error, loading }: ArtifactListProps) {
                     <a
                       aria-label={`下载 ${displayName}`}
                       download={displayName}
-                      href={artifactDownloadPath(artifact.id)}
+                      href={downloadPath}
                     >
                       下载
                     </a>
@@ -56,6 +70,10 @@ export function ArtifactList({ artifacts, error, loading }: ArtifactListProps) {
       )}
     </aside>
   );
+}
+
+function isImageArtifact(artifact: Artifact): boolean {
+  return artifact.mime_type.toLowerCase().split(";")[0].trim().startsWith("image/");
 }
 
 function formatBytes(value: number): string {

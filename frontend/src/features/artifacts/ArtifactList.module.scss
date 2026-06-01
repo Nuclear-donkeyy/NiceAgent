@@ -9,6 +9,7 @@
 
 .header,
 .item,
+.content,
 .actions {
   align-items: center;
   display: flex;
@@ -50,6 +51,28 @@
   padding: 10px 12px;
 }
 
+.content {
+  gap: 10px;
+  min-width: 0;
+}
+
+.preview {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  display: block;
+  flex: 0 0 auto;
+  height: 44px;
+  overflow: hidden;
+  width: 56px;
+}
+
+.preview img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
 .meta {
   display: grid;
   gap: 2px;
@@ -84,5 +107,9 @@
   .item {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .content {
+    align-items: flex-start;
   }
 }
