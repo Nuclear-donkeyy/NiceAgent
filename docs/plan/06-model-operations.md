@@ -39,6 +39,8 @@ Agent Runtime 已有配置：
 - `MODEL_HEALTH_PROBE_INTERVAL_SECONDS`
 - `MODEL_HEALTH_PROBE_TIMEOUT_SECONDS`
 - `MODEL_HEALTH_PROBE_INITIAL_DELAY_SECONDS`
+- `MODEL_REQUESTS_PER_MINUTE`
+- `MODEL_MAX_CONCURRENT_REQUESTS`
 
 `openai-compatible` provider 会校验 base URL、API key、model 非空，并通过 `github.com/cloudwego/eino-ext/components/model/openai` 创建 Eino OpenAI ChatModel。
 
@@ -52,7 +54,7 @@ K8s 部署已经把 `MODEL_API_KEY` 从 `niceagent-model-provider` Secret 注入
 
 ## 扩展点
 
-- `modelprovider` 已有 provider wrapper：统一 retry、fallback、usage callback、pricing/cost、health probe、错误分类和 redaction。后续继续补更细的 provider 侧 rate limit、本地并发保护和多 provider 路由。
+- `modelprovider` 已有 provider wrapper：统一 retry、fallback、usage callback、pricing/cost、health probe、错误分类、redaction、Runtime 进程内请求限流和并发保护。后续继续补跨 Runtime 的 provider 容量协调、供应商账号级限流联动和多 provider 路由。
 - `RunCompleteRequest` 和 Control Plane repository 落地 token usage 持久化。
 - `run_usage` 表已记录 provider、model、input/output/reasoning/cached tokens、`estimated`、`token_estimator`、latency、cost、currency，以及 run 级 tool/sandbox/artifact 聚合用量。
 - 当前先通过环境变量提供轻量 pricing policy；后续如需多模型、多租户成本核算，再增加 `model_pricing` 配置或表，按生效日期维护不同 provider/model 价格。
@@ -145,7 +147,7 @@ retry/fallback 方案：
 
 1. DeepSeek 冒烟：fake DeepSeek/OpenAI-compatible server 已覆盖普通回复、tool calling、usage 和典型错误分类；下一步用真实 DeepSeek key 补本地 smoke 记录。
 2. Usage 持久化：从 Eino callback/provider response 收集 token usage，写入 Control Plane。
-3. Retry/rate limit：增加 provider wrapper，处理 429/5xx/timeout。
+3. Retry/rate limit：provider wrapper 已处理 429/5xx/timeout retry，并支持 Runtime 进程内请求限流和并发保护；后续补跨副本容量协调。
 4. Fallback：支持多 provider/model 策略和错误分类。
 5. 日志脱敏：统一 redactor，覆盖 model、tool、event、audit。
 6. 模型运营面板：后端已有 provider health 和基础 metrics；前端/后台仍需展示 latency、token、cost、错误和 fallback。

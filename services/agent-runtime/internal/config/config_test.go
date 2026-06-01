@@ -61,3 +61,21 @@ func TestFromEnvReadsModelHealthProbeConfig(t *testing.T) {
 		t.Fatalf("unexpected probe config: interval=%s timeout=%s initial_delay=%s", cfg.ModelHealthProbeInterval, cfg.ModelHealthProbeTimeout, cfg.ModelHealthProbeInitialDelay)
 	}
 }
+
+func TestFromEnvReadsModelRateLimitConfig(t *testing.T) {
+	t.Setenv("MODEL_REQUESTS_PER_MINUTE", "30")
+	t.Setenv("MODEL_MAX_CONCURRENT_REQUESTS", "4")
+
+	cfg := FromEnv()
+
+	if cfg.ModelRequestsPerMinute != 30 || cfg.ModelMaxConcurrentRequests != 4 {
+		t.Fatalf("model rate limit config = rpm:%d concurrent:%d", cfg.ModelRequestsPerMinute, cfg.ModelMaxConcurrentRequests)
+	}
+}
+
+func TestValidateRejectsNegativeModelRateLimitConfig(t *testing.T) {
+	cfg := Config{ModelRequestsPerMinute: -1}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected negative model requests per minute to fail validation")
+	}
+}
