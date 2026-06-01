@@ -14,7 +14,7 @@
 | Skill 执行生产化 | 部分对齐 | HTTP Skill schema/runtime_config 校验、Runtime 入参/出参校验、SSRF 基础拦截、SecretResolver 接口、本地 secret/redaction、`env://` secret_ref、结构化 observation；Redis queue worker 可通过 execution context materialize 完整 `RuntimeSkill` | KMS/Vault/External Secrets 原生 backend 未接；OpenAPI/MCP 导入未做；per-skill retry/rate limit 未做 |
 | Sandbox 与 Artifact | 中度对齐 | workspace 登记、artifact 表/API/download、前端 artifact 展示、sandbox 输出扫描、path/symlink 越界检查、container executor 可配置；`workspace.read` 可列出当前 run artifacts 并读取已登记文本 artifact 摘要 | Compose 默认仍是 local executor；artifact 只在 run complete 时持久化和发事件；K8s NetworkPolicy/ResourceQuota/securityContext 未落地 |
 | 平台认证、权限与可观测 | 部分对齐 | `AUTH_MODE=demo|trusted-header|oidc` 边界、`ActorContext`、可信邮箱/name header、可信 `issuer + subject` 到 `user_identities` 的绑定、读写路径基础隔离、request id、轻量 `X-Trace-ID` 传播、标准 `traceparent` 传播、三服务 `/metrics`、可选 OpenTelemetry OTLP HTTP exporter、入站 HTTP server span、Control Plane 调度/回写 span、Runtime run/tool/model span、HTTP Skill span、Sandbox HTTP/exec span、Redis queue 处理 span、audit_events 表/API、audit redaction、trusted-header 最小 RBAC、`organization_members`/`project_members` 持久成员表、当前组织/项目成员管理 API、邀请创建/接受最小闭环、邀请接受邮箱 claim 匹配、组织成员 API 的持久角色解析、同组织项目 API 继承组织角色、项目级持久 quota policy、最小 run quota、Redis 并发/小时窗口 quota 预占、固定或动态模型 token 预扣/结算；`RunUsage` 已记录 tool/sandbox/artifact 聚合用量；每日模型 token、tool calls、sandbox seconds quota 已落地，Runtime 调用 tool 前也会做最小 tool/sandbox 实时预占；非本地或显式 required 模式会强制 `INTERNAL_API_TOKEN` | 真 OIDC 登录/JWT/session 未接；邮件发送未做；quota 仍缺真实 tokenizer/按模型动态估算和账单维度统计；DB/Redis 低层命令级 spans、日志关联和告警系统未做 |
-| 多实例队列与事件流 | 较高对齐 | SSE `id`、`Last-Event-ID`、`?after=`、前端 seq 去重；Redis Streams `XADD/XREADGROUP/XACK` adapter；`DISPATCH_MODE=redis` 入队；`RUNTIME_QUEUE_MODE=redis` Runtime worker；queue payload 最小化；execution context 内部 API；attempt claim、lease 字段和 callback fencing；worker heartbeat 续租、`XAUTOCLAIM` 回收 idle pending、DLQ；Redis nudge fanout 已能唤醒多 Control Plane SSE 副本 | 真实 Redis 多 runtime/多 Control Plane 冒烟还需要沉淀到集成测试 |
+| 多实例队列与事件流 | 较高对齐 | SSE `id`、`Last-Event-ID`、`?after=`、前端 seq 去重；Redis Streams `XADD/XREADGROUP/XACK` adapter；`DISPATCH_MODE=redis` 入队；`RUNTIME_QUEUE_MODE=redis` Runtime worker；queue payload 最小化；execution context 内部 API；attempt claim、lease 字段和 callback fencing；worker heartbeat 续租、`XAUTOCLAIM` 回收 idle pending、DLQ；Redis nudge fanout 已能唤醒多 Control Plane SSE 副本；`make smoke-three-services-redis` 会启动临时 Redis 和两个 Runtime consumer，并自动校验 run 被不同 consumer claim | 真实多 Control Plane 进程级 SSE fanout 冒烟仍待补强 |
 | 前端产品体验与 E2E | 高度对齐但仍有小偏差 | React/TS/SCSS Modules、聊天优先、artifact 展示/下载、HTTP Skill 表单校验、保存状态、Playwright mock smoke、三服务真实 UI smoke、SSE replay 去重；断线重连中和恢复补齐状态已折叠进 agent 状态气泡；HTTP Skill URL 已同步为仅允许 `https`；`make smoke-three-services` 可启动三服务真实进程做 `/cli echo hello` 冒烟；`make smoke-three-services-ui` 可构建前端并由 Control Plane 托管静态产物，做真实浏览器 smoke | Redis dispatcher 冒烟需要外部 Redis；更复杂的 SSE 断线重连真实服务场景仍待补强 |
 | 模型运营与 DeepSeek | 部分对齐 | Eino 原生 `ToolCallingChatModel`、OpenAI-compatible provider、错误分类、retry transport、单一后备 provider fallback、usage tracker、redactor、run_usage 持久化、配置化 cost/pricing、provider health 快照、模型运行指标、可选主动 provider 探针和基础告警指标 | 未完成真实 DeepSeek API 冒烟；复杂多 provider 路由未做；真实告警系统接入未做；真实 usage 依赖 provider callback，缺失时仍估算 |
 
@@ -51,7 +51,7 @@
 
 当前 `DISPATCH_MODE=redis` 会把 run 写进 Redis Streams，Agent Runtime 在 `RUNTIME_QUEUE_MODE=redis` 下已经可以消费同一个 stream/group，并通过 Control Plane 内部 API 拉取完整 execution context。因此 Redis queue 已从“只入队”推进到最小可执行闭环。
 
-已补齐：Redis pending entries 支持 `XAUTOCLAIM` 和 DLQ；执行期间会按 heartbeat 续租 run lease；Control Plane 可用 `EVENT_FANOUT_MODE=redis` 发布轻量 nudge，其他副本收到后仍从 repository 按 `seq` 补读权威事件。仍待修复：Redis 多 runtime/多 Control Plane 真实冒烟还需要进入集成测试。
+已补齐：Redis pending entries 支持 `XAUTOCLAIM` 和 DLQ；执行期间会按 heartbeat 续租 run lease；Control Plane 可用 `EVENT_FANOUT_MODE=redis` 发布轻量 nudge，其他副本收到后仍从 repository 按 `seq` 补读权威事件。`make smoke-three-services-redis` 已经是本地 Redis 多 Runtime consumer 冒烟入口，会启动临时 Redis、两个 Runtime consumer、发送两个 run，并自动校验每个 run 的 `claimed_by` 属于预期 consumer 且多 consumer 实际参与。仍待修复：多 Control Plane 进程级 SSE fanout 冒烟还需要进入集成测试。
 
 ### 3. attempt/lease/fencing 已有权威状态，但恢复策略仍不完整
 
@@ -105,7 +105,7 @@ artifact 已经能创建、列表、下载，Runtime 内的 `workspace.read` 也
 
 剩余验收需要真实 Redis/三服务冒烟继续补强：
 
-- 本地已新增 `scripts/smoke_three_services.py`，HTTP dispatcher 三服务进程冒烟可执行；Redis dispatcher 可通过 `--dispatch-mode redis` 跑，但依赖外部 Redis。
+- 本地已新增 `scripts/smoke_three_services.py`，HTTP dispatcher 三服务进程冒烟可执行；Redis dispatcher 可通过 `make smoke-three-services-redis` 启动临时 Redis、两个 Runtime consumer 和两个 run，并校验 `claimed_by` 分布。
 - 两个 Runtime consumer 并发消费时 run 不重复完成。
 - HTTP dispatcher 路径不回退。
 

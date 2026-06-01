@@ -171,6 +171,7 @@ def main() -> int:
                     "assistant": assistant,
                 }
             )
+        validate_redis_claims(args.dispatch_mode, args.runtime_count, results)
         print(
             json.dumps(
                 {
@@ -197,6 +198,20 @@ def main() -> int:
     finally:
         for process in reversed(processes):
             stop_process(process)
+
+
+def validate_redis_claims(dispatch_mode: str, runtime_count: int, results: list[dict[str, object]]) -> None:
+    if dispatch_mode != "redis":
+        return
+    expected = {f"smoke-runtime-{index + 1}" for index in range(runtime_count)}
+    claimed = {str(result.get("claimed_by", "")) for result in results}
+    if "" in claimed:
+        raise RuntimeError(f"redis smoke expected every run to be claimed by a runtime: {results}")
+    unexpected = claimed - expected
+    if unexpected:
+        raise RuntimeError(f"redis smoke got unexpected runtime claims {sorted(unexpected)}; expected {sorted(expected)}")
+    if runtime_count > 1 and len(results) >= runtime_count and len(claimed) < 2:
+        raise RuntimeError(f"redis smoke expected multiple runtime consumers to claim work: {results}")
 
 
 def start_service(cwd: Path, cmd: list[str], env: dict[str, str], log_path: Path) -> subprocess.Popen[bytes]:
