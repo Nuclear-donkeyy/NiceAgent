@@ -115,6 +115,7 @@ func (w *RedisWorker) ProcessNext(ctx context.Context) (err error) {
 		w.incQueueError("ensure_group")
 		return err
 	}
+	w.sampleQueueDepths(ctx)
 	message, reclaimed, err := w.readNextMessage(ctx)
 	if errors.Is(err, errQueueEmpty) {
 		return nil
@@ -212,6 +213,30 @@ func (w *RedisWorker) pendingRetryCount(ctx context.Context, messageID string) i
 		return 0
 	}
 	return entries[0].RetryCount
+}
+
+func (w *RedisWorker) sampleQueueDepths(ctx context.Context) {
+	if w.metrics == nil {
+		return
+	}
+	pendingCount, err := w.client.XPendingCount(ctx, w.cfg.Stream, w.cfg.Group)
+	if err != nil {
+		w.incQueueError("pending_sample")
+	} else {
+		w.metrics.SetGauge("niceagent_redis_queue_pending_entries", w.baseMetricLabels(nil), float64(pendingCount))
+	}
+	dlqStream := strings.TrimSpace(w.cfg.DeadLetterStream)
+	if dlqStream == "" {
+		return
+	}
+	dlqLength, err := w.client.XLen(ctx, dlqStream)
+	if err != nil {
+		w.incQueueError("dlq_len")
+		return
+	}
+	w.metrics.SetGauge("niceagent_redis_queue_dlq_length", w.baseMetricLabels(platform.Labels{
+		"dlq_stream": dlqStream,
+	}), float64(dlqLength))
 }
 
 func (w *RedisWorker) deadLetter(ctx context.Context, message redisStreamMessage, reason string, deliveryCount int64, cause error) error {
@@ -527,7 +552,9 @@ type redisQueueClient interface {
 	XGroupCreateMkStream(ctx context.Context, stream, group, start string) error
 	XReadGroup(ctx context.Context, stream, group, consumer string, count int64, block time.Duration) (redisStreamMessage, error)
 	XAutoClaim(ctx context.Context, stream, group, consumer string, minIdle time.Duration, start string, count int64) ([]redisStreamMessage, string, error)
+	XPendingCount(ctx context.Context, stream, group string) (int64, error)
 	XPendingExt(ctx context.Context, stream, group, start, end string, count int64) ([]redisPendingEntry, error)
+	XLen(ctx context.Context, stream string) (int64, error)
 	XAdd(ctx context.Context, stream string, values map[string]any, maxLen int64) (string, error)
 	XAck(ctx context.Context, stream, group string, ids ...string) (int64, error)
 	Close() error
@@ -612,6 +639,25 @@ func (c *goRedisQueueClient) XPendingExt(ctx context.Context, stream, group, sta
 		result = append(result, redisPendingEntry{ID: entry.ID, RetryCount: entry.RetryCount})
 	}
 	return result, nil
+}
+
+func (c *goRedisQueueClient) XPendingCount(ctx context.Context, stream, group string) (int64, error) {
+	pending, err := c.client.XPending(ctx, stream, group).Result()
+	if errors.Is(err, redis.Nil) || pending == nil {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return pending.Count, nil
+}
+
+func (c *goRedisQueueClient) XLen(ctx context.Context, stream string) (int64, error) {
+	length, err := c.client.XLen(ctx, stream).Result()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	return length, err
 }
 
 func (c *goRedisQueueClient) XAdd(ctx context.Context, stream string, values map[string]any, maxLen int64) (string, error) {
