@@ -99,6 +99,8 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 下载 artifact 文件。当前只支持 `storage_backend=local` 的最小闭环；服务会按当前用户、run workspace、`output/` 相对路径和 symlink 解析结果做越界检查。
 
+前端会对 `image/*` artifact 使用同一个安全下载 URL 渲染缩略预览；其他非文本类型当前仍以下载为主。
+
 `POST /api/runs/{run_id}/cancel`
 
 取消一个 run。
