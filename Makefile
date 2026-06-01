@@ -47,6 +47,7 @@ check-js:
 
 check-alerts:
 	python3 scripts/check_prometheus_alerts.py deployments/monitoring/prometheus-alerts.yml
+	python3 scripts/check_alertmanager_config.py deployments/monitoring/alertmanager.example.yml
 
 compose-up:
 	docker compose -f deployments/docker-compose.yml up
