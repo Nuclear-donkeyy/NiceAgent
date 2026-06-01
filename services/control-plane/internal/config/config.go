@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"niceagent/control-plane/internal/mailer"
 )
 
 type Config struct {
@@ -43,6 +45,8 @@ type Config struct {
 	SMTPUsername                     string
 	SMTPPassword                     string
 	SMTPFrom                         string
+	InvitationEmailSubjectTemplate   string
+	InvitationEmailBodyTemplate      string
 	InternalAPIToken                 string
 	InternalTokenRequired            bool
 	MaxConcurrentRuns                int
@@ -94,6 +98,8 @@ func FromEnv() Config {
 		SMTPUsername:                     strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
 		SMTPPassword:                     os.Getenv("SMTP_PASSWORD"),
 		SMTPFrom:                         strings.TrimSpace(os.Getenv("SMTP_FROM")),
+		InvitationEmailSubjectTemplate:   strings.TrimSpace(os.Getenv("INVITATION_EMAIL_SUBJECT_TEMPLATE")),
+		InvitationEmailBodyTemplate:      os.Getenv("INVITATION_EMAIL_BODY_TEMPLATE"),
 		InternalAPIToken:                 strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN")),
 		InternalTokenRequired:            boolEnv("INTERNAL_API_TOKEN_REQUIRED", isNonLocalEnvironment(environment)),
 		MaxConcurrentRuns:                intEnv("QUOTA_MAX_CONCURRENT_RUNS", 0),
@@ -138,6 +144,9 @@ func (c Config) Validate() error {
 		}
 		if c.SMTPPort <= 0 || c.SMTPPort > 65535 {
 			return fmt.Errorf("SMTP_PORT must be between 1 and 65535")
+		}
+		if err := mailer.ValidateTemplates(c.InvitationEmailSubjectTemplate, c.InvitationEmailBodyTemplate); err != nil {
+			return err
 		}
 	}
 	return nil

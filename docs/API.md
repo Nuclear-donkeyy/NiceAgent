@@ -268,7 +268,7 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 }
 ```
 
-创建响应会额外包含一次性可见的 `token`。如果 Control Plane 配置 `INVITATION_EMAIL_MODE=smtp`，服务会同时向邀请邮箱发送包含 `/?invitation_token={token}` 链接的邮件，并写入 `invitation.email.send` audit event；SMTP 发送失败不会回滚已创建的邀请。
+创建响应会额外包含一次性可见的 `token`。如果 Control Plane 配置 `INVITATION_EMAIL_MODE=smtp`，服务会同时向邀请邮箱发送包含 `/?invitation_token={token}` 链接的邮件，并写入 `invitation.email.send` audit event；邮件 subject/body 可通过 `INVITATION_EMAIL_SUBJECT_TEMPLATE` 和 `INVITATION_EMAIL_BODY_TEMPLATE` 配置。SMTP 发送失败不会回滚已创建的邀请。
 
 ```json
 {

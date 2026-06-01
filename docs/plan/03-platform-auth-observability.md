@@ -48,14 +48,14 @@ Repository 仍保留偏底层的数据访问接口，权限主要在 HTTP handle
 仍待落地能力：
 
 - NiceAgent 内置浏览器 OIDC login callback、session cookie、refresh token 和登出流程。
-- 邮件投递模板、退信处理、队列化发送和更细 action-level policy。
+- 邀请邮件 subject/body 模板配置已落地；退信处理、队列化发送和更细 action-level policy 仍待补。
 - 真实 tokenizer、按模型动态估算、强一致账单级 quota、外部告警路由、值班系统和容量看板。
 
 ## 扩展点
 
 - Control Plane 增加 `internal/auth`：解析 session/JWT，产出 `ActorContext`。
 - Repository 方法从 `userID string` 扩展到 `ActorContext + projectID`，所有读写都走授权检查。
-- 新增身份/权限表：`organization_members`、`project_members`、`invitations`、`user_identities` 已有最小版本，当前组织/项目成员管理 API 和邀请接受 API 已有最小闭环，组织成员 API 和同组织项目 API 可从 `organization_members` 解析持久角色，邀请接受已支持可信邮箱 claim 匹配；可信网关传入 `issuer + subject` 时会绑定外部身份并拒绝冲突；可选 SMTP 邀请邮件已补；投递模板、退信处理、队列化发送和更通用的 `role_bindings` 仍待补。
+- 新增身份/权限表：`organization_members`、`project_members`、`invitations`、`user_identities` 已有最小版本，当前组织/项目成员管理 API 和邀请接受 API 已有最小闭环，组织成员 API 和同组织项目 API 可从 `organization_members` 解析持久角色，邀请接受已支持可信邮箱 claim 匹配；可信网关传入 `issuer + subject` 时会绑定外部身份并拒绝冲突；可选 SMTP 邀请邮件与 subject/body 模板配置已补；退信处理、队列化发送和更通用的 `role_bindings` 仍待补。
 - 新增 `audit_events` 表和 `AuditLogger`。
 - 当前最小 quota 支持两种计数路径：默认从 Postgres/memory run 状态和 `run_usage` 统计；`QUOTA_COUNTER_MODE=redis` 时用 Redis 预占 `concurrent_runs`、`runs_per_hour`，并可通过 fixed 或 dynamic 模型 token reservation 对每日模型 token 做预扣/结算。项目级持久配置模型 `project_quota_policies` 已有最小闭环。`run_usage` 已能沉淀 tool/sandbox/artifact 聚合用量，并支持 `tool_calls_per_day`、`sandbox_seconds_per_day` 限额；Runtime 调用 tool 前会通过内部 quota reserve 预占工具调用和 sandbox 秒数；项目 usage 可按 provider/model/currency/估算来源聚合查询。后续再新增更专门的 `quota_usage` 或 billing ledger，支持真实 tokenizer/按模型动态估算和分布式 token bucket。
 - `packages/common/platform` 已有 request id、trace context、metrics、log redactor、OpenTelemetry 初始化、OTLP HTTP exporter、HTTP server span middleware 和通用 `StartSpan` helper；DB repository 和 Redis 低层命令已接入同一条 trace。
@@ -129,7 +129,7 @@ RBAC 当前最小角色和后续第一版角色：
 ## 分阶段落地
 
 1. Auth middleware：增加 `AUTH_MODE=demo|trusted-header|oidc` 和 `ActorContext`，外部 API 保持行为不变。
-2. 身份/成员表：membership migration、当前组织/项目成员管理 API、邀请创建/接受 API、`user_identities` 绑定已落地并保留 demo 数据；组织成员 API 与同组织项目 API 已支持缺少 header roles 时从 `organization_members` 解析角色；邀请接受已校验可信邮箱 claim；NiceAgent 内置 OIDC 登录、投递模板/退信/队列化仍待补；可选 SMTP 邀请邮件已有最小闭环。
+2. 身份/成员表：membership migration、当前组织/项目成员管理 API、邀请创建/接受 API、`user_identities` 绑定已落地并保留 demo 数据；组织成员 API 与同组织项目 API 已支持缺少 header roles 时从 `organization_members` 解析角色；邀请接受已校验可信邮箱 claim；可选 SMTP 邀请邮件和 subject/body 模板已有最小闭环；NiceAgent 内置 OIDC 登录、退信/队列化仍待补。
 3. API 去 demo 常量：所有 handler 从 `ActorContext` 获取 user/project。
 4. RBAC：加入 resource/action 检查和基础角色。
 5. Quota：项目级持久 policy、Redis 并发/小时窗口预占、固定/动态模型 token 预扣/结算、run 级 tool/sandbox/artifact 用量记录和 tool/sandbox 最小实时预占已落地；后续需要支持真实 tokenizer/按模型动态估算、分布式强一致 token bucket 和账单维度聚合。

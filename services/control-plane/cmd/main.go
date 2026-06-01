@@ -88,12 +88,14 @@ func newInvitationMailer(cfg config.Config, logger *slog.Logger) app.InvitationM
 	case "smtp":
 		logger.Info("using smtp invitation email", "host", cfg.SMTPHost, "port", cfg.SMTPPort, "from", cfg.SMTPFrom)
 		return mailer.NewSMTPInvitationMailer(mailer.SMTPConfig{
-			Host:          cfg.SMTPHost,
-			Port:          cfg.SMTPPort,
-			Username:      cfg.SMTPUsername,
-			Password:      cfg.SMTPPassword,
-			From:          cfg.SMTPFrom,
-			PublicBaseURL: cfg.InvitationPublicBaseURL,
+			Host:            cfg.SMTPHost,
+			Port:            cfg.SMTPPort,
+			Username:        cfg.SMTPUsername,
+			Password:        cfg.SMTPPassword,
+			From:            cfg.SMTPFrom,
+			PublicBaseURL:   cfg.InvitationPublicBaseURL,
+			SubjectTemplate: cfg.InvitationEmailSubjectTemplate,
+			BodyTemplate:    cfg.InvitationEmailBodyTemplate,
 		})
 	default:
 		logger.Warn("unknown INVITATION_EMAIL_MODE; invitation email disabled", "mode", cfg.InvitationEmailMode)

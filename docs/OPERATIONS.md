@@ -64,7 +64,12 @@ SMTP_PASSWORD=<secret>
 SMTP_FROM="NiceAgent <noreply@example.com>"
 ```
 
-`INVITATION_PUBLIC_BASE_URL` 用于生成邮件中的 `/?invitation_token={token}` 链接。SMTP 发送失败不会回滚已创建的邀请，排查时查看 `invitation.email.send` audit event 和 Control Plane 日志。生产环境不要把 `SMTP_PASSWORD` 放入 ConfigMap 或仓库；K8s 模板通过 `niceagent-smtp` Secret 注入该值。
+`INVITATION_PUBLIC_BASE_URL` 用于生成邮件中的 `/?invitation_token={token}` 链接。邀请邮件支持 `text/template` 语法的纯文本模板：
+
+- `INVITATION_EMAIL_SUBJECT_TEMPLATE`：默认 `NiceAgent invitation`。
+- `INVITATION_EMAIL_BODY_TEMPLATE`：为空时使用内置模板。
+
+可用字段包括 `.Email`、`.Role`、`.OrganizationID`、`.ProjectID`、`.ProjectIDOrDash`、`.AcceptURL`、`.ExpiresAt`。启用 SMTP 时，Control Plane 启动会校验模板语法和字段名；错误模板会导致启动失败，避免发出坏邮件。SMTP 发送失败不会回滚已创建的邀请，排查时查看 `invitation.email.send` audit event 和 Control Plane 日志。生产环境不要把 `SMTP_PASSWORD` 放入 ConfigMap 或仓库；K8s 模板通过 `niceagent-smtp` Secret 注入该值。
 
 run 配额是最小治理边界，默认关闭。env 配置是 fallback：
 
