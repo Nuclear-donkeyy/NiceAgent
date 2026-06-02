@@ -24,6 +24,7 @@ services:
       CONTROL_PLANE_ADDR: ":8080"
       NICEAGENT_ENV: local
       AUTH_MODE: demo
+      ACTION_POLICY_FILE: ""
       DISPATCH_MODE: http
       EVENT_FANOUT_MODE: redis
       EVENT_FANOUT_PREFIX: niceagent:run-events

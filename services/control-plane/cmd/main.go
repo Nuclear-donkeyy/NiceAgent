@@ -27,6 +27,9 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatal(err)
 	}
+	if err := httpapi.ValidateActionPolicyFile(cfg.ActionPolicyFile); err != nil {
+		log.Fatalf("invalid ACTION_POLICY_FILE: %v", err)
+	}
 	logger := platform.NewLogger("control-plane")
 	shutdownTelemetry, err := platform.InitOpenTelemetry(context.Background(), platform.OpenTelemetryConfigFromEnv("control_plane", cfg.Environment))
 	if err != nil {
@@ -69,6 +72,7 @@ func main() {
 		},
 		ArtifactRetention:    time.Duration(cfg.ArtifactRetentionDays) * 24 * time.Hour,
 		ArtifactCleanupFiles: cfg.ArtifactCleanupDeleteFiles,
+		ActionPolicyFile:     cfg.ActionPolicyFile,
 		OIDC: httpapi.OIDCConfig{
 			Issuer:           cfg.OIDCIssuerURL,
 			Audience:         cfg.OIDCAudience,

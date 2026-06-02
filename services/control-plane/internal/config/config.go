@@ -79,6 +79,7 @@ type Config struct {
 	QuotaModelTokenEstimatorModel           string
 	ArtifactRetentionDays                   int
 	ArtifactCleanupDeleteFiles              bool
+	ActionPolicyFile                        string
 }
 
 func FromEnv() Config {
@@ -152,6 +153,7 @@ func FromEnv() Config {
 		QuotaModelTokenEstimatorModel:           strings.TrimSpace(os.Getenv("QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL")),
 		ArtifactRetentionDays:                   intEnv("ARTIFACT_RETENTION_DAYS", 0),
 		ArtifactCleanupDeleteFiles:              boolEnv("ARTIFACT_CLEANUP_DELETE_FILES", false),
+		ActionPolicyFile:                        strings.TrimSpace(os.Getenv("ACTION_POLICY_FILE")),
 	}
 }
 

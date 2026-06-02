@@ -136,6 +136,16 @@ func TestFromEnvReadsArtifactRetention(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsActionPolicyFile(t *testing.T) {
+	t.Setenv("ACTION_POLICY_FILE", "/etc/niceagent/action-policy.json")
+
+	cfg := FromEnv()
+
+	if cfg.ActionPolicyFile != "/etc/niceagent/action-policy.json" {
+		t.Fatalf("action policy file = %q", cfg.ActionPolicyFile)
+	}
+}
+
 func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	t.Setenv("CONTROL_PLANE_PUBLIC_URL", "https://control.example.test")
 	t.Setenv("INVITATION_EMAIL_MODE", "smtp")
