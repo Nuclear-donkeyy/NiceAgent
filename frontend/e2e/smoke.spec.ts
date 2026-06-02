@@ -26,7 +26,7 @@ interface Message {
 interface Skill {
   id: string;
   scope: "system" | "user";
-  kind: "builtin" | "http";
+  kind: "builtin" | "http" | "mcp";
   name: string;
   version: string;
   description: string;
@@ -47,7 +47,7 @@ interface Artifact {
   created_at: string;
 }
 
-test("smoke covers chat, CLI state, artifacts, HTTP Skill and refresh recovery", async ({
+test("smoke covers chat, CLI state, artifacts, HTTP/MCP Skill and refresh recovery", async ({
   page,
 }) => {
   await installMockEventSource(page);
@@ -101,6 +101,40 @@ test("smoke covers chat, CLI state, artifacts, HTTP Skill and refresh recovery",
   await expect(skillCard.getByText("已停用")).toBeVisible();
   await skillCard.getByRole("button", { name: "启用" }).click();
   await expect(skillCard.getByText("已启用")).toBeVisible();
+
+  await page.getByRole("button", { name: "预览" }).click();
+  await page.getByLabel("MCP tools/list JSON").fill(
+    JSON.stringify({
+      tools: [
+        {
+          name: "lookup_docs",
+          description: "查询内部文档",
+          inputSchema: {
+            type: "object",
+            properties: {
+              keyword: { type: "string" },
+            },
+            required: ["keyword"],
+          },
+          annotations: {
+            readOnlyHint: true,
+            openWorldHint: false,
+          },
+        },
+      ],
+    }),
+  );
+  await page.getByRole("button", { name: "预览 MCP 能力" }).click();
+  await expect(page.getByText("lookup_docs")).toBeVisible();
+  await expect(page.getByText("查询内部文档")).toBeVisible();
+  await page.getByLabel("MCP Server URL").fill("https://mcp.example.com/rpc");
+  await page.getByRole("button", { name: "保存选中的 MCP Skill" }).click();
+  const mcpSkillCard = page.locator("article").filter({ hasText: "lookup_docs" });
+  await expect(mcpSkillCard.getByText("已启用")).toBeVisible();
+  await mcpSkillCard.getByRole("button", { name: "停用" }).click();
+  await expect(mcpSkillCard.getByText("已停用")).toBeVisible();
+  await mcpSkillCard.getByRole("button", { name: "启用" }).click();
+  await expect(mcpSkillCard.getByText("已启用")).toBeVisible();
 
   await expect(page.locator("header").getByText("已完成")).toBeVisible();
   await page.reload();
@@ -315,6 +349,7 @@ async function installApiMocks(page: Page) {
   ];
   let userSkills: Skill[] = [];
   let createSkillAttempts = 0;
+  let mcpSkillCreated = false;
   let artifactsByRun: Record<string, Artifact[]> = {
     "run-restored": [summaryArtifact],
     "run-cli": [],
@@ -416,9 +451,84 @@ async function installApiMocks(page: Page) {
       return;
     }
 
+    if (method === "POST" && path === "/api/skills/import/mcp/preview") {
+      await json(route, {
+        candidates: [
+          {
+            name: "lookup_docs",
+            description: "查询内部文档",
+            input_schema: JSON.stringify({
+              type: "object",
+              properties: { keyword: { type: "string" } },
+              required: ["keyword"],
+            }),
+            annotations: JSON.stringify({ readOnlyHint: true, openWorldHint: false }),
+            read_only_hint: true,
+            destructive_hint: false,
+            idempotent_hint: false,
+            open_world_hint: false,
+          },
+        ],
+      });
+      return;
+    }
+
+    if (method === "POST" && path === "/api/skills/import/mcp") {
+      const body = parseBody(request.postData());
+      if (body.server_url !== "https://mcp.example.com/rpc" || body.tool_name !== "lookup_docs") {
+        await json(route, { error: "unexpected MCP import body" }, 400);
+        return;
+      }
+      const skill: Skill = {
+        id: "skill-mcp-docs",
+        scope: "user",
+        kind: "mcp",
+        name: "lookup_docs",
+        version: "1.0.0",
+        description: "查询内部文档",
+        risk: "low",
+        requires_auth: false,
+        enabled: true,
+      };
+      mcpSkillCreated = true;
+      userSkills = [...userSkills.filter((item) => item.id !== skill.id), skill];
+      await json(route, skill, 201);
+      return;
+    }
+
     if (method === "POST" && path === "/api/skills/skill-weather/disable") {
       userSkills = userSkills.map((skill) => ({ ...skill, enabled: false }));
       await json(route, userSkills[0]);
+      return;
+    }
+
+    if (method === "POST" && path === "/api/skills/skill-mcp-docs/disable") {
+      if (!mcpSkillCreated) {
+        await json(route, { error: "skill not found" }, 404);
+        return;
+      }
+      userSkills = userSkills.map((skill) =>
+        skill.id === "skill-mcp-docs" ? { ...skill, enabled: false } : skill,
+      );
+      await json(
+        route,
+        userSkills.find((skill) => skill.id === "skill-mcp-docs"),
+      );
+      return;
+    }
+
+    if (method === "POST" && path === "/api/skills/skill-mcp-docs/enable") {
+      if (!mcpSkillCreated) {
+        await json(route, { error: "skill not found" }, 404);
+        return;
+      }
+      userSkills = userSkills.map((skill) =>
+        skill.id === "skill-mcp-docs" ? { ...skill, enabled: true } : skill,
+      );
+      await json(
+        route,
+        userSkills.find((skill) => skill.id === "skill-mcp-docs"),
+      );
       return;
     }
 
