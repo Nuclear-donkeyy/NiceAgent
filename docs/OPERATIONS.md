@@ -152,9 +152,11 @@ curl -X DELETE http://control-plane:8080/api/organizations/$ORG_ID/invitation-em
 
 ```bash
 INVITATION_EMAIL_WEBHOOK_SECRET=<random-secret>
+INVITATION_EMAIL_SENDGRID_PUBLIC_KEY=<sendgrid-ecdsa-public-key>
+INVITATION_EMAIL_MAILGUN_SIGNING_KEY=<mailgun-signing-key>
 ```
 
-调用方需要设置 `X-NiceAgent-Webhook-Signature: sha256=<hex>`，其中 `<hex>` 是 `hmac_sha256(secret, raw_body)`。未配置 secret 时 webhook 入口返回 404，签名错误返回 401。当前入口兼容 NiceAgent provider-neutral 事件格式，并支持 SendGrid Event Webhook、Amazon SES SNS notification 和 Mailgun webhook 的最小原生字段映射。生产接入时需要在邮件发送侧把 `invitation_id` / `delivery_id` 写入服务商 metadata/custom args/tags，否则 webhook 无法把服务商事件关联回 NiceAgent invitation。服务商原生签名校验和管理后台重发按钮仍可在后续 adapter/UI 层继续补齐。
+调用方可以使用 NiceAgent 兼容签名 `X-NiceAgent-Webhook-Signature: sha256=<hex>`，其中 `<hex>` 是 `hmac_sha256(INVITATION_EMAIL_WEBHOOK_SECRET, raw_body)`；也可以直接配置服务商原生签名。SendGrid Event Webhook 使用 `INVITATION_EMAIL_SENDGRID_PUBLIC_KEY` 校验 `X-Twilio-Email-Event-Webhook-Timestamp` 和 `X-Twilio-Email-Event-Webhook-Signature`；Mailgun 使用 `INVITATION_EMAIL_MAILGUN_SIGNING_KEY` 校验 payload 中的 `signature.timestamp`、`signature.token` 和 `signature.signature`。三种签名方式任一通过即可；未配置任何 webhook 密钥时入口返回 404，签名错误返回 401。当前入口兼容 NiceAgent provider-neutral 事件格式，并支持 SendGrid Event Webhook、Amazon SES SNS notification 和 Mailgun webhook 的最小原生字段映射。生产接入时需要在邮件发送侧把 `invitation_id` / `delivery_id` 写入服务商 metadata/custom args/tags，否则 webhook 无法把服务商事件关联回 NiceAgent invitation。Amazon SES SNS 原生证书签名校验和管理后台重发按钮仍可在后续 adapter/UI 层继续补齐。
 
 run 配额是最小治理边界，默认关闭。env 配置是 fallback：
 

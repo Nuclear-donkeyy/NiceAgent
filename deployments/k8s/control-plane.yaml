@@ -202,6 +202,18 @@ spec:
                   name: niceagent-smtp
                   key: webhook-secret
                   optional: true
+            - name: INVITATION_EMAIL_SENDGRID_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-smtp
+                  key: sendgrid-public-key
+                  optional: true
+            - name: INVITATION_EMAIL_MAILGUN_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-smtp
+                  key: mailgun-signing-key
+                  optional: true
             - name: SMTP_HOST
               valueFrom:
                 configMapKeyRef:

@@ -2,10 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -38,7 +42,7 @@ type Server struct {
 	oidcBrowser             OIDCBrowserConfig
 	controlPlaneURL         string
 	internalToken           string
-	invitationWebhookSecret string
+	invitationWebhookVerify InvitationWebhookVerification
 	invitationMailer        app.InvitationMailer
 	runQuota                RunQuota
 	quotaLimiter            quotapkg.Limiter
@@ -49,18 +53,32 @@ type Server struct {
 }
 
 type ServerOptions struct {
-	AuthMode                string
-	ControlPlanePublicURL   string
-	InternalAPIToken        string
-	InvitationWebhookSecret string
-	InvitationMailer        app.InvitationMailer
-	RunQuota                RunQuota
-	QuotaLimiter            quotapkg.Limiter
-	TokenReservation        TokenReservationOptions
-	ArtifactRetention       time.Duration
-	ArtifactCleanupFiles    bool
-	OIDC                    OIDCConfig
-	OIDCBrowser             OIDCBrowserConfig
+	AuthMode                      string
+	ControlPlanePublicURL         string
+	InternalAPIToken              string
+	InvitationWebhookSecret       string
+	InvitationWebhookVerification InvitationWebhookVerification
+	InvitationMailer              app.InvitationMailer
+	RunQuota                      RunQuota
+	QuotaLimiter                  quotapkg.Limiter
+	TokenReservation              TokenReservationOptions
+	ArtifactRetention             time.Duration
+	ArtifactCleanupFiles          bool
+	OIDC                          OIDCConfig
+	OIDCBrowser                   OIDCBrowserConfig
+}
+
+type InvitationWebhookVerification struct {
+	SharedSecret      string
+	SendGridPublicKey string
+	MailgunSigningKey string
+}
+
+func normalizeInvitationWebhookVerification(input InvitationWebhookVerification, legacySecret string) InvitationWebhookVerification {
+	input.SharedSecret = strings.TrimSpace(firstNonEmptyHTTPAPI(input.SharedSecret, legacySecret))
+	input.SendGridPublicKey = strings.TrimSpace(input.SendGridPublicKey)
+	input.MailgunSigningKey = strings.TrimSpace(input.MailgunSigningKey)
+	return input
 }
 
 const defaultAttemptLeaseSeconds = 600
@@ -103,7 +121,7 @@ func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log
 		oidcBrowser:             normalizeOIDCBrowserConfig(opts.OIDCBrowser),
 		controlPlaneURL:         strings.TrimRight(opts.ControlPlanePublicURL, "/"),
 		internalToken:           internalToken(opts.InternalAPIToken),
-		invitationWebhookSecret: opts.InvitationWebhookSecret,
+		invitationWebhookVerify: normalizeInvitationWebhookVerification(opts.InvitationWebhookVerification, opts.InvitationWebhookSecret),
 		invitationMailer:        opts.InvitationMailer,
 		runQuota:                opts.RunQuota,
 		quotaLimiter:            opts.QuotaLimiter,
@@ -1074,8 +1092,7 @@ func (s *Server) recordInvitationEmailEvent(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) invitationEmailWebhook(w http.ResponseWriter, r *http.Request) {
-	secret := strings.TrimSpace(s.invitationWebhookSecret)
-	if secret == "" {
+	if !s.invitationWebhookVerify.configured() {
 		platform.WriteError(w, http.StatusNotFound, "webhook not configured")
 		return
 	}
@@ -1084,7 +1101,8 @@ func (s *Server) invitationEmailWebhook(w http.ResponseWriter, r *http.Request) 
 		platform.WriteError(w, http.StatusBadRequest, "invalid webhook body")
 		return
 	}
-	if !verifyWebhookSignature(secret, body, r.Header.Get("X-NiceAgent-Webhook-Signature")) {
+	signatureProvider, ok := verifyInvitationWebhookRequest(s.invitationWebhookVerify, body, r.Header)
+	if !ok {
 		s.writeAuditEvent(r, app.ActorContext{}, "invitation.email_webhook.verify", "webhook", "invitation-email-events", "", protocol.AuditDecisionDeny, "invalid webhook signature", nil)
 		platform.WriteError(w, http.StatusUnauthorized, "invalid webhook signature")
 		return
@@ -1108,9 +1126,10 @@ func (s *Server) invitationEmailWebhook(w http.ResponseWriter, r *http.Request) 
 		}
 		events = append(events, event)
 		s.writeAuditEvent(r, app.ActorContext{}, "invitation.email_webhook.record", "invitation", event.InvitationID, "", protocol.AuditDecisionAllow, "", map[string]any{
-			"delivery_id": event.DeliveryID,
-			"type":        event.Type,
-			"provider":    event.Provider,
+			"delivery_id":        event.DeliveryID,
+			"type":               event.Type,
+			"provider":           event.Provider,
+			"signature_provider": signatureProvider,
 		})
 	}
 	if len(events) == 1 {
@@ -1118,6 +1137,25 @@ func (s *Server) invitationEmailWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	platform.WriteJSON(w, http.StatusAccepted, protocol.InvitationEmailEventsResponse{Events: events})
+}
+
+func (v InvitationWebhookVerification) configured() bool {
+	return strings.TrimSpace(v.SharedSecret) != "" ||
+		strings.TrimSpace(v.SendGridPublicKey) != "" ||
+		strings.TrimSpace(v.MailgunSigningKey) != ""
+}
+
+func verifyInvitationWebhookRequest(config InvitationWebhookVerification, body []byte, header http.Header) (string, bool) {
+	if verifyWebhookSignature(config.SharedSecret, body, header.Get("X-NiceAgent-Webhook-Signature")) {
+		return "niceagent", true
+	}
+	if verifySendGridWebhookSignature(config.SendGridPublicKey, body, header.Get("X-Twilio-Email-Event-Webhook-Timestamp"), header.Get("X-Twilio-Email-Event-Webhook-Signature")) {
+		return "sendgrid", true
+	}
+	if verifyMailgunWebhookSignature(config.MailgunSigningKey, body) {
+		return "mailgun", true
+	}
+	return "", false
 }
 
 func verifyWebhookSignature(secret string, body []byte, signatureHeader string) bool {
@@ -1134,6 +1172,77 @@ func verifyWebhookSignature(secret string, body []byte, signatureHeader string) 
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write(body)
 	return hmac.Equal(got, mac.Sum(nil))
+}
+
+func verifySendGridWebhookSignature(publicKeyValue string, body []byte, timestampHeader, signatureHeader string) bool {
+	publicKeyValue = strings.TrimSpace(publicKeyValue)
+	timestampHeader = strings.TrimSpace(timestampHeader)
+	signatureHeader = strings.TrimSpace(signatureHeader)
+	if publicKeyValue == "" || timestampHeader == "" || signatureHeader == "" {
+		return false
+	}
+	publicKey, err := parseECDSAPublicKey(publicKeyValue)
+	if err != nil {
+		return false
+	}
+	signature, err := base64.StdEncoding.DecodeString(signatureHeader)
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256(append([]byte(timestampHeader), body...))
+	return ecdsa.VerifyASN1(publicKey, digest[:], signature)
+}
+
+func parseECDSAPublicKey(value string) (*ecdsa.PublicKey, error) {
+	raw := strings.TrimSpace(value)
+	if block, _ := pem.Decode([]byte(raw)); block != nil {
+		raw = base64.StdEncoding.EncodeToString(block.Bytes)
+	}
+	der, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return nil, err
+	}
+	publicKey, ok := parsed.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, errors.New("public key is not ECDSA")
+	}
+	return publicKey, nil
+}
+
+func verifyMailgunWebhookSignature(signingKey string, body []byte) bool {
+	signingKey = strings.TrimSpace(signingKey)
+	if signingKey == "" {
+		return false
+	}
+	timestamp, token, signature := mailgunSignatureFields(body)
+	if timestamp == "" || token == "" || signature == "" {
+		return false
+	}
+	got, err := hex.DecodeString(signature)
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(signingKey))
+	_, _ = mac.Write([]byte(timestamp + token))
+	return hmac.Equal(got, mac.Sum(nil))
+}
+
+func mailgunSignatureFields(body []byte) (string, string, string) {
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", "", ""
+	}
+	signaturePayload, _ := mapFromPath(payload, "signature")
+	if signaturePayload == nil {
+		signaturePayload = payload
+	}
+	return strings.TrimSpace(stringFromPath(signaturePayload, "timestamp")),
+		strings.TrimSpace(stringFromPath(signaturePayload, "token")),
+		strings.TrimSpace(stringFromPath(signaturePayload, "signature"))
 }
 
 func invitationBelongsToOrg(repo app.Repository, orgID, invitationID string) bool {
