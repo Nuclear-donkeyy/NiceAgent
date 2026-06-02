@@ -43,7 +43,7 @@ Repository 仍保留偏底层的数据访问接口，权限主要在 HTTP handle
 - user/project/org 基础数据模型，`organization_members`、`project_members`、`invitations`、`user_identities`、最小成员管理 API 和邀请接受闭环。
 - 会话、消息、run、event、artifact、skill、audit 外部 API 的基础 user/project 隔离，以及 trusted-header/JWT roles 和持久 membership fallback。
 - 代码内置 action-level policy 和 `ACTION_POLICY_FILE` 文件化覆盖，覆盖普通写、项目管理、组织管理、邀请和邮件治理 action 的最小 requirement 映射。
-- 内部服务 token 强制策略、`X-Request-ID`、`X-Trace-ID`、`traceparent`、JSON request log、audit events、`/metrics`、Prometheus 告警规则、Alertmanager 路由样例和 OTLP HTTP exporter。
+- 内部服务 token 强制策略、`X-Request-ID`、`X-Trace-ID`、`traceparent`、JSON request log、audit events、`/metrics`、Prometheus 告警规则、Alertmanager 路由样例、Grafana dashboard JSON 结构检查和 OTLP HTTP exporter。
 - 项目级 quota policy、Redis 并发/小时预占、模型 token 预扣/结算、tool/sandbox 实时预占、run_usage 聚合和项目 usage 查询。
 
 仍待落地能力：
@@ -60,7 +60,7 @@ Repository 仍保留偏底层的数据访问接口，权限主要在 HTTP handle
 - 新增 `audit_events` 表和 `AuditLogger`。
 - 当前最小 quota 支持两种计数路径：默认从 Postgres/memory run 状态和 `run_usage` 统计；`QUOTA_COUNTER_MODE=redis` 时用 Redis 预占 `concurrent_runs`、`runs_per_hour`，并可通过 fixed 或 dynamic 模型 token reservation 对每日模型 token 做预扣/结算。项目级持久配置模型 `project_quota_policies` 已有最小闭环。`run_usage` 已能沉淀 tool/sandbox/artifact 聚合用量，并支持 `tool_calls_per_day`、`sandbox_seconds_per_day` 限额；Runtime 调用 tool 前会通过内部 quota reserve 预占工具调用和 sandbox 秒数；项目 usage 可按 provider/model/currency/估算来源聚合查询。后续再新增更专门的 `quota_usage` 或 billing ledger，支持 provider 官方 tokenizer 覆盖和分布式 token bucket。
 - `packages/common/platform` 已有 request id、trace context、metrics、log redactor、OpenTelemetry 初始化、OTLP HTTP exporter、HTTP server span middleware 和通用 `StartSpan` helper；DB repository 和 Redis 低层命令已接入同一条 trace。
-- 三服务已能跨 Control Plane、Runtime、Sandbox 传播标准 trace context；仓库已有 Alertmanager 路由样例，后续要补 logs/metrics 与 trace 的更强关联、真实值班系统接入和容量看板。
+- 三服务已能跨 Control Plane、Runtime、Sandbox 传播标准 trace context；仓库已有 Alertmanager 路由样例，`make check-alerts` 已进入 CI 默认门禁，后续要补 logs/metrics 与 trace 的更强关联、真实值班系统接入和容量看板。
 
 ## 技术架构
 
@@ -135,7 +135,7 @@ RBAC 当前最小角色和后续第一版角色：
 4. RBAC：基础角色、资源隔离、代码内置 action-level policy 和 `ACTION_POLICY_FILE` 文件化覆盖已落地；下一步补数据库/OPA/Casbin 等外部策略源、更多 action 条件和管理 UI。
 5. Quota：项目级持久 policy、Redis 并发/小时窗口预占、固定/动态模型 token 预扣/结算、run 级 tool/sandbox/artifact 用量记录和 tool/sandbox 最小实时预占已落地；后续需要支持 provider 官方 tokenizer 覆盖、分布式强一致 token bucket 和账单维度聚合。
 6. Audit：新增 append-only 审计事件。
-7. Observability：轻量 `trace_id`、`/metrics`、OTLP HTTP exporter、入站 HTTP span、调度/回写、run/tool/model、HTTP Skill、Sandbox、Redis queue、Redis 低层命令、Postgres repository span 和 Alertmanager 路由样例已落地；下一步补日志/指标/trace 更强关联、真实值班系统接入和容量看板。
+7. Observability：轻量 `trace_id`、`/metrics`、OTLP HTTP exporter、入站 HTTP span、调度/回写、run/tool/model、HTTP Skill、Sandbox、Redis queue、Redis 低层命令、Postgres repository span、Alertmanager 路由样例和 `make check-alerts` CI 门禁已落地；下一步补日志/指标/trace 更强关联、真实值班系统接入和容量看板。
 
 ## 风险与验收
 

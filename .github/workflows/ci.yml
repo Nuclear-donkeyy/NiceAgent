@@ -51,6 +51,9 @@ jobs:
       - name: Check K8s sandbox hardening
         run: make check-k8s-sandbox
 
+      - name: Check monitoring artifacts
+        run: make check-alerts
+
       - name: Smoke real service flows
         run: |
           make smoke-three-services-redis
