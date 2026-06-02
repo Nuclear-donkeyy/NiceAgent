@@ -677,6 +677,53 @@ func (s *Store) EnqueueInvitationEmail(invitation protocol.Invitation, maxAttemp
 	return delivery, nil
 }
 
+func (s *Store) RequeueInvitationEmail(orgID, invitationID string, maxAttempts int) (protocol.InvitationEmailDelivery, error) {
+	orgID = strings.TrimSpace(orgID)
+	invitationID = strings.TrimSpace(invitationID)
+	if orgID == "" || invitationID == "" {
+		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	invitation, ok := invitationByID(s.invitations, invitationID)
+	if !ok || invitation.OrganizationID != orgID {
+		return protocol.InvitationEmailDelivery{}, app.ErrNotFound
+	}
+	if invitation.Status != protocol.InvitationPending || !invitation.ExpiresAt.After(now) {
+		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
+	}
+	var delivery protocol.InvitationEmailDelivery
+	for _, existing := range s.emailDeliveries {
+		if existing.InvitationID == invitation.ID {
+			delivery = existing
+			break
+		}
+	}
+	if delivery.ID == "" {
+		delivery = protocol.InvitationEmailDelivery{
+			ID:           platform.NewID("invmail"),
+			InvitationID: invitation.ID,
+			CreatedAt:    now,
+		}
+	}
+	delivery.Invitation = invitation
+	delivery.Status = protocol.InvitationEmailPending
+	delivery.Attempts = 0
+	delivery.MaxAttempts = maxAttempts
+	delivery.NextAttemptAt = now
+	delivery.LockedBy = ""
+	delivery.LockedUntil = nil
+	delivery.LastError = ""
+	delivery.SentAt = nil
+	delivery.UpdatedAt = now
+	s.emailDeliveries[delivery.ID] = delivery
+	return delivery, nil
+}
+
 func (s *Store) ClaimDueInvitationEmails(limit int, lockedBy string, lockUntil time.Time) []protocol.InvitationEmailDelivery {
 	if limit <= 0 {
 		limit = 1

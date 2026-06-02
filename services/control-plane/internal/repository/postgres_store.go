@@ -975,6 +975,87 @@ func (s *PostgresStore) EnqueueInvitationEmail(invitation protocol.Invitation, m
 	return delivery, nil
 }
 
+func (s *PostgresStore) RequeueInvitationEmail(orgID, invitationID string, maxAttempts int) (protocol.InvitationEmailDelivery, error) {
+	orgID = strings.TrimSpace(orgID)
+	invitationID = strings.TrimSpace(invitationID)
+	if orgID == "" || invitationID == "" {
+		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	now := time.Now().UTC()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return protocol.InvitationEmailDelivery{}, err
+	}
+	defer tx.Rollback()
+
+	var invitation protocol.Invitation
+	var status string
+	var acceptedAt sql.NullTime
+	if err := tx.QueryRow(`
+		SELECT id, token, organization_id, COALESCE(project_id, ''), email, role, status,
+		       invited_by_user_id, COALESCE(accepted_by_user_id, ''), created_at, expires_at, accepted_at
+		FROM invitations
+		WHERE id = $1 AND organization_id = $2`,
+		invitationID, orgID).Scan(
+		&invitation.ID,
+		&invitation.Token,
+		&invitation.OrganizationID,
+		&invitation.ProjectID,
+		&invitation.Email,
+		&invitation.Role,
+		&status,
+		&invitation.InvitedByUserID,
+		&invitation.AcceptedByUserID,
+		&invitation.CreatedAt,
+		&invitation.ExpiresAt,
+		&acceptedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.InvitationEmailDelivery{}, app.ErrNotFound
+		}
+		return protocol.InvitationEmailDelivery{}, err
+	}
+	invitation.Status = protocol.InvitationStatus(status)
+	if acceptedAt.Valid {
+		invitation.AcceptedAt = &acceptedAt.Time
+	}
+	if invitation.Status != protocol.InvitationPending || !invitation.ExpiresAt.After(now) {
+		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
+	}
+
+	delivery := protocol.InvitationEmailDelivery{Invitation: invitation}
+	row := tx.QueryRow(`
+		INSERT INTO invitation_email_outbox (
+			id, invitation_id, status, attempts, max_attempts, next_attempt_at,
+			locked_by, locked_until, last_error, sent_at, created_at, updated_at
+		)
+		VALUES ($1, $2, 'pending', 0, $3, $4, NULL, NULL, NULL, NULL, $5, $6)
+		ON CONFLICT (invitation_id)
+		DO UPDATE SET status = 'pending',
+		              attempts = 0,
+		              max_attempts = EXCLUDED.max_attempts,
+		              next_attempt_at = EXCLUDED.next_attempt_at,
+		              locked_by = NULL,
+		              locked_until = NULL,
+		              last_error = NULL,
+		              sent_at = NULL,
+		              updated_at = EXCLUDED.updated_at
+		RETURNING id, invitation_id, status, attempts, max_attempts, next_attempt_at,
+		          COALESCE(locked_by, ''), locked_until, COALESCE(last_error, ''), sent_at, created_at, updated_at`,
+		platform.NewID("invmail"), invitation.ID, maxAttempts, now, now, now)
+	if err := scanInvitationEmailDelivery(row, &delivery); err != nil {
+		return protocol.InvitationEmailDelivery{}, err
+	}
+	delivery.Invitation = invitation
+	if err := tx.Commit(); err != nil {
+		return protocol.InvitationEmailDelivery{}, err
+	}
+	return delivery, nil
+}
+
 func (s *PostgresStore) ClaimDueInvitationEmails(limit int, lockedBy string, lockUntil time.Time) []protocol.InvitationEmailDelivery {
 	if limit <= 0 {
 		limit = 1

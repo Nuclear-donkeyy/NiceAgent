@@ -668,6 +668,15 @@ func (s *Server) organizationSubroutes(w http.ResponseWriter, r *http.Request) {
 			s.createInvitation(w, r, orgID)
 			return
 		}
+		if len(parts) == 4 && parts[3] == "resend" && r.Method == http.MethodPost {
+			invitationID, err := pathSegment(parts[2])
+			if err != nil || invitationID == "" {
+				platform.WriteError(w, http.StatusBadRequest, "invalid invitation id")
+				return
+			}
+			s.resendInvitationEmail(w, r, orgID, invitationID)
+			return
+		}
 		platform.WriteError(w, http.StatusNotFound, "organization route not found")
 		return
 	}
@@ -902,6 +911,45 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request, orgID 
 		}
 	}
 	platform.WriteJSON(w, http.StatusCreated, protocol.InvitationResponse{Invitation: invitation})
+}
+
+func (s *Server) resendInvitationEmail(w http.ResponseWriter, r *http.Request, orgID, invitationID string) {
+	if !s.requireOrganizationAdminRole(w, r, "invitation.email.resend", "organization", orgID, "") {
+		return
+	}
+	if s.invitationMailer == nil {
+		s.auditDeny(r, "invitation.email.resend", "invitation", invitationID, "", "invitation email sender is not configured", map[string]any{
+			"organization_id": orgID,
+		})
+		platform.WriteError(w, http.StatusServiceUnavailable, "invitation email sender is not configured")
+		return
+	}
+	if !invitationBelongsToOrg(s.repo, orgID, invitationID) {
+		s.auditDeny(r, "invitation.email.resend", "invitation", invitationID, "", "invitation is outside actor organization", nil)
+		platform.WriteError(w, http.StatusNotFound, "not found")
+		return
+	}
+	delivery, err := s.repo.RequeueInvitationEmail(orgID, invitationID, 1)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if err := s.invitationMailer.SendInvitation(r.Context(), delivery.Invitation); err != nil {
+		s.log.Warn("invitation email resend failed", "invitation_id", invitationID, "organization_id", orgID, "delivery_id", delivery.ID, "error", err)
+		s.auditDeny(r, "invitation.email.resend", "invitation", invitationID, "", "email resend failed", map[string]any{
+			"organization_id": orgID,
+			"delivery_id":     delivery.ID,
+			"error_class":     "smtp_send_failed",
+		})
+		platform.WriteError(w, http.StatusServiceUnavailable, "invitation email resend failed")
+		return
+	}
+	s.auditAllow(r, "invitation.email.resend", "invitation", invitationID, "", map[string]any{
+		"organization_id": orgID,
+		"delivery_id":     delivery.ID,
+	})
+	delivery.Invitation.Token = ""
+	platform.WriteJSON(w, http.StatusOK, protocol.InvitationEmailDeliveryResponse{Delivery: delivery})
 }
 
 func (s *Server) listInvitationEmailEvents(w http.ResponseWriter, r *http.Request, orgID string) {

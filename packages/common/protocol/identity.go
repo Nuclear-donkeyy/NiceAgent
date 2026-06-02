@@ -103,6 +103,10 @@ type InvitationResponse struct {
 	Invitation Invitation `json:"invitation"`
 }
 
+type InvitationEmailDeliveryResponse struct {
+	Delivery InvitationEmailDelivery `json:"delivery"`
+}
+
 type InvitationEmailDeliveryStatus string
 
 const (
