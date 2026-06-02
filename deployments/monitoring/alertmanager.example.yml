@@ -32,7 +32,7 @@ route:
 
     - receiver: niceagent-quota
       matchers:
-        - component="quota"
+        - component=~"quota|skill-policy|skill-rate-limit"
       repeat_interval: 12h
 
 receivers:
