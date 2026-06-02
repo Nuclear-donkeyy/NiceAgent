@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import * as artifactApi from "../api/artifacts";
+import * as authApi from "../api/auth";
 import * as chatApi from "../api/chats";
 import * as invitationApi from "../api/invitations";
 import * as projectApi from "../api/projects";
@@ -76,6 +77,7 @@ export function useNiceAgentWorkspace() {
   const [chatError, setChatError] = useState("");
   const [messageLoading, setMessageLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
   const lastSeqByRunRef = useRef<Map<string, number>>(new Map());
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -407,6 +409,37 @@ export function useNiceAgentWorkspace() {
     }
   }
 
+  function startOIDCLogin() {
+    authApi.startOIDCLogin();
+  }
+
+  async function refreshOIDCSession() {
+    setAuthLoading(true);
+    try {
+      await authApi.refreshOIDCSession();
+      setNotice("OIDC 会话已刷新");
+      await boot();
+    } catch (error) {
+      setNotice(`刷新 OIDC 会话失败：${errorMessage(error)}`);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function logout() {
+    setAuthLoading(true);
+    try {
+      await authApi.logout();
+      setNotice("已退出登录");
+      resetRunPanels();
+      await boot();
+    } catch (error) {
+      setNotice(`退出登录失败：${errorMessage(error)}`);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
   function openEvents(id: string, chatIdForRefresh = activeChatId, refreshOnTerminal = false) {
     closeEvents();
     reconnectingRef.current = false;
@@ -511,6 +544,7 @@ export function useNiceAgentWorkspace() {
     artifactError,
     artifactLoading,
     artifacts,
+    authLoading,
     canCancel,
     cancelRun,
     capacityError,
@@ -550,6 +584,9 @@ export function useNiceAgentWorkspace() {
     setSkillEnabled,
     showArchived,
     skillGroups,
+    logout,
+    refreshOIDCSession,
+    startOIDCLogin,
     updateRuntimeRiskPolicy,
     visibleMessages,
   };

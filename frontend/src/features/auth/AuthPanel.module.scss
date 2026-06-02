@@ -1,0 +1,42 @@
+.panel {
+  background: var(--white);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.description {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.actions button {
+  background: transparent;
+  border: 1px solid var(--black);
+  color: var(--black);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  min-height: 34px;
+  padding: 7px 8px;
+}
+
+.actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.primaryButton {
+  background: var(--black) !important;
+  color: var(--white) !important;
+  grid-column: 1 / -1;
+}

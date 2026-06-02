@@ -72,7 +72,7 @@ OIDC 浏览器登录额外配置：
 - `OIDC_SESSION_SECRET`：签名 session cookie 的随机密钥，启用浏览器登录时必填。
 - `OIDC_SESSION_TTL_SECONDS`：session cookie 有效期，默认 43200 秒。
 
-浏览器入口为 `GET /auth/oidc/login`；callback 成功后写入 `niceagent_session` HttpOnly cookie，后续外部 API 在没有 bearer token 时会读取该 session。`POST /auth/oidc/refresh` 会使用 session 内 refresh token 刷新 session；`POST /auth/logout` 会清理 session。当前 session cookie 采用 HMAC 签名和 HttpOnly/SameSite=Lax，生产部署应使用 HTTPS、稳定域名、足够长的 `OIDC_SESSION_SECRET`，并结合 IdP 侧 refresh token 生命周期和撤销策略。
+浏览器入口为 `GET /auth/oidc/login`；callback 成功后写入 `niceagent_session` HttpOnly cookie，后续外部 API 在没有 bearer token 时会读取该 session。前端侧栏的“登录会话”面板会触发 OIDC 登录、`POST /auth/oidc/refresh` 刷新 session，以及 `POST /auth/logout` 清理 session。当前 session cookie 采用 HMAC 签名和 HttpOnly/SameSite=Lax，生产部署应使用 HTTPS、稳定域名、足够长的 `OIDC_SESSION_SECRET`，并结合 IdP 侧 refresh token 生命周期和撤销策略。
 
 最小 RBAC 优先读取 trusted header 中的 `X-NiceAgent-Roles`：`viewer` 只允许读取，`owner/admin/member/editor/writer` 允许创建聊天、发送消息、取消 run 和管理 HTTP Skill；项目成员管理只允许 `owner/admin`。缺少 roles 时会从 `project_members` 持久角色绑定中读取；仍找不到成员关系时返回 `403`，并写入 `auth.authorize` deny audit event。当前 migration 会给 `demo-user/demo-project` 写入 `owner` 角色。
 
