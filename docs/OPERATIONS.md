@@ -161,7 +161,7 @@ GET /api/projects/{project_id}/usage?window=24h|7d|30d
 
 `GET /api/projects/{project_id}/usage` 提供最小账单维度统计：按 provider、model、currency、是否估算和 token estimator 聚合 run usage，并返回窗口总计。当前支持 `window=24h|7d|30d` 或 `since=<RFC3339>`，只允许 `owner/admin` 访问。这个接口可以用于运营看板、成本排查和后续账单导出，但还不是强一致计费系统；更完整 tokenizer 覆盖、按租户/模型的分布式 token bucket 和外部告警仍是后续工作。
 
-前端左侧“项目容量”区域会读取 `GET /api/projects/{project_id}/quota` 和 `GET /api/projects/{project_id}/usage?window=24h`，展示模型 token、tool calls、sandbox 秒数、run 数、artifact 大小和 provider/model 使用分布。这是最小容量视图，适合本地与早期运营排查；生产级容量看板仍需要接入 Prometheus/Grafana、告警联动和容量建议。
+前端左侧“项目容量”区域会读取 `GET /api/projects/{project_id}/quota` 和 `GET /api/projects/{project_id}/usage?window=24h`，展示模型 token、tool calls、sandbox 秒数、run 数、artifact 大小和 provider/model 使用分布。这是最小容量视图，适合本地与早期运营排查；生产级容量看板仍需要接入 Prometheus/Grafana。Skill rate limit 的容量估算和告警排障流程见 [Skill Rate Limit 容量与告警 Runbook](runbooks/skill-rate-limit-capacity.md)。
 
 三服务内部 API 使用同一个 bearer token：
 
@@ -273,7 +273,7 @@ Skill 存储分为四层：
 
 HTTP Skill 默认只允许 `https` URL，禁用重定向，拒绝 URL 中携带用户名/密码，并阻断 `localhost`、`.local`、metadata host、字面量 private/link-local/loopback IP。Runtime 发出请求前还会解析目标 host；如果 DNS 结果包含 private、link-local、loopback、multicast 或 unspecified 地址，会返回 `ssrf_rejected` observation，不会发起外部请求。排查 HTTP Skill 失败时优先看 observation 的 `error_type`：`ssrf_rejected` 表示策略拒绝，`upstream_dns` 表示解析失败，`upstream_tls` 表示证书或 TLS 问题。
 
-HTTP/MCP Skill `runtime_config` 支持最小 retry/rate limit：`retry.max_attempts` 默认 1、最大 5，只对 429、5xx 和网络/超时类错误重试；`rate_limit.requests_per_minute` 默认 0 表示关闭，最大 600。`SKILL_RATE_LIMIT_MODE=local` 时按单个 Agent Runtime 进程内的 skill id 做固定窗口限流；`SKILL_RATE_LIMIT_MODE=redis` 时使用 `REDIS_ADDR` 和 `SKILL_RATE_LIMIT_PREFIX` 在 Redis 中按分钟窗口计数，让多个 Runtime 副本共享同一个 skill rate limit。命中限流会返回 `rate_limited` observation，不会发起请求，并递增 `niceagent_skill_rate_limit_denials_total{kind,mode}`。仓库的 Prometheus 告警规则已包含 `NiceAgentSkillRateLimitDenials`，可用于发现第三方 API 容量不足、导入 Skill 配置过紧或模型反复调用同一工具。Redis 计数异常时当前策略是 fail closed，优先保护第三方 API；这不替代 Control Plane 的项目级 quota 和账单级配额。
+HTTP/MCP Skill `runtime_config` 支持最小 retry/rate limit：`retry.max_attempts` 默认 1、最大 5，只对 429、5xx 和网络/超时类错误重试；`rate_limit.requests_per_minute` 默认 0 表示关闭，最大 600。`SKILL_RATE_LIMIT_MODE=local` 时按单个 Agent Runtime 进程内的 skill id 做固定窗口限流；`SKILL_RATE_LIMIT_MODE=redis` 时使用 `REDIS_ADDR` 和 `SKILL_RATE_LIMIT_PREFIX` 在 Redis 中按分钟窗口计数，让多个 Runtime 副本共享同一个 skill rate limit。命中限流会返回 `rate_limited` observation，不会发起请求，并递增 `niceagent_skill_rate_limit_denials_total{kind,mode}`。仓库的 Prometheus 告警规则已包含 `NiceAgentSkillRateLimitDenials`，可用于发现第三方 API 容量不足、导入 Skill 配置过紧或模型反复调用同一工具；排障步骤、初始 `requests_per_minute` 建议和 local/redis 模式换算见 [Skill Rate Limit 容量与告警 Runbook](runbooks/skill-rate-limit-capacity.md)。Redis 计数异常时当前策略是 fail closed，优先保护第三方 API；这不替代 Control Plane 的项目级 quota 和账单级配额。
 
 Agent Runtime 还支持 `SKILL_RISK_POLICY` 作为执行前风险门禁，默认 `allow` 保持本地开发兼容。可选值：
 
