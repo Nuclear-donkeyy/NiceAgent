@@ -282,7 +282,13 @@ Kubernetes 模板包含 `deployments/k8s/sandbox-hardening.yaml`，由 `make k8s
 make check-k8s-sandbox
 ```
 
-Sandbox Executor 支持 `EXECUTOR_MODE=local|container`。本地和 Compose 默认仍是 `local`，避免没有 Docker CLI/socket 的开发容器直接失效；切到 `container` 前应先确保宿主 Docker 可用，并配置：
+Sandbox Executor 支持 `EXECUTOR_MODE=local|container`。本地和 Compose 默认仍是 `local`，避免没有 Docker CLI/socket 的开发容器直接失效；切到 `container` 前应先确保宿主 Docker 可用，并先执行一次容器路径 smoke：
+
+```bash
+make smoke-sandbox-container
+```
+
+该 smoke 会禁用 local fallback，确认 `/healthz` 报告 `executor_mode=container`，并实际执行一次容器内 `echo` 命令。没有 Docker CLI 或 daemon 时会 `SKIP`，生产发布前应在目标执行节点或等价环境中得到通过结果。手动配置如下：
 
 ```bash
 EXECUTOR_MODE=container

@@ -38,7 +38,15 @@ make run-control
 
 如果没有配置 `AGENT_RUNTIME_URL`，Control Plane 会回退到本地 demo dispatcher。如果没有配置 `SANDBOX_EXECUTOR_URL`，Agent Runtime 会回退到 local sandbox executor。
 
-Sandbox Executor 默认使用 `EXECUTOR_MODE=local`。如需验证 Docker 容器执行路径，可在确认本机 Docker CLI 和 daemon 可用后运行：
+Sandbox Executor 默认使用 `EXECUTOR_MODE=local`。如需验证 Docker 容器执行路径，可在确认本机 Docker CLI 和 daemon 可用后运行自动 smoke：
+
+```bash
+make smoke-sandbox-container
+```
+
+该 smoke 会启动一个临时 Sandbox Executor，设置 `EXECUTOR_MODE=container` 和 `SANDBOX_CONTAINER_LOCAL_FALLBACK=false`，并通过 `/healthz` 与 `/internal/sandbox/exec` 验证容器执行路径。没有 Docker CLI 或 daemon 时会输出 `SKIP` 并成功退出，避免阻断普通本地开发。
+
+也可以手动启动容器执行路径：
 
 ```bash
 EXECUTOR_MODE=container \
