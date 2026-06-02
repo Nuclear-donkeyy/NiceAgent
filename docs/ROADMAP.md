@@ -96,7 +96,7 @@
 
 - 引入真实认证边界，替代固定 `demo-user`。
 - 完善 organization/project/user 权限模型，让 skill grants、runs、workspaces 都有明确租户边界。
-- 把当前代码内置 action-level policy 升级为可配置策略源，评估 OPA/Casbin 或数据库策略表，并补充 action 条件、资源属性和管理 UI。
+- 在默认 action-level policy 和 `ACTION_POLICY_FILE` 文件化覆盖基础上，继续评估 OPA/Casbin 或数据库策略表，并补充 action 条件、资源属性和管理 UI。
 - 把 Redis Streams 从可运行路径继续推进到生产运维能力：stream 保留策略、高可用 Redis、DLQ 告警、consumer group lag/pending entries 观测和容量压测。
 - 在已有 audit、metrics、trace/request id、run replay、结构化 request log、Prometheus 告警规则、Alertmanager 路由样例、Redis 低层命令 spans、Postgres repository spans 和前端最小容量视图基础上补真实值班系统接入、生产级容量看板和基础管理排障视图。
 

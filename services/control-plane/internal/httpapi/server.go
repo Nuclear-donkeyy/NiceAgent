@@ -68,6 +68,7 @@ type ServerOptions struct {
 	TokenReservation              TokenReservationOptions
 	ArtifactRetention             time.Duration
 	ArtifactCleanupFiles          bool
+	ActionPolicyFile              string
 	OIDC                          OIDCConfig
 	OIDCBrowser                   OIDCBrowserConfig
 }
@@ -119,6 +120,10 @@ func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log
 		}
 		oidcVerifier = verifier
 	}
+	actionPolicy, err := loadActionPolicyFile(opts.ActionPolicyFile)
+	if err != nil {
+		panic(err)
+	}
 	return &Server{
 		repo:                    repo,
 		dispatcher:              dispatcher,
@@ -136,7 +141,7 @@ func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log
 		tokenReservation:        normalizeTokenReservationOptions(opts.TokenReservation),
 		artifactRetention:       opts.ArtifactRetention,
 		artifactCleanupFiles:    opts.ArtifactCleanupFiles,
-		actionPolicy:            defaultActionPolicy(),
+		actionPolicy:            actionPolicy,
 	}
 }
 

@@ -1,6 +1,9 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 
 	"niceagent/control-plane/internal/app"
@@ -56,6 +59,54 @@ func defaultActionPolicy() actionPolicy {
 		"organization.member.upsert":          actionRequirementOrganizationAdmin,
 		"organization.member.remove":          actionRequirementOrganizationAdmin,
 	}}
+}
+
+func loadActionPolicyFile(path string) (actionPolicy, error) {
+	policy := defaultActionPolicy()
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return policy, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return actionPolicy{}, fmt.Errorf("read action policy file: %w", err)
+	}
+	var input struct {
+		Actions map[string]string `json:"actions"`
+	}
+	if err := json.Unmarshal(data, &input); err != nil {
+		return actionPolicy{}, fmt.Errorf("decode action policy file: %w", err)
+	}
+	for action, requirement := range input.Actions {
+		action = strings.TrimSpace(action)
+		if action == "" {
+			return actionPolicy{}, fmt.Errorf("action policy file contains an empty action")
+		}
+		parsed, err := parseActionRequirement(requirement)
+		if err != nil {
+			return actionPolicy{}, fmt.Errorf("action %q: %w", action, err)
+		}
+		policy.requirements[action] = parsed
+	}
+	return policy, nil
+}
+
+func ValidateActionPolicyFile(path string) error {
+	_, err := loadActionPolicyFile(path)
+	return err
+}
+
+func parseActionRequirement(value string) (actionRequirement, error) {
+	switch actionRequirement(strings.ToLower(strings.TrimSpace(value))) {
+	case actionRequirementWrite:
+		return actionRequirementWrite, nil
+	case actionRequirementProjectAdmin:
+		return actionRequirementProjectAdmin, nil
+	case actionRequirementOrganizationAdmin:
+		return actionRequirementOrganizationAdmin, nil
+	default:
+		return "", fmt.Errorf("requirement must be one of write, project_admin, or organization_admin")
+	}
 }
 
 func (p actionPolicy) Authorize(actor app.ActorContext, action string, fallback actionRequirement) actionPolicyDecision {

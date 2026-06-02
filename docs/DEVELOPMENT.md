@@ -105,7 +105,19 @@ OIDC token 至少需要包含：
 - 项目 claim，默认 `niceagent_project_id`，也可以通过 `OIDC_DEFAULT_PROJECT_ID` 给单项目部署兜底
 - 角色 claim，默认 `niceagent_roles`；如果没有 roles，Control Plane 会从持久 membership 表加载角色
 
-`X-NiceAgent-Roles` 支持最小 RBAC：`viewer` 只能读，`owner/admin/member/editor/writer` 可以写。Control Plane 的 handler 通过内置 action-level policy 做授权，新增写接口时应在 `services/control-plane/internal/httpapi/action_policy.go` 中登记 action requirement，并继续写 deny audit event。如果 trusted header 请求没有传 roles，Control Plane 会从持久 `project_members` 中读取当前用户在当前项目的角色；没有成员关系时返回 `403`。本地 demo 模式仍固定使用 `demo-user/demo-project/owner`。
+`X-NiceAgent-Roles` 支持最小 RBAC：`viewer` 只能读，`owner/admin/member/editor/writer` 可以写。Control Plane 的 handler 通过默认 action-level policy 做授权，新增写接口时应在 `services/control-plane/internal/httpapi/action_policy.go` 中登记 action requirement，并继续写 deny audit event。如果 trusted header 请求没有传 roles，Control Plane 会从持久 `project_members` 中读取当前用户在当前项目的角色；没有成员关系时返回 `403`。本地 demo 模式仍固定使用 `demo-user/demo-project/owner`。
+
+需要本地验证策略调整时，可设置 `ACTION_POLICY_FILE` 指向 JSON 文件，例如：
+
+```json
+{
+  "actions": {
+    "chat.create": "project_admin"
+  }
+}
+```
+
+文件会覆盖或新增默认 action requirement，合法值为 `write`、`project_admin`、`organization_admin`。非法文件会让 Control Plane 启动失败。
 
 邀请邮件默认关闭。需要在本地验证 SMTP 配置时，可以设置 `INVITATION_EMAIL_MODE=smtp`、`SMTP_HOST`、`SMTP_FROM` 和可选 `INVITATION_EMAIL_SUBJECT_TEMPLATE`、`INVITATION_EMAIL_BODY_TEMPLATE`。邮件模板使用 Go `text/template` 语法，可用字段包括 `.Email`、`.Role`、`.OrganizationID`、`.ProjectIDOrDash`、`.AcceptURL` 和 `.ExpiresAt`；启动时会校验模板，避免未知字段进入运行期。需要测试进程内队列化投递时，可设置 `INVITATION_EMAIL_QUEUE_MODE=memory`、`INVITATION_EMAIL_QUEUE_SIZE`、`INVITATION_EMAIL_QUEUE_WORKERS` 和 `INVITATION_EMAIL_RETRY_ATTEMPTS`。需要测试可重启恢复的持久投递时，在 Postgres 模式下设置 `INVITATION_EMAIL_QUEUE_MODE=outbox`，投递任务会写入 `invitation_email_outbox`，后台 worker 会 claim due jobs 并重试。需要测试邮件服务商回调时，可以设置 `INVITATION_EMAIL_WEBHOOK_SECRET` 并附带 `X-NiceAgent-Webhook-Signature: sha256=<hmac_sha256(secret, raw_body)>`；也可以配置 `INVITATION_EMAIL_SENDGRID_PUBLIC_KEY`、`INVITATION_EMAIL_MAILGUN_SIGNING_KEY` 或 `INVITATION_EMAIL_SNS_SIGNATURE_VERIFICATION=true` 验证服务商原生签名。SES/SNS 场景可用 `INVITATION_EMAIL_SNS_TOPIC_ARN` 限制来源 topic。
 

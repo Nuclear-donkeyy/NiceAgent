@@ -1,0 +1,9 @@
+{
+  "actions": {
+    "chat.create": "write",
+    "message.create": "write",
+    "run.cancel": "write",
+    "project.quota.update": "project_admin",
+    "organization.member.remove": "organization_admin"
+  }
+}
