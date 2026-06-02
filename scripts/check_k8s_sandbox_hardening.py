@@ -67,19 +67,51 @@ def check_file(path: Path) -> list[str]:
     return errors
 
 
-def main(argv: list[str]) -> int:
-    path = Path(argv[1]) if len(argv) > 1 else Path("deployments/k8s/sandbox-hardening.yaml")
-    if not path.exists():
-        print(f"{path}: file not found", file=sys.stderr)
-        return 1
+def check_runtimeclass_file(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    errors: list[str] = []
+    required = (
+        "kind: RuntimeClass",
+        "name: niceagent-sandbox",
+        "handler: runsc",
+        "scheduling:",
+        "niceagent.io/node-pool: sandbox",
+        "kind: Deployment",
+        "name: niceagent-sandbox-executor",
+        "runtimeClassName: niceagent-sandbox",
+        "key: niceagent.io/sandbox",
+        "effect: NoSchedule",
+    )
+    for snippet in required:
+        if snippet not in text:
+            errors.append(f"missing runtimeclass profile snippet {snippet}")
 
-    errors = check_file(path)
+    if "optional" not in text.lower() or "do not apply" not in text.lower():
+        errors.append("runtimeclass profile must clearly say it is optional and not part of the default apply path")
+
+    return errors
+
+
+def main(argv: list[str]) -> int:
+    paths = [Path(arg) for arg in argv[1:]]
+    if not paths:
+        paths = [Path("deployments/k8s/sandbox-hardening.yaml")]
+
+    errors: list[str] = []
+    for path in paths:
+        if not path.exists():
+            errors.append(f"{path}: file not found")
+            continue
+        checker = check_runtimeclass_file if "runtimeclass" in path.name else check_file
+        for error in checker(path):
+            errors.append(f"{path}: {error}")
+
     if errors:
         for error in errors:
-            print(f"{path}: {error}", file=sys.stderr)
+            print(error, file=sys.stderr)
         return 1
 
-    print("K8s sandbox hardening manifest structure looks valid.")
+    print("K8s sandbox hardening manifests look valid.")
     return 0
 
 

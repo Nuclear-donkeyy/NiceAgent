@@ -28,7 +28,7 @@ Kubernetes 生产层可用 Job/Pod 承载 sandbox task，并通过 requests/limi
 
 `packages/common/sandbox/executor.go` 已有 local executor，包含 allowlist/dangerous 策略、超时、workspace 目录创建、环境变量过滤和输出截断。allowlist 目前包括 `curl`、`wget`、`dig`、`nslookup`、`date`、`echo`、`pwd`、`ls`；危险命令会按系统 CLI 只读策略拒绝。
 
-`packages/common/sandbox/container.go` 已有 Docker `ContainerExecutor`，支持 `--cpus`、`--memory`、`--pids-limit`、`--read-only`、`--cap-drop ALL`、`no-new-privileges`、`tmpfs`、workspace volume 和可选 `--network none`。`services/sandbox-executor` 支持 `EXECUTOR_MODE=local|container`，但 Compose 里默认仍是 `local`，container 还没有成为默认生产路径。K8s 已有第一版加固模板：`sandbox-hardening.yaml` 提供 `LimitRange`、`ResourceQuota`、Sandbox Executor ingress `NetworkPolicy` 和 egress `NetworkPolicy`；egress 允许 DNS、同 namespace OTLP 常用端口和排除私网/metadata/link-local 后的公网出口。`sandbox-executor.yaml` 已设置非 root、禁止提权、drop capabilities、`RuntimeDefault` seccomp 和只读 rootfs。RuntimeClass、独立节点池、云侧出口控制和更严格 egress 策略仍待后续补齐。
+`packages/common/sandbox/container.go` 已有 Docker `ContainerExecutor`，支持 `--cpus`、`--memory`、`--pids-limit`、`--read-only`、`--cap-drop ALL`、`no-new-privileges`、`tmpfs`、workspace volume 和可选 `--network none`。`services/sandbox-executor` 支持 `EXECUTOR_MODE=local|container`，但 Compose 里默认仍是 `local`，container 还没有成为默认生产路径。K8s 已有第一版加固模板：`sandbox-hardening.yaml` 提供 `LimitRange`、`ResourceQuota`、Sandbox Executor ingress `NetworkPolicy` 和 egress `NetworkPolicy`；egress 允许 DNS、同 namespace OTLP 常用端口和排除私网/metadata/link-local 后的公网出口。`sandbox-executor.yaml` 已设置非 root、禁止提权、drop capabilities、`RuntimeDefault` seccomp 和只读 rootfs。`sandbox-runtimeclass.example.yaml` 已提供可选 RuntimeClass + sandbox 节点池调度模板，供安装了 gVisor/Kata 等 runtime handler 的集群按需启用；它不进入默认 `make k8s-apply`，避免普通 kind/ACK 集群无 handler 时部署失败。云侧出口控制和更严格 egress 策略仍待后续补齐。
 
 `services/sandbox-executor` 已独立成服务，并按配置装配 local 或 container executor，通过内部 HTTP API 暴露执行能力。Agent Runtime 如果配置了 `SANDBOX_EXECUTOR_URL` 会走 HTTP executor；否则回退到进程内 local executor。
 
@@ -46,13 +46,13 @@ Sandbox 执行后会扫描 workspace `output/` 下的新增或修改文件，生
 - `SANDBOX_CONTAINER_ALLOWED_IMAGES` 已提供逗号分隔镜像白名单，`EXECUTOR_MODE=container` 时会拒绝不在白名单内的 `SANDBOX_CONTAINER_IMAGE`；`/healthz` 会暴露当前 executor mode、container image 和白名单。
 - workspace metadata、artifact 表/API/download、sandbox tool 后增量登记、`artifact.created` event、前端 artifact 展示/下载和刷新恢复已落地。
 - artifact 下载和 `workspace.read` 文本读取复用 user/project/run 权限、`output/` 限制、path clean、symlink escape 和 MIME/大小检查。
-- K8s 已有基础 `NetworkPolicy` ingress/egress、`ResourceQuota`、`LimitRange` 和 Sandbox Executor `securityContext`。
+- K8s 已有基础 `NetworkPolicy` ingress/egress、`ResourceQuota`、`LimitRange`、Sandbox Executor `securityContext`，以及可选 RuntimeClass/专用节点池示例模板；`make check-k8s-sandbox` 已覆盖这些 manifest 的结构检查。
 
 仍待落地能力：
 
 - Compose 和生产部署默认切到 container executor，并补更完整资源容量建议。
 - 更多文件类型预览、过期清理和外部对象存储归档。
-- RuntimeClass、独立节点池、gVisor/Kata/Firecracker 等更强隔离 profile。
+- 生产集群实际安装和启用 RuntimeClass handler、独立节点池、云侧出口控制，以及 gVisor/Kata/Firecracker 等更强隔离 profile。
 
 ## 扩展点
 
@@ -61,7 +61,7 @@ Sandbox 执行后会扫描 workspace `output/` 下的新增或修改文件，生
 - Control Plane 增加 `artifacts` 表、artifact repository、list/download API。
 - Runtime 在 tool 调用后根据 Sandbox result 写入 artifacts，并触发 `artifact.created`。
 - `workspace.read` 继续扩展更多 workspace 元数据和 artifact preview，但仍只能读取已登记 artifact 或经过 Control Plane 校验的只读资源。
-- K8s 已有基础 NetworkPolicy ingress/egress、ResourceQuota、LimitRange 和 securityContext；容器镜像白名单已进入配置面，后续补 RuntimeClass、独立节点池、云侧出口控制和生产镜像清单。
+- K8s 已有基础 NetworkPolicy ingress/egress、ResourceQuota、LimitRange、securityContext 和可选 RuntimeClass/独立节点池模板；容器镜像白名单已进入配置面，后续补云侧出口控制、生产镜像清单和真实集群 runtime handler 启用流程。
 
 ## 技术架构
 
@@ -119,7 +119,7 @@ Artifact 元数据建议包括：
 1. 持久化与只读闭环：`artifacts` 表、workspace 记录、artifact list/download API、`artifact.created` event、`workspace.read` artifact summary/list/text read。
 2. 容器默认执行：Sandbox Executor 接入 ContainerExecutor，加资源、网络和 security flags。
 3. Artifact 产品化：前端展示、下载、失败提示、过期状态、run replay 恢复。
-4. K8s 加固：基础 NetworkPolicy ingress/egress、ResourceQuota、LimitRange 和 Sandbox Executor securityContext 已落地；容器镜像白名单已进入配置面，后续继续补 RuntimeClass、独立节点池、云侧出口控制和生产镜像清单。
+4. K8s 加固：基础 NetworkPolicy ingress/egress、ResourceQuota、LimitRange、Sandbox Executor securityContext 和可选 RuntimeClass/独立节点池模板已落地；容器镜像白名单已进入配置面，后续继续补云侧出口控制、生产镜像清单和真实集群 runtime handler 启用流程。
 5. 强隔离选型：gVisor/Kata 作为可选 profile，Firecracker 放长期专用执行池。
 
 ## 风险与验收

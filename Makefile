@@ -53,7 +53,7 @@ check-alerts:
 	python3 scripts/check_alertmanager_config.py deployments/monitoring/alertmanager.example.yml
 
 check-k8s-sandbox:
-	python3 scripts/check_k8s_sandbox_hardening.py deployments/k8s/sandbox-hardening.yaml
+	python3 scripts/check_k8s_sandbox_hardening.py deployments/k8s/sandbox-hardening.yaml deployments/k8s/sandbox-runtimeclass.example.yaml
 
 compose-up:
 	docker compose -f deployments/docker-compose.yml up

@@ -1,0 +1,36 @@
+# Optional sandbox isolation profile.
+#
+# Do not apply this manifest unless the cluster already has the referenced
+# runtime handler installed, for example gVisor runsc or Kata Containers. The
+# default `make k8s-apply` path intentionally does not include this file so kind
+# and ordinary clusters keep working.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: niceagent-sandbox
+handler: runsc
+scheduling:
+  nodeSelector:
+    niceagent.io/node-pool: sandbox
+  tolerations:
+    - key: niceagent.io/sandbox
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: niceagent-sandbox-executor
+  namespace: niceagent
+spec:
+  template:
+    spec:
+      runtimeClassName: niceagent-sandbox
+      nodeSelector:
+        niceagent.io/node-pool: sandbox
+      tolerations:
+        - key: niceagent.io/sandbox
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
