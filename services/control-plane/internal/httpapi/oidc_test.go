@@ -10,6 +10,8 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -106,6 +108,171 @@ func TestOIDCModeRejectsInvalidAudience(t *testing.T) {
 	}
 }
 
+func TestOIDCBrowserLoginCreatesSessionCookie(t *testing.T) {
+	key := mustGenerateRSAKey(t)
+	issuer := "https://issuer.example.test"
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJWKS(t, w, key.PublicKey, "kid-1")
+	}))
+	defer jwksServer.Close()
+
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse token request: %v", err)
+		}
+		if r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code") != "code-a" || r.Form.Get("client_id") != "niceagent-web" {
+			t.Fatalf("token request form = %s", r.Form.Encode())
+		}
+		writeOIDCTokenResponse(t, w, signTestJWT(t, key, "kid-1", map[string]any{
+			"iss":                  issuer,
+			"sub":                  "browser-user",
+			"aud":                  "niceagent-web",
+			"exp":                  time.Now().Add(time.Hour).Unix(),
+			"email":                "browser@example.test",
+			"name":                 "Browser User",
+			"niceagent_project_id": "browser-project",
+			"niceagent_org_id":     "browser-org",
+			"niceagent_roles":      []string{"owner"},
+		}), "refresh-a")
+	}))
+	defer tokenServer.Close()
+
+	_, handler := newTestHandlerWithOptions(ServerOptions{
+		AuthMode: "oidc",
+		OIDC: OIDCConfig{
+			Issuer:   issuer,
+			Audience: "niceagent-web",
+			JWKSURL:  jwksServer.URL,
+		},
+		OIDCBrowser: OIDCBrowserConfig{
+			ClientID:          "niceagent-web",
+			ClientSecret:      "client-secret",
+			AuthURL:           "https://idp.example.test/authorize",
+			TokenURL:          tokenServer.URL,
+			RedirectURL:       "https://app.example.test/auth/oidc/callback",
+			SessionSecret:     "session-secret-session-secret",
+			SessionTTLSeconds: 3600,
+		},
+	})
+
+	login := httptest.NewRequest(http.MethodGet, "/auth/oidc/login", nil)
+	loginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(loginResponse, login)
+	if loginResponse.Code != http.StatusFound {
+		t.Fatalf("login status = %d, body = %s", loginResponse.Code, loginResponse.Body.String())
+	}
+	location, err := url.Parse(loginResponse.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse login redirect: %v", err)
+	}
+	if location.Host != "idp.example.test" || location.Query().Get("client_id") != "niceagent-web" || location.Query().Get("response_type") != "code" {
+		t.Fatalf("login redirect = %s", location.String())
+	}
+	state := location.Query().Get("state")
+	if state == "" {
+		t.Fatal("login redirect missing state")
+	}
+	stateCookie := findCookie(loginResponse.Result().Cookies(), oidcStateCookieName)
+	if stateCookie == nil || stateCookie.Value != state {
+		t.Fatalf("state cookie = %#v, want state %q", stateCookie, state)
+	}
+
+	callback := httptest.NewRequest(http.MethodGet, "/auth/oidc/callback?code=code-a&state="+url.QueryEscape(state), nil)
+	callback.AddCookie(stateCookie)
+	callbackResponse := httptest.NewRecorder()
+	handler.ServeHTTP(callbackResponse, callback)
+	if callbackResponse.Code != http.StatusFound {
+		t.Fatalf("callback status = %d, body = %s", callbackResponse.Code, callbackResponse.Body.String())
+	}
+	sessionCookie := findCookie(callbackResponse.Result().Cookies(), oidcSessionCookieName)
+	if sessionCookie == nil || sessionCookie.Value == "" || !sessionCookie.HttpOnly {
+		t.Fatalf("session cookie = %#v", sessionCookie)
+	}
+
+	listChats := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	listChats.AddCookie(sessionCookie)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, listChats)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("session list chats status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+}
+
+func TestOIDCBrowserRefreshUpdatesSession(t *testing.T) {
+	key := mustGenerateRSAKey(t)
+	issuer := "https://issuer.example.test"
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJWKS(t, w, key.PublicKey, "kid-1")
+	}))
+	defer jwksServer.Close()
+
+	var refreshSeen bool
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse token request: %v", err)
+		}
+		switch r.Form.Get("grant_type") {
+		case "authorization_code":
+			writeOIDCTokenResponse(t, w, signTestJWT(t, key, "kid-1", map[string]any{
+				"iss":                  issuer,
+				"sub":                  "refresh-user",
+				"aud":                  "niceagent-web",
+				"exp":                  time.Now().Add(time.Hour).Unix(),
+				"niceagent_project_id": "refresh-project",
+				"niceagent_roles":      []string{"owner"},
+			}), "refresh-a")
+		case "refresh_token":
+			refreshSeen = true
+			if r.Form.Get("refresh_token") != "refresh-a" {
+				t.Fatalf("refresh token = %q", r.Form.Get("refresh_token"))
+			}
+			writeOIDCTokenResponse(t, w, signTestJWT(t, key, "kid-1", map[string]any{
+				"iss":                  issuer,
+				"sub":                  "refresh-user",
+				"aud":                  "niceagent-web",
+				"exp":                  time.Now().Add(time.Hour).Unix(),
+				"niceagent_project_id": "refresh-project",
+				"niceagent_roles":      []string{"owner"},
+			}), "refresh-b")
+		default:
+			t.Fatalf("unexpected grant type %q", r.Form.Get("grant_type"))
+		}
+	}))
+	defer tokenServer.Close()
+
+	_, handler := newTestHandlerWithOptions(ServerOptions{
+		AuthMode: "oidc",
+		OIDC: OIDCConfig{
+			Issuer:   issuer,
+			Audience: "niceagent-web",
+			JWKSURL:  jwksServer.URL,
+		},
+		OIDCBrowser: OIDCBrowserConfig{
+			ClientID:          "niceagent-web",
+			AuthURL:           "https://idp.example.test/authorize",
+			TokenURL:          tokenServer.URL,
+			SessionSecret:     "session-secret-session-secret",
+			SessionTTLSeconds: 3600,
+		},
+	})
+
+	sessionCookie := loginOIDCTestSession(t, handler)
+	refresh := httptest.NewRequest(http.MethodPost, "/auth/oidc/refresh", nil)
+	refresh.AddCookie(sessionCookie)
+	refreshResponse := httptest.NewRecorder()
+	handler.ServeHTTP(refreshResponse, refresh)
+	if refreshResponse.Code != http.StatusOK {
+		t.Fatalf("refresh status = %d, body = %s", refreshResponse.Code, refreshResponse.Body.String())
+	}
+	if !refreshSeen {
+		t.Fatal("token endpoint did not receive refresh_token grant")
+	}
+	nextSession := findCookie(refreshResponse.Result().Cookies(), oidcSessionCookieName)
+	if nextSession == nil || nextSession.Value == "" || nextSession.Value == sessionCookie.Value {
+		t.Fatalf("refreshed session cookie = %#v, old = %q", nextSession, sessionCookie.Value)
+	}
+}
+
 func mustGenerateRSAKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -113,6 +280,62 @@ func mustGenerateRSAKey(t *testing.T) *rsa.PrivateKey {
 		t.Fatalf("generate rsa key: %v", err)
 	}
 	return key
+}
+
+func writeOIDCTokenResponse(t *testing.T, w http.ResponseWriter, idToken, refreshToken string) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"id_token":      idToken,
+		"refresh_token": refreshToken,
+		"token_type":    "Bearer",
+		"expires_in":    3600,
+	}); err != nil {
+		t.Fatalf("write token response: %v", err)
+	}
+}
+
+func loginOIDCTestSession(t *testing.T, handler http.Handler) *http.Cookie {
+	t.Helper()
+	login := httptest.NewRequest(http.MethodGet, "/auth/oidc/login", nil)
+	loginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(loginResponse, login)
+	if loginResponse.Code != http.StatusFound {
+		t.Fatalf("login status = %d, body = %s", loginResponse.Code, loginResponse.Body.String())
+	}
+	location := loginResponse.Header().Get("Location")
+	state := ""
+	if parsed, err := url.Parse(location); err == nil {
+		state = parsed.Query().Get("state")
+	}
+	if strings.TrimSpace(state) == "" {
+		t.Fatalf("login location missing state: %s", location)
+	}
+	stateCookie := findCookie(loginResponse.Result().Cookies(), oidcStateCookieName)
+	if stateCookie == nil {
+		t.Fatal("login response missing state cookie")
+	}
+	callback := httptest.NewRequest(http.MethodGet, "/auth/oidc/callback?code=code-a&state="+url.QueryEscape(state), nil)
+	callback.AddCookie(stateCookie)
+	callbackResponse := httptest.NewRecorder()
+	handler.ServeHTTP(callbackResponse, callback)
+	if callbackResponse.Code != http.StatusFound {
+		t.Fatalf("callback status = %d, body = %s", callbackResponse.Code, callbackResponse.Body.String())
+	}
+	sessionCookie := findCookie(callbackResponse.Result().Cookies(), oidcSessionCookieName)
+	if sessionCookie == nil {
+		t.Fatal("callback response missing session cookie")
+	}
+	return sessionCookie
+}
+
+func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
 }
 
 func signTestJWT(t *testing.T, key *rsa.PrivateKey, kid string, claims map[string]any) string {

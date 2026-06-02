@@ -26,6 +26,13 @@ type Config struct {
 	OIDCRolesClaim                   string
 	OIDCEmailClaim                   string
 	OIDCNameClaim                    string
+	OIDCClientID                     string
+	OIDCClientSecret                 string
+	OIDCAuthURL                      string
+	OIDCTokenURL                     string
+	OIDCRedirectURL                  string
+	OIDCSessionSecret                string
+	OIDCSessionTTLSeconds            int
 	StoreDriver                      string
 	DatabaseURL                      string
 	DispatchMode                     string
@@ -88,6 +95,13 @@ func FromEnv() Config {
 		OIDCRolesClaim:                   strings.TrimSpace(env("OIDC_ROLES_CLAIM", "niceagent_roles")),
 		OIDCEmailClaim:                   strings.TrimSpace(env("OIDC_EMAIL_CLAIM", "email")),
 		OIDCNameClaim:                    strings.TrimSpace(env("OIDC_NAME_CLAIM", "name")),
+		OIDCClientID:                     strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID")),
+		OIDCClientSecret:                 os.Getenv("OIDC_CLIENT_SECRET"),
+		OIDCAuthURL:                      strings.TrimSpace(os.Getenv("OIDC_AUTH_URL")),
+		OIDCTokenURL:                     strings.TrimSpace(os.Getenv("OIDC_TOKEN_URL")),
+		OIDCRedirectURL:                  strings.TrimSpace(os.Getenv("OIDC_REDIRECT_URL")),
+		OIDCSessionSecret:                os.Getenv("OIDC_SESSION_SECRET"),
+		OIDCSessionTTLSeconds:            intEnv("OIDC_SESSION_TTL_SECONDS", 12*60*60),
 		StoreDriver:                      env("STORE_DRIVER", "memory"),
 		DatabaseURL:                      os.Getenv("DATABASE_URL"),
 		DispatchMode:                     env("DISPATCH_MODE", "http"),
@@ -143,6 +157,23 @@ func (c Config) Validate() error {
 		}
 		if strings.TrimSpace(c.OIDCAudience) == "" {
 			return fmt.Errorf("OIDC_AUDIENCE is required when AUTH_MODE=oidc")
+		}
+		if strings.TrimSpace(c.OIDCAuthURL) != "" || strings.TrimSpace(c.OIDCTokenURL) != "" || strings.TrimSpace(c.OIDCClientID) != "" {
+			if strings.TrimSpace(c.OIDCAuthURL) == "" {
+				return fmt.Errorf("OIDC_AUTH_URL is required when OIDC browser login is enabled")
+			}
+			if strings.TrimSpace(c.OIDCTokenURL) == "" {
+				return fmt.Errorf("OIDC_TOKEN_URL is required when OIDC browser login is enabled")
+			}
+			if strings.TrimSpace(c.OIDCClientID) == "" {
+				return fmt.Errorf("OIDC_CLIENT_ID is required when OIDC browser login is enabled")
+			}
+			if strings.TrimSpace(c.OIDCSessionSecret) == "" {
+				return fmt.Errorf("OIDC_SESSION_SECRET is required when OIDC browser login is enabled")
+			}
+			if c.OIDCSessionTTLSeconds <= 0 {
+				return fmt.Errorf("OIDC_SESSION_TTL_SECONDS must be greater than 0")
+			}
 		}
 	}
 	switch strings.ToLower(strings.TrimSpace(c.InvitationEmailMode)) {

@@ -51,7 +51,7 @@ ARTIFACT_CLEANUP_DELETE_FILES=true
 
 - `AUTH_MODE=demo`：默认本地模式，所有请求映射到 `demo-user/demo-project`。
 - `AUTH_MODE=trusted-header`：生产网关模式，要求可信上游完成登录和 JWT/session 校验，再透传 `X-NiceAgent-User-ID`、`X-NiceAgent-Project-ID`、可选 `X-NiceAgent-Org-ID` 和 `X-NiceAgent-Roles`。
-- `AUTH_MODE=oidc`：Control Plane 直接校验 `Authorization: Bearer <jwt>`。当前支持 RS256 JWT、`iss`、`aud`、`exp`、`nbf` 校验和 JWKS 拉取，并把 claims 映射为 `ActorContext`；它是资源服务器模式，不包含浏览器 OIDC callback、session cookie 或 refresh token。
+- `AUTH_MODE=oidc`：Control Plane 直接校验 `Authorization: Bearer <jwt>`。当前支持 RS256 JWT、`iss`、`aud`、`exp`、`nbf` 校验和 JWKS 拉取，并把 claims 映射为 `ActorContext`；同时支持最小浏览器 OIDC authorization code flow，提供 login callback、HttpOnly session cookie、refresh token 刷新和 logout。
 
 OIDC JWT 模式需要配置：
 
@@ -61,6 +61,18 @@ OIDC JWT 模式需要配置：
 - `OIDC_PROJECT_ID_CLAIM`、`OIDC_ORG_ID_CLAIM`、`OIDC_ROLES_CLAIM`：默认分别是 `niceagent_project_id`、`niceagent_org_id`、`niceagent_roles`。如果 roles claim 为空，Control Plane 会继续从持久 membership 解析角色。
 - `OIDC_DEFAULT_PROJECT_ID`、`OIDC_DEFAULT_ORG_ID`：可选 fallback，适合单项目部署。
 - `OIDC_USER_ID_CLAIM`、`OIDC_EMAIL_CLAIM`、`OIDC_NAME_CLAIM`：默认分别是 `sub`、`email`、`name`。
+
+OIDC 浏览器登录额外配置：
+
+- `OIDC_CLIENT_ID`：IdP 中注册的 client id。`id_token` 的 audience 通常应与 `OIDC_AUDIENCE` 保持一致。
+- `OIDC_CLIENT_SECRET`：可选 client secret，只能通过环境变量或 Secret 注入。
+- `OIDC_AUTH_URL`：authorization endpoint。
+- `OIDC_TOKEN_URL`：token endpoint，用于 authorization code 和 refresh token exchange。
+- `OIDC_REDIRECT_URL`：可选 callback URL；为空时按当前请求 host 推导 `/auth/oidc/callback`。
+- `OIDC_SESSION_SECRET`：签名 session cookie 的随机密钥，启用浏览器登录时必填。
+- `OIDC_SESSION_TTL_SECONDS`：session cookie 有效期，默认 43200 秒。
+
+浏览器入口为 `GET /auth/oidc/login`；callback 成功后写入 `niceagent_session` HttpOnly cookie，后续外部 API 在没有 bearer token 时会读取该 session。`POST /auth/oidc/refresh` 会使用 session 内 refresh token 刷新 session；`POST /auth/logout` 会清理 session。当前 session cookie 采用 HMAC 签名和 HttpOnly/SameSite=Lax，生产部署应使用 HTTPS、稳定域名、足够长的 `OIDC_SESSION_SECRET`，并结合 IdP 侧 refresh token 生命周期和撤销策略。
 
 最小 RBAC 优先读取 trusted header 中的 `X-NiceAgent-Roles`：`viewer` 只允许读取，`owner/admin/member/editor/writer` 允许创建聊天、发送消息、取消 run 和管理 HTTP Skill；项目成员管理只允许 `owner/admin`。缺少 roles 时会从 `project_members` 持久角色绑定中读取；仍找不到成员关系时返回 `403`，并写入 `auth.authorize` deny audit event。当前 migration 会给 `demo-user/demo-project` 写入 `owner` 角色。
 
@@ -73,7 +85,7 @@ PATCH /api/projects/{project_id}/members/{user_id}
 DELETE /api/projects/{project_id}/members/{user_id}
 ```
 
-这些 API 只管理当前 actor 所在项目的 `project_members`，不会跨项目修改成员；第一版也不允许修改或删除自己的成员关系，避免把自己锁出项目。organization 级成员管理、邀请创建/接受、可信身份绑定和可选 SMTP 邀请邮件已有最小闭环；NiceAgent 内置浏览器 OIDC 登录/session 和更细粒度 action policy 仍是后续工作。
+这些 API 只管理当前 actor 所在项目的 `project_members`，不会跨项目修改成员；第一版也不允许修改或删除自己的成员关系，避免把自己锁出项目。organization 级成员管理、邀请创建/接受、可信身份绑定、可选 SMTP 邀请邮件和 NiceAgent 最小 OIDC 浏览器登录/session 已有闭环；更细粒度 action policy 和生产 IdP 联调仍是后续工作。
 
 邀请邮件默认关闭，适合本地开发。需要由 Control Plane 直接发送邀请邮件时配置：
 
