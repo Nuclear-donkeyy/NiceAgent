@@ -37,7 +37,7 @@ Postgres event 写入已能保证单 run 内 `seq` 递增，memory/Postgres stor
 
 SSE endpoint 支持 `?after=`、`Last-Event-ID` replay、SSE `id: <seq>` 和 ping；前端记录每个 run 的 last seq，打开连接时带 `after`，并在应用事件前丢弃重复 seq。服务端订阅前后都会按 `seq` replay 一次，降低 replay 与 subscribe 之间的竞态窗口。
 
-终态保护已有基础：`Complete`/`Fail` 会跳过 terminal run，store 也阻止 terminal 被不同状态覆盖。`runs` 已补上 `active_attempt_id`、`claimed_by`、`lease_expires_at`、`attempt_count`，旧 attempt 的 event/complete/fail 会被拒绝。Redis worker 已支持 heartbeat 续租、idle pending `XAUTOCLAIM` 和 DLQ；跨 Control Plane 副本 live fanout 已有 Redis nudge 路径。`make smoke-three-services-redis` 已覆盖两个 Agent Runtime consumer 的最小冒烟，`make smoke-control-plane-fanout` 已覆盖两个 Control Plane 进程间的 event fanout 冒烟。Redis worker 已采样 consumer group lag、pending count、最老 pending idle 秒数和 DLQ length，并提供基础 Prometheus 告警。Control Plane 已暴露 SSE run event 订阅连接打开/关闭次数、当前活跃连接数和连接持续时间。生产级 Redis 高可用和容量压测仍待补齐。
+终态保护已有基础：`Complete`/`Fail` 会跳过 terminal run，store 也阻止 terminal 被不同状态覆盖。`runs` 已补上 `active_attempt_id`、`claimed_by`、`lease_expires_at`、`attempt_count`，旧 attempt 的 event/complete/fail 会被拒绝。Redis worker 已支持 heartbeat 续租、idle pending `XAUTOCLAIM` 和 DLQ；跨 Control Plane 副本 live fanout 已有 Redis nudge 路径。`make smoke-three-services-redis` 已覆盖两个 Agent Runtime consumer 的最小冒烟，`make smoke-control-plane-fanout` 已覆盖两个 Control Plane 进程间的 event fanout 冒烟。Redis worker 已采样 consumer group lag、pending count、最老 pending idle 秒数和 DLQ length，并提供基础 Prometheus 告警。Control Plane 已暴露 SSE run event 订阅连接打开/关闭次数、当前活跃连接数和连接持续时间。`make smoke-redis-capacity` 已提供单 Redis Streams `XADD -> XREADGROUP -> XACK` 容量冒烟和 JSON 报告入口。生产级 Redis 高可用、故障演练和正式多副本压测仍待补齐。
 
 已落地能力：
 
@@ -46,11 +46,11 @@ SSE endpoint 支持 `?after=`、`Last-Event-ID` replay、SSE `id: <seq>` 和 pin
 - attempt/lease/fencing 已落到 `runs.active_attempt_id`、`claimed_by`、`lease_expires_at`、`attempt_count`，旧 attempt 回写会被拒绝。
 - Runtime worker 已支持 heartbeat 续租、idle pending `XAUTOCLAIM`、最大投递次数和 DLQ。
 - SSE replay 已支持 `id`、`?after=`、`Last-Event-ID`、前端 seq 去重和跨 Control Plane Redis nudge fanout。
-- CI 已包含 Redis queue/fanout 相关 smoke，Redis worker 也暴露 message、reclaim、ack、error、DLQ、consumer group lag、pending count、oldest pending idle 等指标；Control Plane 暴露 SSE active subscriber 和连接持续时间指标。
+- CI 已包含 Redis queue/fanout 相关 smoke，Redis worker 也暴露 message、reclaim、ack、error、DLQ、consumer group lag、pending count、oldest pending idle 等指标；Control Plane 暴露 SSE active subscriber 和连接持续时间指标；`make smoke-redis-capacity` 可选验证 Redis Streams 基础吞吐和 pending 清零。
 
 仍待落地能力：
 
-- 生产级 Redis HA/备份/故障演练、容量压测、更多 fanout 延迟指标和外部告警。
+- 生产级 Redis HA/备份/故障演练、正式多副本容量压测、更多 fanout 延迟指标和外部告警。
 - 可选独立 dispatcher worker 服务、独立 `run_attempts` 审计表和更完整的多副本回放压测。
 
 ## 扩展点
@@ -61,7 +61,7 @@ SSE endpoint 支持 `?after=`、`Last-Event-ID` replay、SSE `id: <seq>` 和 pin
 - Control Plane 内部回写 API 已增加 `attempt_id` 校验，旧 attempt 不能写 event 或终态。
 - Event 写入后可发布 Redis fanout nudge，Control Plane 副本收到 nudge 后从 Postgres 按 seq 补发给本机 SSE。
 - SSE 已写入 `id: seq`，前端记录 last seq，重连时带 `after` 并去重。
-- queue message/reclaim/ack/error/DLQ counters、consumer group lag、pending entries、oldest pending idle、DLQ length gauges、SSE subscriber count 和连接持续时间已有最小指标，后续补外部告警和压测。
+- queue message/reclaim/ack/error/DLQ counters、consumer group lag、pending entries、oldest pending idle、DLQ length gauges、SSE subscriber count 和连接持续时间已有最小指标，Redis Streams 基础容量冒烟已有可复跑入口，后续补外部告警和正式压测。
 
 ## 技术架构
 
@@ -129,8 +129,8 @@ Browser -> 任意 Control Plane
 1. SSE replay 收口：`id:`、`Last-Event-ID`、前端 last seq、去重测试。
 2. 跨副本 event fanout：Redis nudge 最小路径和多 Control Plane smoke 已落地，权威仍是 Postgres/repository；下一步补容量测试和外部告警。
 3. Redis Streams run queue：`XADD`、`XREADGROUP`、`XACK` 基础路径已落地，并有多 Runtime consumer 冒烟。
-4. Attempt/lease/retry：claim、heartbeat、`XAUTOCLAIM`、DLQ 已有最小闭环；`make smoke-three-services-redis` 已能启动临时 Redis 和两个 Agent Runtime consumer 做最小多 runtime 冒烟；`make smoke-control-plane-fanout` 已覆盖跨 Control Plane event fanout。主 queue stream 和 DLQ stream 已支持可配置近似裁剪，Runtime 已暴露 message/reclaim/ack/error/DLQ counters，并采样 pending entries 与 DLQ length gauges，后续继续补外部告警和压测。
-5. 压测与观测：覆盖 100/500/1000 并发 run、queue lag、SSE replay gap。
+4. Attempt/lease/retry：claim、heartbeat、`XAUTOCLAIM`、DLQ 已有最小闭环；`make smoke-three-services-redis` 已能启动临时 Redis 和两个 Agent Runtime consumer 做最小多 runtime 冒烟；`make smoke-control-plane-fanout` 已覆盖跨 Control Plane event fanout。主 queue stream 和 DLQ stream 已支持可配置近似裁剪，Runtime 已暴露 message/reclaim/ack/error/DLQ counters，并采样 pending entries 与 DLQ length gauges。
+5. 压测与观测：`make smoke-redis-capacity` 已能对单 Redis Streams 基础吞吐、ack 和 pending 清零做轻量 JSON 报告；后续继续覆盖 100/500/1000 并发 run、queue lag、SSE replay gap 和多副本长时间压测。
 
 ## 风险与验收
 
