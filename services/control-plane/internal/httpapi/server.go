@@ -52,6 +52,7 @@ type Server struct {
 	tokenReservation        TokenReservationOptions
 	artifactRetention       time.Duration
 	artifactCleanupFiles    bool
+	actionPolicy            actionPolicy
 	sseActiveConnections    int64
 }
 
@@ -135,6 +136,7 @@ func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log
 		tokenReservation:        normalizeTokenReservationOptions(opts.TokenReservation),
 		artifactRetention:       opts.ArtifactRetention,
 		artifactCleanupFiles:    opts.ArtifactCleanupFiles,
+		actionPolicy:            defaultActionPolicy(),
 	}
 }
 
@@ -2878,32 +2880,26 @@ func actorFromRequest(r *http.Request) app.ActorContext {
 }
 
 func (s *Server) requireWriteRole(w http.ResponseWriter, r *http.Request, action, resourceType, resourceID, runID string) bool {
-	actor := actorFromRequest(r)
-	if actorCanWrite(actor) {
-		return true
-	}
-	s.auditDeny(r, action, resourceType, resourceID, runID, "actor role cannot write", map[string]any{"roles": actor.Roles})
-	platform.WriteError(w, http.StatusForbidden, "当前角色没有执行该操作的权限。")
-	return false
+	return s.requireAction(w, r, action, resourceType, resourceID, runID, actionRequirementWrite)
 }
 
 func (s *Server) requireProjectAdminRole(w http.ResponseWriter, r *http.Request, action, resourceType, resourceID, runID string) bool {
-	actor := actorFromRequest(r)
-	if actorCanAdminProject(actor) {
-		return true
-	}
-	s.auditDeny(r, action, resourceType, resourceID, runID, "actor role cannot manage project", map[string]any{"roles": actor.Roles})
-	platform.WriteError(w, http.StatusForbidden, "当前角色没有管理项目的权限。")
-	return false
+	return s.requireAction(w, r, action, resourceType, resourceID, runID, actionRequirementProjectAdmin)
 }
 
 func (s *Server) requireOrganizationAdminRole(w http.ResponseWriter, r *http.Request, action, resourceType, resourceID, runID string) bool {
+	return s.requireAction(w, r, action, resourceType, resourceID, runID, actionRequirementOrganizationAdmin)
+}
+
+func (s *Server) requireAction(w http.ResponseWriter, r *http.Request, action, resourceType, resourceID, runID string, fallback actionRequirement) bool {
 	actor := actorFromRequest(r)
-	if actorCanAdminProject(actor) {
+	decision := s.actionPolicy.Authorize(actor, action, fallback)
+	if decision.Allowed {
 		return true
 	}
-	s.auditDeny(r, action, resourceType, resourceID, runID, "actor role cannot manage organization", map[string]any{"roles": actor.Roles})
-	platform.WriteError(w, http.StatusForbidden, "当前角色没有管理组织的权限。")
+	metadata := map[string]any{"roles": actor.Roles, "required_roles": decision.RequiredRoles}
+	s.auditDeny(r, action, resourceType, resourceID, runID, decision.Reason, metadata)
+	platform.WriteError(w, http.StatusForbidden, decision.Message)
 	return false
 }
 
@@ -2920,7 +2916,7 @@ func actorCanWrite(actor app.ActorContext) bool {
 	return false
 }
 
-func actorCanAdminProject(actor app.ActorContext) bool {
+func actorCanAdmin(actor app.ActorContext) bool {
 	for _, role := range actor.Roles {
 		switch strings.ToLower(strings.TrimSpace(role)) {
 		case "owner", "admin":
