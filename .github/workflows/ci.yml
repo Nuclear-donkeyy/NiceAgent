@@ -45,6 +45,9 @@ jobs:
       - name: Validate Docker Compose
         run: make compose-config
 
+      - name: Check Python scripts
+        run: make check-scripts
+
       - name: Smoke Redis queue and fanout
         run: |
           make smoke-three-services-redis
