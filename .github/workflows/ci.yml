@@ -48,6 +48,9 @@ jobs:
       - name: Check Python scripts
         run: make check-scripts
 
+      - name: Check K8s sandbox hardening
+        run: make check-k8s-sandbox
+
       - name: Smoke Redis queue and fanout
         run: |
           make smoke-three-services-redis

@@ -239,7 +239,9 @@ Kubernetes 模板包含 `deployments/k8s/sandbox-hardening.yaml`，由 `make k8s
 - `NetworkPolicy`：只允许带 `app=niceagent-agent-runtime` label 的 Pod 访问 `niceagent-sandbox-executor` 的 8082 端口；Sandbox Executor 出站默认受控，只允许访问 kube-system DNS、同 namespace 内 OTLP 常用端口 `4317/4318`，以及排除 RFC1918、link-local、loopback、metadata、CGNAT 和 multicast 网段后的公网地址。
 - Sandbox Executor Pod/Container `securityContext`：非 root 运行、`RuntimeDefault` seccomp、禁止提权、drop Linux capabilities、只读 rootfs，并把 `/app/workspaces` 和 `/tmp` 作为可写 `emptyDir` 挂载。
 
-这只是 K8s 层的最小防线，不等同于强多租户安全沙箱。生产环境继续建议把 sandbox worker 放到独立节点池，并按风险等级评估 gVisor/Kata/Firecracker、RuntimeClass、云防火墙/NAT 出口控制、镜像白名单和更细的审计。仓库内可用下面的轻量检查确认 sandbox 加固 manifest 仍包含 ingress/egress、资源限制和关键地址段排除：
+这只是 K8s 层的最小防线，不等同于强多租户安全沙箱。仓库提供了可选的 `deployments/k8s/sandbox-runtimeclass.example.yaml`，用于已经安装 gVisor `runsc`、Kata 或其他 runtime handler 的集群，把 Sandbox Executor 调度到带 `niceagent.io/node-pool=sandbox` label 和 `niceagent.io/sandbox=true:NoSchedule` taint 的专用节点池。该文件不会被默认 `make k8s-apply` 应用，避免普通 kind/ACK 集群没有 handler 时 Pod 无法调度；生产启用前需要先确认节点池、RuntimeClass handler 和云侧出口策略已经就绪。
+
+生产环境继续建议把 sandbox worker 放到独立节点池，并按风险等级评估 gVisor/Kata/Firecracker、RuntimeClass、云防火墙/NAT 出口控制、镜像白名单和更细的审计。仓库内可用下面的轻量检查确认 sandbox 加固 manifest 仍包含 ingress/egress、资源限制、关键地址段排除，以及可选 RuntimeClass/专用节点池模板：
 
 ```bash
 make check-k8s-sandbox
