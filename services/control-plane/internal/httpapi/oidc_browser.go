@@ -50,6 +50,7 @@ type oidcTokenResponse struct {
 }
 
 type oidcSessionPayload struct {
+	SessionID    string           `json:"session_id"`
 	Actor        app.ActorContext `json:"actor"`
 	RefreshToken string           `json:"refresh_token,omitempty"`
 	CSRFToken    string           `json:"csrf_token,omitempty"`
@@ -175,6 +176,10 @@ func (s *Server) oidcRefresh(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	refreshToken := firstNonEmpty(token.RefreshToken, session.RefreshToken)
+	if err := s.repo.RevokeOIDCBrowserSession(session.SessionID, s.oidcBrowser.Now().UTC()); err != nil {
+		platform.WriteError(w, http.StatusInternalServerError, "failed to revoke old session")
+		return
+	}
 	if err := s.setOIDCSession(w, r, actor, refreshToken); err != nil {
 		platform.WriteError(w, http.StatusInternalServerError, "failed to refresh session")
 		return
@@ -183,9 +188,15 @@ func (s *Server) oidcRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authLogout(w http.ResponseWriter, r *http.Request) {
-	if session, err := s.oidcSessionFromRequest(r); err == nil && !s.verifyOIDCCSRF(r, session) {
-		platform.WriteError(w, http.StatusForbidden, "invalid OIDC CSRF token")
-		return
+	if session, err := s.oidcSessionFromRequest(r); err == nil {
+		if !s.verifyOIDCCSRF(r, session) {
+			platform.WriteError(w, http.StatusForbidden, "invalid OIDC CSRF token")
+			return
+		}
+		if err := s.repo.RevokeOIDCBrowserSession(session.SessionID, s.oidcBrowser.Now().UTC()); err != nil {
+			platform.WriteError(w, http.StatusInternalServerError, "failed to revoke session")
+			return
+		}
 	}
 	clearCookie(w, r, oidcSessionCookieName)
 	clearCookie(w, r, oidcStateCookieName)
@@ -245,15 +256,31 @@ func (s *Server) exchangeOIDCToken(ctx context.Context, fields map[string]string
 
 func (s *Server) setOIDCSession(w http.ResponseWriter, r *http.Request, actor app.ActorContext, refreshToken string) error {
 	expiresAt := s.oidcBrowser.Now().UTC().Add(time.Duration(s.oidcBrowser.SessionTTLSeconds) * time.Second)
+	sessionID, err := randomURLToken(24)
+	if err != nil {
+		return err
+	}
 	csrfToken, err := randomURLToken(24)
 	if err != nil {
 		return err
 	}
 	payload := oidcSessionPayload{
+		SessionID:    sessionID,
 		Actor:        actor,
 		RefreshToken: strings.TrimSpace(refreshToken),
 		CSRFToken:    csrfToken,
 		ExpiresAt:    expiresAt.Unix(),
+	}
+	if err := s.repo.UpsertOIDCBrowserSession(app.OIDCBrowserSession{
+		ID:               sessionID,
+		UserID:           actor.UserID,
+		ProjectID:        actor.ProjectID,
+		RefreshTokenHash: oidcTokenHash(refreshToken),
+		CreatedAt:        s.oidcBrowser.Now().UTC(),
+		UpdatedAt:        s.oidcBrowser.Now().UTC(),
+		ExpiresAt:        expiresAt,
+	}); err != nil {
+		return err
 	}
 	value, err := s.signOIDCSession(payload)
 	if err != nil {
@@ -307,11 +334,17 @@ func (s *Server) verifyOIDCSession(value string) (oidcSessionPayload, error) {
 	if payload.Actor.UserID == "" || payload.Actor.ProjectID == "" {
 		return oidcSessionPayload{}, errors.New("invalid OIDC session actor")
 	}
+	if strings.TrimSpace(payload.SessionID) == "" {
+		return oidcSessionPayload{}, errors.New("invalid OIDC session id")
+	}
 	if strings.TrimSpace(payload.CSRFToken) == "" {
 		return oidcSessionPayload{}, errors.New("invalid OIDC session csrf token")
 	}
 	if s.oidcBrowser.Now().Unix() > payload.ExpiresAt {
 		return oidcSessionPayload{}, errors.New("OIDC session expired")
+	}
+	if !s.repo.IsOIDCBrowserSessionActive(payload.SessionID, payload.Actor.UserID, s.oidcBrowser.Now().UTC()) {
+		return oidcSessionPayload{}, errors.New("OIDC session revoked")
 	}
 	return payload, nil
 }
@@ -360,6 +393,15 @@ func randomURLToken(byteLen int) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func oidcTokenHash(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(value))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 func setCookie(w http.ResponseWriter, r *http.Request, name, value string, maxAge time.Duration) {

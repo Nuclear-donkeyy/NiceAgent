@@ -281,6 +281,20 @@ func TestOIDCBrowserRefreshUpdatesSession(t *testing.T) {
 	if nextCSRF == nil || nextCSRF.Value == "" || nextCSRF.Value == csrfCookie.Value || nextCSRF.HttpOnly {
 		t.Fatalf("refreshed csrf cookie = %#v, old = %q", nextCSRF, csrfCookie.Value)
 	}
+	oldSessionRequest := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	oldSessionRequest.AddCookie(sessionCookie)
+	oldSessionResponse := httptest.NewRecorder()
+	handler.ServeHTTP(oldSessionResponse, oldSessionRequest)
+	if oldSessionResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("old session status = %d, body = %s", oldSessionResponse.Code, oldSessionResponse.Body.String())
+	}
+	newSessionRequest := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	newSessionRequest.AddCookie(nextSession)
+	newSessionResponse := httptest.NewRecorder()
+	handler.ServeHTTP(newSessionResponse, newSessionRequest)
+	if newSessionResponse.Code != http.StatusOK {
+		t.Fatalf("new session status = %d, body = %s", newSessionResponse.Code, newSessionResponse.Body.String())
+	}
 }
 
 func TestOIDCBrowserRefreshRejectsMissingCSRF(t *testing.T) {
@@ -389,6 +403,13 @@ func TestOIDCBrowserLogoutRequiresCSRFWhenSessionExists(t *testing.T) {
 	}
 	if cleared := findCookie(logoutResponse.Result().Cookies(), oidcCSRFCookieName); cleared == nil || cleared.MaxAge != -1 {
 		t.Fatalf("cleared csrf cookie = %#v", cleared)
+	}
+	reuse := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	reuse.AddCookie(sessionCookie)
+	reuseResponse := httptest.NewRecorder()
+	handler.ServeHTTP(reuseResponse, reuse)
+	if reuseResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked logout session status = %d, body = %s", reuseResponse.Code, reuseResponse.Body.String())
 	}
 }
 

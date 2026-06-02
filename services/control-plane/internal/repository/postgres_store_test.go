@@ -189,6 +189,27 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	}); err != app.ErrIdentityConflict {
 		t.Fatalf("same user different identity err = %v, want ErrIdentityConflict", err)
 	}
+	now := time.Now().UTC()
+	if err := reloaded.UpsertOIDCBrowserSession(app.OIDCBrowserSession{
+		ID:               "postgres-session-a",
+		UserID:           "postgres-identity-user",
+		ProjectID:        app.DemoProjectID,
+		RefreshTokenHash: "hash-a",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		ExpiresAt:        now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("upsert oidc session: %v", err)
+	}
+	if !reloaded.IsOIDCBrowserSessionActive("postgres-session-a", "postgres-identity-user", now) {
+		t.Fatal("postgres oidc session should be active")
+	}
+	if err := reloaded.RevokeOIDCBrowserSession("postgres-session-a", now.Add(time.Minute)); err != nil {
+		t.Fatalf("revoke oidc session: %v", err)
+	}
+	if reloaded.IsOIDCBrowserSessionActive("postgres-session-a", "postgres-identity-user", now.Add(2*time.Minute)) {
+		t.Fatal("postgres revoked oidc session should not be active")
+	}
 	orgInvitation, err := reloaded.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
 		Email: "postgres-invited@example.test",
 		Role:  "admin",

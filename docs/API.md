@@ -10,16 +10,16 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 
 - `demo`：默认模式，所有外部 API 映射到 `demo-user/demo-project`，用于本地开发和演示。
 - `trusted-header`：要求上游网关已完成 OIDC/session/JWT 校验，并在外部 API 请求中传入 `X-NiceAgent-User-ID` 和 `X-NiceAgent-Project-ID`。可选传入 `X-NiceAgent-Org-ID`、`X-NiceAgent-Roles`、`X-NiceAgent-User-Email`、`X-NiceAgent-User-Name`、`X-NiceAgent-Identity-Provider`、`X-NiceAgent-Identity-Issuer`、`X-NiceAgent-Identity-Subject`。缺少 actor header 时返回 401；缺少 roles 时，普通项目 API 会从持久 `project_members` 读取角色，组织成员 API 会从持久 `organization_members` 读取角色，仍找不到成员关系则返回 403。如果请求携带 identity issuer/subject，Control Plane 会把该外部身份绑定到内部 `user_id`；同一个外部身份不能绑定到多个用户，同一个用户同一 provider 也不能换绑到另一个外部身份。接受邀请时必须有可信邮箱 header，且邮箱必须匹配邀请邮箱。
-- `oidc`：作为 API resource server 校验 `Authorization: Bearer <jwt>`，支持 RS256、JWKS、issuer、audience、`exp`、`nbf` 校验，并把 JWT claims 映射为 `ActorContext`。该模式不读取 trusted header；同时提供最小浏览器 OIDC authorization code flow，支持 login callback、HttpOnly session cookie、refresh token 刷新和 logout。
+- `oidc`：作为 API resource server 校验 `Authorization: Bearer <jwt>`，支持 RS256、JWKS、issuer、audience、`exp`、`nbf` 校验，并把 JWT claims 映射为 `ActorContext`。该模式不读取 trusted header；同时提供最小浏览器 OIDC authorization code flow，支持 login callback、HttpOnly session cookie、refresh token 刷新、服务端 session 撤销和 logout。
 
 OIDC 浏览器登录接口：
 
 - `GET /auth/oidc/login`：生成 state cookie，并跳转到 `OIDC_AUTH_URL`。
 - `GET /auth/oidc/callback?code=...&state=...`：校验 state，向 `OIDC_TOKEN_URL` 交换 token，校验 `id_token`，写入 `niceagent_session` HttpOnly cookie 和前端可读的 `niceagent_csrf` cookie，然后跳转到 `/`。
-- `POST /auth/oidc/refresh`：使用 session 中的 refresh token 换取新 token，并刷新 session cookie。请求必须携带 `X-NiceAgent-CSRF`，值与 `niceagent_csrf` cookie 一致。
-- `POST /auth/logout`：清理 OIDC session、state 和 CSRF cookie。如果请求带有有效 session，也必须携带 `X-NiceAgent-CSRF`。
+- `POST /auth/oidc/refresh`：使用 session 中的 refresh token 换取新 token，并刷新 session cookie。请求必须携带 `X-NiceAgent-CSRF`，值与 `niceagent_csrf` cookie 一致；刷新成功后会撤销旧 `session_id` 并签发新的 browser session。
+- `POST /auth/logout`：撤销当前 OIDC browser session，并清理 OIDC session、state 和 CSRF cookie。如果请求带有有效 session，也必须携带 `X-NiceAgent-CSRF`。
 
-启用浏览器登录时需要配置 `OIDC_CLIENT_ID`、`OIDC_AUTH_URL`、`OIDC_TOKEN_URL`、`OIDC_SESSION_SECRET`；`OIDC_CLIENT_SECRET`、`OIDC_REDIRECT_URL` 和 `OIDC_SESSION_TTL_SECONDS` 可按 IdP 和部署环境配置。前端调用会话刷新和退出时会自动从 `niceagent_csrf` cookie 读取 token，并写入 `X-NiceAgent-CSRF` header。
+启用浏览器登录时需要配置 `OIDC_CLIENT_ID`、`OIDC_AUTH_URL`、`OIDC_TOKEN_URL`、`OIDC_SESSION_SECRET`；`OIDC_CLIENT_SECRET`、`OIDC_REDIRECT_URL` 和 `OIDC_SESSION_TTL_SECONDS` 可按 IdP 和部署环境配置。前端调用会话刷新和退出时会自动从 `niceagent_csrf` cookie 读取 token，并写入 `X-NiceAgent-CSRF` header。Control Plane 会把 browser session 写入 `oidc_browser_sessions`，外部 API 读取 cookie session 时会校验该 session 未撤销且未过期。
 
 `X-NiceAgent-Roles` 的最小 RBAC 语义：`owner`、`admin`、`member`、`editor`、`writer` 可以执行普通写操作；`viewer` 只能读。组织/项目成员管理只允许 `owner/admin` 操作。网关没有传 roles 时，Control Plane 优先使用 `project_members` 的持久项目角色；组织成员 API 会读取 `organization_members`；如果项目属于当前 actor 的组织，项目 API 也可以继承 `organization_members` 中的组织角色。更完整的 action 级 policy 和邀请流程仍是后续工作。
 

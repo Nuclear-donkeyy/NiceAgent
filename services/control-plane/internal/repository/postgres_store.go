@@ -630,6 +630,75 @@ func (s *PostgresStore) BindUserIdentity(identity protocol.UserIdentity) (protoc
 	return identity, nil
 }
 
+func (s *PostgresStore) UpsertOIDCBrowserSession(session app.OIDCBrowserSession) error {
+	session.ID = strings.TrimSpace(session.ID)
+	session.UserID = strings.TrimSpace(session.UserID)
+	session.ProjectID = strings.TrimSpace(session.ProjectID)
+	session.RefreshTokenHash = strings.TrimSpace(session.RefreshTokenHash)
+	if session.ID == "" || session.UserID == "" || session.ProjectID == "" || session.ExpiresAt.IsZero() {
+		return app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = now
+	}
+	if session.UpdatedAt.IsZero() {
+		session.UpdatedAt = now
+	}
+	_, err := s.exec(`
+		INSERT INTO oidc_browser_sessions (
+			id, user_id, project_id, refresh_token_hash, created_at, updated_at, expires_at, revoked_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (id)
+		DO UPDATE SET user_id = EXCLUDED.user_id,
+		              project_id = EXCLUDED.project_id,
+		              refresh_token_hash = EXCLUDED.refresh_token_hash,
+		              updated_at = EXCLUDED.updated_at,
+		              expires_at = EXCLUDED.expires_at,
+		              revoked_at = EXCLUDED.revoked_at`,
+		session.ID, session.UserID, session.ProjectID, session.RefreshTokenHash,
+		session.CreatedAt, session.UpdatedAt, session.ExpiresAt, session.RevokedAt)
+	return err
+}
+
+func (s *PostgresStore) RevokeOIDCBrowserSession(sessionID string, revokedAt time.Time) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return app.ErrInvalidInput
+	}
+	if revokedAt.IsZero() {
+		revokedAt = time.Now().UTC()
+	}
+	_, err := s.exec(`
+		UPDATE oidc_browser_sessions
+		SET revoked_at = COALESCE(revoked_at, $2), updated_at = $2
+		WHERE id = $1`, sessionID, revokedAt)
+	return err
+}
+
+func (s *PostgresStore) IsOIDCBrowserSessionActive(sessionID, userID string, now time.Time) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	userID = strings.TrimSpace(userID)
+	if sessionID == "" || userID == "" {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	var exists bool
+	err := s.queryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM oidc_browser_sessions
+			WHERE id = $1
+			  AND user_id = $2
+			  AND revoked_at IS NULL
+			  AND expires_at > $3
+		)`, sessionID, userID, now).Scan(&exists)
+	return err == nil && exists
+}
+
 func (s *PostgresStore) ListOrganizationRoles(userID, orgID string) []string {
 	rows, err := s.query(`
 		SELECT role

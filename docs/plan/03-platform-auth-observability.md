@@ -29,7 +29,7 @@ NiceAgent 需要从 `demo-user` 演示模式升级为真实多用户平台。产
 
 数据层已经有平台雏形：`users`、`organizations`、`projects` 表；`chat_sessions` 包含 `user_id` 和 `project_id`；`runs` 包含 `user_id`；`skills`、`skill_grants` 也有 user/project 维度。
 
-Control Plane 已新增 `ActorContext` 和 `AUTH_MODE=demo|trusted-header|oidc` 边界。`demo` 模式继续映射到 `demo-user/demo-project`；`trusted-header` 模式要求可信上游已完成 OIDC/session/JWT 校验，并传入 `X-NiceAgent-User-ID` 和 `X-NiceAgent-Project-ID`，可选 `X-NiceAgent-Org-ID`、`X-NiceAgent-Roles`、`X-NiceAgent-User-Email`、`X-NiceAgent-User-Name`、`X-NiceAgent-Identity-Provider`、`X-NiceAgent-Identity-Issuer` 和 `X-NiceAgent-Identity-Subject`。`oidc` 模式已能校验 `Authorization: Bearer <jwt>`，支持 RS256、issuer/audience/exp/nbf、JWKS 拉取和 claims 到 `ActorContext` 的映射；同时已有最小浏览器 OIDC authorization code flow，支持 login callback、HttpOnly session cookie、refresh token 刷新、logout 和 refresh/logout CSRF 防护。
+Control Plane 已新增 `ActorContext` 和 `AUTH_MODE=demo|trusted-header|oidc` 边界。`demo` 模式继续映射到 `demo-user/demo-project`；`trusted-header` 模式要求可信上游已完成 OIDC/session/JWT 校验，并传入 `X-NiceAgent-User-ID` 和 `X-NiceAgent-Project-ID`，可选 `X-NiceAgent-Org-ID`、`X-NiceAgent-Roles`、`X-NiceAgent-User-Email`、`X-NiceAgent-User-Name`、`X-NiceAgent-Identity-Provider`、`X-NiceAgent-Identity-Issuer` 和 `X-NiceAgent-Identity-Subject`。`oidc` 模式已能校验 `Authorization: Bearer <jwt>`，支持 RS256、issuer/audience/exp/nbf、JWKS 拉取和 claims 到 `ActorContext` 的映射；同时已有最小浏览器 OIDC authorization code flow，支持 login callback、HttpOnly session cookie、refresh token 刷新、logout、refresh/logout CSRF 防护，以及基于 `oidc_browser_sessions` 的服务端 session 撤销/轮换。
 
 Repository 仍保留偏底层的数据访问接口，权限主要在 HTTP handler 层按 actor 校验。会话、消息、run、events、artifact、skill 和 audit 的外部 API 已有基础 user/project 隔离。`X-NiceAgent-Roles` 已有最小 RBAC：`viewer` 只读，`owner/admin/member/editor/writer` 可写；组织/项目成员管理只允许 `owner/admin`。如果 header/JWT/session 没有 roles，普通项目 API 会优先从 `project_members` 持久角色绑定读取角色；组织成员 API 会从 `organization_members` 读取角色；当 `projects.organization_id` 与 actor 的 `OrgID` 匹配时，项目 API 也可以继承 `organization_members` 中的组织角色。当前已新增 `organization_members`、`project_members`、`invitations`、`user_identities`、`invitation_email_outbox` 和 `invitation_email_suppressions` migration，并种子化 `demo-user/demo-org/demo-project owner`；外部 API 已支持列出、添加/更新、移除当前组织成员和当前项目成员，也支持创建组织/项目邀请并由已认证 actor 接受邀请。邀请接受会校验可信身份中的邮箱 claim 与邀请邮箱一致；如果上游传入 `issuer + subject`，Control Plane 会绑定并校验外部身份不能跨用户换绑。可选 SMTP 邀请邮件、subject/body 模板、进程内内存队列、durable outbox、重试、邀请邮件重发 API、provider-neutral 投递/退信/投诉/丢弃事件记录、HMAC webhook 入口、SendGrid/Mailgun 原生签名校验、Amazon SES SNS 原生证书签名校验、SendGrid/SES/Mailgun 最小原生字段映射、provider-neutral 自动停发、suppression 查询/解除 API 和前端“邮件治理”管理面板已有最小闭环。
 
@@ -47,7 +47,7 @@ Repository 仍保留偏底层的数据访问接口，权限主要在 HTTP handle
 
 仍待落地能力：
 
-- 生产 IdP 联调、refresh token 撤销/轮换策略和更细 action-level policy。
+- 生产 IdP 联调和更细 action-level policy。
 - 邀请邮件 subject/body 模板、进程内内存队列、durable outbox、投递重试、邀请邮件重发 API、provider-neutral delivery/bounce/complaint/drop 事件记录、HMAC webhook 入口、SendGrid/Mailgun 原生签名校验、Amazon SES SNS 原生证书签名校验、SendGrid/SES/Mailgun 最小原生字段映射、组织级自动停发、suppression 查询/解除 API 和前端“邮件治理”管理面板已落地；更细 action-level policy 和管理后台 UI 仍待补。
 - 更多 provider 原生 tokenizer 覆盖、强一致账单级 quota、真实值班系统接入和容量看板。
 
@@ -103,7 +103,7 @@ RBAC 当前最小角色和后续第一版角色：
 
 - `AUTH_MODE=demo`：继续映射到 `demo-user/demo-project`，本地开发默认。
 - `AUTH_MODE=trusted-header`：启用可信网关透传身份，设置上游网关并要求 actor headers。
-- `AUTH_MODE=oidc`：当前既可作为 API 资源服务器校验 bearer JWT，也支持浏览器 authorization code callback/session/refresh token 和 refresh/logout CSRF 防护；需要设置 `OIDC_ISSUER_URL`、`OIDC_AUDIENCE`、可选 `OIDC_JWKS_URL` 和 claims 映射。启用浏览器登录时额外设置 `OIDC_CLIENT_ID`、`OIDC_AUTH_URL`、`OIDC_TOKEN_URL`、`OIDC_SESSION_SECRET`，可选设置 `OIDC_CLIENT_SECRET`、`OIDC_REDIRECT_URL` 和 `OIDC_SESSION_TTL_SECONDS`。
+- `AUTH_MODE=oidc`：当前既可作为 API 资源服务器校验 bearer JWT，也支持浏览器 authorization code callback/session/refresh token、refresh/logout CSRF 防护和服务端 session 撤销/轮换；需要设置 `OIDC_ISSUER_URL`、`OIDC_AUDIENCE`、可选 `OIDC_JWKS_URL` 和 claims 映射。启用浏览器登录时额外设置 `OIDC_CLIENT_ID`、`OIDC_AUTH_URL`、`OIDC_TOKEN_URL`、`OIDC_SESSION_SECRET`，可选设置 `OIDC_CLIENT_SECRET`、`OIDC_REDIRECT_URL` 和 `OIDC_SESSION_TTL_SECONDS`。
 - 首次登录创建或绑定内部 `users.id`，创建默认 organization/project/member 关系。
 - 外部 API 不再直接读 `app.DemoUserID`，而是从 `ActorContext` 取当前用户和 project。
 
@@ -129,7 +129,7 @@ RBAC 当前最小角色和后续第一版角色：
 ## 分阶段落地
 
 1. Auth middleware：增加 `AUTH_MODE=demo|trusted-header|oidc` 和 `ActorContext`，外部 API 保持行为不变。
-2. 身份/成员表：membership migration、当前组织/项目成员管理 API、邀请创建/接受 API、`user_identities` 绑定已落地并保留 demo 数据；组织成员 API 与同组织项目 API 已支持缺少 header roles 时从 `organization_members` 解析角色；邀请接受已校验可信邮箱 claim；NiceAgent OIDC 浏览器 login/session/refresh token、CSRF 防护和前端登录会话入口已有最小闭环；可选 SMTP 邀请邮件、subject/body 模板、进程内内存队列、durable outbox、重试、邀请邮件重发 API、provider-neutral 退信事件记录、HMAC webhook 入口、SendGrid/Mailgun 原生签名校验、Amazon SES SNS 原生证书签名校验、SendGrid/SES/Mailgun 最小原生字段映射、组织级自动停发、suppression 查询/解除 API 和前端“邮件治理”管理面板已有最小闭环；管理后台 UI 仍待补。
+2. 身份/成员表：membership migration、当前组织/项目成员管理 API、邀请创建/接受 API、`user_identities` 绑定已落地并保留 demo 数据；组织成员 API 与同组织项目 API 已支持缺少 header roles 时从 `organization_members` 解析角色；邀请接受已校验可信邮箱 claim；NiceAgent OIDC 浏览器 login/session/refresh token、CSRF 防护、服务端 session 撤销/轮换和前端登录会话入口已有最小闭环；可选 SMTP 邀请邮件、subject/body 模板、进程内内存队列、durable outbox、重试、邀请邮件重发 API、provider-neutral 退信事件记录、HMAC webhook 入口、SendGrid/Mailgun 原生签名校验、Amazon SES SNS 原生证书签名校验、SendGrid/SES/Mailgun 最小原生字段映射、组织级自动停发、suppression 查询/解除 API 和前端“邮件治理”管理面板已有最小闭环；管理后台 UI 仍待补。
 3. API 去 demo 常量：所有 handler 从 `ActorContext` 获取 user/project。
 4. RBAC：加入 resource/action 检查和基础角色。
 5. Quota：项目级持久 policy、Redis 并发/小时窗口预占、固定/动态模型 token 预扣/结算、run 级 tool/sandbox/artifact 用量记录和 tool/sandbox 最小实时预占已落地；后续需要支持更多 provider 原生 tokenizer 覆盖、分布式强一致 token bucket 和账单维度聚合。

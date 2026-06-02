@@ -89,7 +89,7 @@ X-NiceAgent-Org-ID: org-a
 X-NiceAgent-Roles: owner
 ```
 
-`AUTH_MODE=oidc` 会直接校验 `Authorization: Bearer <jwt>`，要求配置 `OIDC_ISSUER_URL` 和 `OIDC_AUDIENCE`，并通过 `OIDC_JWKS_URL` 或默认 `<issuer>/.well-known/jwks.json` 拉取 RS256 JWKS。它也支持最小浏览器 OIDC authorization code flow：配置 `OIDC_CLIENT_ID`、`OIDC_AUTH_URL`、`OIDC_TOKEN_URL` 和 `OIDC_SESSION_SECRET` 后，`GET /auth/oidc/login` 会跳转 IdP，callback 会写入 `niceagent_session` HttpOnly cookie 和 `niceagent_csrf` cookie，`POST /auth/oidc/refresh` 与 `POST /auth/logout` 必须携带 `X-NiceAgent-CSRF`。
+`AUTH_MODE=oidc` 会直接校验 `Authorization: Bearer <jwt>`，要求配置 `OIDC_ISSUER_URL` 和 `OIDC_AUDIENCE`，并通过 `OIDC_JWKS_URL` 或默认 `<issuer>/.well-known/jwks.json` 拉取 RS256 JWKS。它也支持最小浏览器 OIDC authorization code flow：配置 `OIDC_CLIENT_ID`、`OIDC_AUTH_URL`、`OIDC_TOKEN_URL` 和 `OIDC_SESSION_SECRET` 后，`GET /auth/oidc/login` 会跳转 IdP，callback 会写入 `niceagent_session` HttpOnly cookie 和 `niceagent_csrf` cookie，`POST /auth/oidc/refresh` 与 `POST /auth/logout` 必须携带 `X-NiceAgent-CSRF`。浏览器 session 会持久化到 `oidc_browser_sessions`，refresh 会撤销旧 session 并签发新 session，logout 会撤销当前 session。
 
 OIDC token 至少需要包含：
 

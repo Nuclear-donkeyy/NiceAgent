@@ -17,6 +17,7 @@ type Store struct {
 	users             map[string]protocol.User
 	identities        map[string]protocol.UserIdentity
 	userIdentities    map[string]string
+	oidcSessions      map[string]app.OIDCBrowserSession
 	projects          map[string]protocol.Project
 	chats             map[string]protocol.ChatSession
 	messages          map[string][]protocol.Message
@@ -48,6 +49,7 @@ func NewStore() *Store {
 		users:             map[string]protocol.User{},
 		identities:        map[string]protocol.UserIdentity{},
 		userIdentities:    map[string]string{},
+		oidcSessions:      map[string]app.OIDCBrowserSession{},
 		projects:          map[string]protocol.Project{},
 		chats:             map[string]protocol.ChatSession{},
 		messages:          map[string][]protocol.Message{},
@@ -440,6 +442,69 @@ func (s *Store) BindUserIdentity(identity protocol.UserIdentity) (protocol.UserI
 	s.identities[key] = identity
 	s.userIdentities[userKey] = key
 	return identity, nil
+}
+
+func (s *Store) UpsertOIDCBrowserSession(session app.OIDCBrowserSession) error {
+	session.ID = strings.TrimSpace(session.ID)
+	session.UserID = strings.TrimSpace(session.UserID)
+	session.ProjectID = strings.TrimSpace(session.ProjectID)
+	session.RefreshTokenHash = strings.TrimSpace(session.RefreshTokenHash)
+	if session.ID == "" || session.UserID == "" || session.ProjectID == "" || session.ExpiresAt.IsZero() {
+		return app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing := s.oidcSessions[session.ID]
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = existing.CreatedAt
+	}
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = now
+	}
+	if session.UpdatedAt.IsZero() {
+		session.UpdatedAt = now
+	}
+	s.oidcSessions[session.ID] = session
+	return nil
+}
+
+func (s *Store) RevokeOIDCBrowserSession(sessionID string, revokedAt time.Time) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return app.ErrInvalidInput
+	}
+	if revokedAt.IsZero() {
+		revokedAt = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.oidcSessions[sessionID]
+	if !ok {
+		return nil
+	}
+	session.RevokedAt = &revokedAt
+	session.UpdatedAt = revokedAt
+	s.oidcSessions[sessionID] = session
+	return nil
+}
+
+func (s *Store) IsOIDCBrowserSessionActive(sessionID, userID string, now time.Time) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	userID = strings.TrimSpace(userID)
+	if sessionID == "" || userID == "" {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	session, ok := s.oidcSessions[sessionID]
+	return ok &&
+		session.UserID == userID &&
+		session.RevokedAt == nil &&
+		now.Before(session.ExpiresAt)
 }
 
 func (s *Store) ListOrganizationRoles(userID, orgID string) []string {
