@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import * as artifactApi from "../api/artifacts";
 import * as chatApi from "../api/chats";
+import * as invitationApi from "../api/invitations";
 import * as projectApi from "../api/projects";
 import * as runApi from "../api/runs";
 import * as skillApi from "../api/skills";
 import type { Artifact } from "../domain/artifact";
 import type { ChatSession, Message } from "../domain/chat";
+import type { InvitationEmailSuppression } from "../domain/invitation";
 import type {
   ProjectQuotaPolicy,
   ProjectRuntimePolicy,
@@ -29,6 +31,7 @@ import { runEventTypes, statusText } from "../domain/labels";
 import { foldRunEvent, statusFromRunEventType } from "./runEvents";
 
 const emptySkillGroups: SkillGroups = { system: [], user: [] };
+const demoOrganizationID = "demo-org";
 const demoProjectID = "demo-project";
 const defaultRuntimePolicy: ProjectRuntimePolicy = {
   project_id: demoProjectID,
@@ -55,6 +58,9 @@ export function useNiceAgentWorkspace() {
   const [projectUsage, setProjectUsage] = useState<ProjectUsageResponse | null>(null);
   const [capacityLoading, setCapacityLoading] = useState(false);
   const [capacityError, setCapacityError] = useState("");
+  const [emailSuppressions, setEmailSuppressions] = useState<InvitationEmailSuppression[]>([]);
+  const [emailSuppressionsLoading, setEmailSuppressionsLoading] = useState(false);
+  const [emailSuppressionsError, setEmailSuppressionsError] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatus>("idle");
   const [assistantDraft, setAssistantDraft] = useState("");
@@ -110,7 +116,13 @@ export function useNiceAgentWorkspace() {
 
   async function boot() {
     try {
-      await Promise.all([loadChats(true), loadSkills(), loadRuntimePolicy(), loadCapacity()]);
+      await Promise.all([
+        loadChats(true),
+        loadSkills(),
+        loadRuntimePolicy(),
+        loadCapacity(),
+        loadEmailSuppressions(),
+      ]);
     } catch (error) {
       setNotice(errorMessage(error));
     }
@@ -166,6 +178,35 @@ export function useNiceAgentWorkspace() {
       setNotice(`容量数据加载失败：${message}`);
     } finally {
       setCapacityLoading(false);
+    }
+  }
+
+  async function loadEmailSuppressions() {
+    setEmailSuppressionsLoading(true);
+    setEmailSuppressionsError("");
+    try {
+      setEmailSuppressions(await invitationApi.listInvitationEmailSuppressions(demoOrganizationID));
+    } catch (error) {
+      const message = errorMessage(error);
+      setEmailSuppressionsError(message);
+      setNotice(`停发邮箱加载失败：${message}`);
+    } finally {
+      setEmailSuppressionsLoading(false);
+    }
+  }
+
+  async function deleteEmailSuppression(suppressionID: string) {
+    try {
+      const suppression = await invitationApi.deleteInvitationEmailSuppression(
+        demoOrganizationID,
+        suppressionID,
+      );
+      setNotice(`${suppression.email} 已解除停发`);
+      await loadEmailSuppressions();
+    } catch (error) {
+      const message = errorMessage(error);
+      setNotice(`解除停发失败：${message}`);
+      throw new Error(message, { cause: error });
     }
   }
 
@@ -483,6 +524,10 @@ export function useNiceAgentWorkspace() {
     previewOpenAPIImport,
     createOpenAPIImportedSkill,
     createMCPImportedSkill,
+    deleteEmailSuppression,
+    emailSuppressions,
+    emailSuppressionsError,
+    emailSuppressionsLoading,
     previewMCPImport,
     input,
     messageLoading,
@@ -491,6 +536,7 @@ export function useNiceAgentWorkspace() {
     quotaPolicy,
     refreshChats: () => loadChats(false),
     refreshCapacity: loadCapacity,
+    refreshEmailSuppressions: loadEmailSuppressions,
     runtimePolicy,
     runtimePolicyLoading,
     runStatus,

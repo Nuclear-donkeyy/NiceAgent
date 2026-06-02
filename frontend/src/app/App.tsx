@@ -3,6 +3,7 @@ import { Composer } from "../features/conversation/Composer";
 import { MessageList } from "../features/conversation/MessageList";
 import { ArtifactList } from "../features/artifacts/ArtifactList";
 import { CapacityPanel } from "../features/capacity/CapacityPanel";
+import { InvitationSuppressionPanel } from "../features/invitations/InvitationSuppressionPanel";
 import { SkillPanel } from "../features/skills/SkillPanel";
 import { statusText } from "../domain/labels";
 import { useNiceAgentWorkspace } from "./useNiceAgentWorkspace";
@@ -50,6 +51,14 @@ export default function App() {
           policy={workspace.quotaPolicy}
           usage={workspace.projectUsage}
           onRefresh={() => void workspace.refreshCapacity()}
+        />
+
+        <InvitationSuppressionPanel
+          error={workspace.emailSuppressionsError}
+          loading={workspace.emailSuppressionsLoading}
+          suppressions={workspace.emailSuppressions}
+          onDelete={workspace.deleteEmailSuppression}
+          onRefresh={() => void workspace.refreshEmailSuppressions()}
         />
 
         <SkillPanel
