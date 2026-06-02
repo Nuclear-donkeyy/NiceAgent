@@ -51,6 +51,7 @@ check-scripts:
 check-alerts:
 	python3 scripts/check_prometheus_alerts.py deployments/monitoring/prometheus-alerts.yml
 	python3 scripts/check_alertmanager_config.py deployments/monitoring/alertmanager.example.yml
+	python3 scripts/check_grafana_dashboards.py deployments/monitoring/grafana/dashboards/skill-governance.json
 
 check-k8s-sandbox:
 	python3 scripts/check_k8s_sandbox_hardening.py deployments/k8s/sandbox-hardening.yaml deployments/k8s/sandbox-runtimeclass.example.yaml
