@@ -51,10 +51,11 @@ HTTP Skill 表单已有字段级错误、URL 客户端校验、Bearer token 条�
 - artifact domain/API/list/download、`artifact.created` 折叠、图片最小缩略预览和刷新后恢复。
 - SSE `after`/seq 去重、断线/恢复状态折叠到 agent status，不展示底层事件调试台。
 - Playwright mock smoke 与三服务真实 UI smoke 已覆盖核心聊天、CLI 状态、artifact list API 和刷新恢复。
+- `make smoke-sse-replay` 已用真实 Control Plane、Agent Runtime 和 Sandbox Executor 覆盖 SSE 中途断开后按 `after=<last_seq>` replay，验证重连后不重复 seq 且能补到 `run.succeeded`。
 
 仍待落地能力：
 
-- 真实 HTTP Skill 后端流、复杂 SSE 断线重连、失败重试和更大样本的浏览器 E2E。
+- 真实 HTTP Skill 后端流、浏览器级真实断线恢复、失败重试和更大样本的 E2E。
 - 更多文件类型预览、skill 导入向导和面向多用户/项目的导航体验。
 
 ## 扩展点
@@ -98,7 +99,7 @@ Skill 表单建议本地维护 `errors`：
 - `auth_type=bearer` 时 `bearer_token` 必填。
 - 服务端 400/500 错误展示在表单顶部，并保留输入。
 
-E2E 当前分两层：`frontend/e2e/smoke.spec.ts` 通过 fake backend 或网络 mock 验证前端行为；`make smoke-three-services-ui` 构建前端并启动三服务真实进程，验证 Control Plane 托管静态产物后的核心链路。后续再补真实 HTTP Skill 后端流和复杂 SSE 断线重连。
+E2E 当前分三层：`frontend/e2e/smoke.spec.ts` 通过 fake backend 或网络 mock 验证前端行为；`make smoke-three-services-ui` 构建前端并启动三服务真实进程，验证 Control Plane 托管静态产物后的核心链路；`make smoke-sse-replay` 启动真实 Control Plane、Agent Runtime 和 Sandbox Executor，模拟 SSE 读到部分事件后断开，并用 `after=<last_seq>` 重连补齐，验证 replay 后没有重复 seq 且能收到 `run.succeeded`。后续再补真实 HTTP Skill 后端流、浏览器级真实断线恢复和更大样本测试。
 
 ## 技术方案
 
@@ -125,7 +126,7 @@ E2E 当前分两层：`frontend/e2e/smoke.spec.ts` 通过 fake backend 或网络
 2. Skill 表单：客户端校验、字段级错误、服务端错误和保存状态。
 3. SSE replay 体验：last seq、断线提示、去重和恢复状态。
 4. Playwright smoke：本地 mock + CI Chromium。
-5. 集成 E2E：`make smoke-three-services-ui` 已能构建前端、启动三服务，并由 Control Plane 托管静态产物，覆盖真实 `/cli echo hello`、artifact list API 和刷新恢复；后续继续补 HTTP Skill 真实后端流和 SSE 断线重连。
+5. 集成 E2E：`make smoke-three-services-ui` 已能构建前端、启动三服务，并由 Control Plane 托管静态产物，覆盖真实 `/cli echo hello`、artifact list API 和刷新恢复；`make smoke-sse-replay` 已覆盖真实服务 SSE 中途断开、按 seq replay 和去重的最小冒烟；后续继续补 HTTP Skill 真实后端流和浏览器级真实断线恢复。
 
 ## 风险与验收
 

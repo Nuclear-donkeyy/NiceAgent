@@ -55,6 +55,7 @@ jobs:
         run: |
           make smoke-three-services-redis
           make smoke-control-plane-fanout
+          make smoke-sse-replay
 
       - name: Build container images
         run: make docker-build IMAGE_REGISTRY=niceagent-ci IMAGE_TAG=${{ github.sha }}
