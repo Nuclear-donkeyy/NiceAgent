@@ -273,6 +273,15 @@ HTTP Skill 默认只允许 `https` URL，禁用重定向，拒绝 URL 中携带�
 
 HTTP Skill `runtime_config` 支持最小 retry/rate limit：`retry.max_attempts` 默认 1、最大 5，只对 429、5xx 和网络/超时类错误重试；`rate_limit.requests_per_minute` 默认 0 表示关闭，最大 600。`SKILL_RATE_LIMIT_MODE=local` 时按单个 Agent Runtime 进程内的 skill id 做固定窗口限流；`SKILL_RATE_LIMIT_MODE=redis` 时使用 `REDIS_ADDR` 和 `SKILL_RATE_LIMIT_PREFIX` 在 Redis 中按分钟窗口计数，让多个 Runtime 副本共享同一个 skill rate limit。命中限流会返回 `rate_limited` observation，不会发起请求。Redis 计数异常时当前策略是 fail closed，优先保护第三方 API；这不替代 Control Plane 的项目级 quota 和账单级配额。
 
+Agent Runtime 还支持 `SKILL_RISK_POLICY` 作为执行前风险门禁，默认 `allow` 保持本地开发兼容。可选值：
+
+- `allow`：只按具体 executor/HTTP/MCP 策略执行，不额外按 manifest 风险拦截。
+- `block-high`：拒绝 `risk=high` 的 skill。
+- `block-destructive`：拒绝 annotations 中 `destructiveHint=true` 的 skill。
+- `read-only`：只允许 `readOnlyHint=true` 且非 destructive、非 high risk 的 skill。
+
+被风险策略拒绝时，Runtime 不会调用真实 tool，也不会预占 tool quota；它会返回 `skill_policy_denied` observation，并写入 `tool.output`/`tool.finished` 事件。K8s 默认配置使用 `block-destructive`，让导入的 MCP/OpenAPI Skill 至少不会执行 manifest 明确标记为破坏性的能力。注意 annotations 仍来自 skill manifest/importer，不能替代 sandbox、SSRF、secret redaction 和真实权限边界。
+
 `workspace.read` 是系统内置只读 skill。它不会让 Runtime 直接读取任意磁盘路径，而是通过 Control Plane 内部 API 列出当前 run 已登记 artifacts，并只读取文本 artifact 的内容摘要。读取会校验 active `attempt_id`，并复用 artifact metadata、workspace root、`output/` 路径限制、symlink escape 检查、regular file 检查、MIME 文本限制和读取大小限制。前端 artifact 面板会对图片、PDF、音频和视频使用 `?disposition=inline` 做内联预览，下载按钮仍走默认 attachment；CSV/TSV 等文本表格会通过 `GET /api/artifacts/{id}/content` 读取前几行做表格预览。排查读取或预览失败时优先看 artifact 是否已登记、文件是否仍在 workspace、MIME 是否正确，以及路径是否在 `output/` 下。
 
 ## Postgres 模式排查

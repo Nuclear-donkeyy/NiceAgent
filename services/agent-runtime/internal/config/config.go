@@ -21,6 +21,7 @@ type Config struct {
 	RedisAddr                    string
 	SkillRateLimitMode           string
 	SkillRateLimitPrefix         string
+	SkillRiskPolicy              string
 	RunQueueStream               string
 	RunQueueGroup                string
 	RunQueueConsumer             string
@@ -77,6 +78,7 @@ func FromEnv() Config {
 		RedisAddr:                    os.Getenv("REDIS_ADDR"),
 		SkillRateLimitMode:           strings.TrimSpace(env("SKILL_RATE_LIMIT_MODE", "local")),
 		SkillRateLimitPrefix:         strings.TrimSpace(env("SKILL_RATE_LIMIT_PREFIX", "niceagent:skill-rate")),
+		SkillRiskPolicy:              strings.TrimSpace(env("SKILL_RISK_POLICY", "allow")),
 		RunQueueStream:               env("RUN_QUEUE_STREAM", "niceagent:runs"),
 		RunQueueGroup:                env("RUN_QUEUE_GROUP", "agent-runtimes"),
 		RunQueueConsumer:             runtimeConsumer(),
@@ -146,6 +148,11 @@ func (c Config) Validate() error {
 	}
 	if c.SkillRateLimitMode == "redis" && strings.TrimSpace(c.RedisAddr) == "" {
 		return fmt.Errorf("REDIS_ADDR is required when SKILL_RATE_LIMIT_MODE=redis")
+	}
+	switch c.SkillRiskPolicy {
+	case "", "allow", "block-high", "block-destructive", "read-only":
+	default:
+		return fmt.Errorf("unsupported SKILL_RISK_POLICY %q", c.SkillRiskPolicy)
 	}
 	return nil
 }

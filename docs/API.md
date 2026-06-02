@@ -868,6 +868,8 @@ Sandbox Executor 支持 `EXECUTOR_MODE=local|container`。`container` 模式可�
 
 Skill 元数据以 `skills` 和 `skill_versions` 为权威，`skill_grants` 表示用户/项目可用性，`skill_secrets` 只保存 secret 引用或本地开发密文。`input_schema`、`output_schema`、`annotations` 和 `runtime_config` 使用 JSON/JSONB；`annotations` 采用 MCP 风格字段，例如 `readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`。当前用户 Skill 支持 `kind=http` 和 `kind=mcp`：HTTP Skill 直接调用配置的 HTTPS endpoint；MCP Skill 通过最小 HTTP JSON-RPC `tools/call` adapter 调用远端 MCP-compatible endpoint。
 
+Agent Runtime 可通过 `SKILL_RISK_POLICY=allow|block-high|block-destructive|read-only` 在执行前拦截不符合策略的 skill。被拦截的调用会返回 `skill_policy_denied` 结构化 observation，并写入 `tool.output` / `tool.finished` 事件；Runtime 不会发起真实 tool 请求，也不会预占 skill quota。该配置不改变外部 Web API 或 `RunExecutionRequest` 结构。
+
 Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。当前主执行路径通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 运行 agentic loop；模型输出仍通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端折叠成 assistant 消息。
 
 OpenAI-compatible provider 通过 Eino `eino-ext` OpenAI ChatModel 使用 `/v1/chat/completions` 协议，并支持模型原生 tool calling；该能力不改变外部 Web API 和 `RunExecutionRequest`。DeepSeek 使用同一 provider 路径，可设置 `MODEL_PROVIDER_PROFILE=deepseek` 作为部署侧配置预设，Runtime 会把 usage provider 标记为 `deepseek`，并在未显式配置 `MODEL_BASE_URL` 时使用 DeepSeek 官方 OpenAI-compatible 根地址；模型名和 API key 仍由环境变量或 Secret 显式注入。
