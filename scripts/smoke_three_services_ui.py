@@ -164,6 +164,30 @@ def run_playwright(frontend: Path, base_url: str, screenshot_path: Path, timeout
           throw new Error("run id was not visible in the UI");
         }}
         const runID = runMatch[0];
+        const firstBrowserSSEEvents = await readRunEventsInBrowser(page, runID, 0, {{
+          stopCount: 2,
+          timeout,
+        }});
+        const lastSeqBeforeReconnect = Math.max(
+          ...firstBrowserSSEEvents
+            .map((event) => Number(event.seq))
+            .filter((seq) => Number.isFinite(seq) && seq > 0),
+        );
+        if (!Number.isFinite(lastSeqBeforeReconnect) || lastSeqBeforeReconnect <= 0) {{
+          throw new Error(`browser SSE did not expose a usable seq: ${{JSON.stringify(firstBrowserSSEEvents)}}`);
+        }}
+        const replayedBrowserSSEEvents = await readRunEventsInBrowser(page, runID, lastSeqBeforeReconnect, {{
+          stopType: "run.succeeded",
+          timeout,
+        }});
+        if (replayedBrowserSSEEvents.some((event) => Number(event.seq) <= lastSeqBeforeReconnect)) {{
+          throw new Error(
+            `browser SSE replay returned duplicate or stale seq after ${{lastSeqBeforeReconnect}}: ${{JSON.stringify(replayedBrowserSSEEvents)}}`,
+          );
+        }}
+        if (!replayedBrowserSSEEvents.some((event) => event.type === "run.succeeded")) {{
+          throw new Error(`browser SSE replay did not receive run.succeeded: ${{JSON.stringify(replayedBrowserSSEEvents)}}`);
+        }}
         const artifacts = await page.request.get(`${{new URL(`/api/runs/${{runID}}/artifacts`, {json.dumps(base_url)}).toString()}}`);
         if (!artifacts.ok()) {{
           throw new Error(`artifact list returned ${{artifacts.status()}}`);
@@ -186,8 +210,74 @@ def run_playwright(frontend: Path, base_url: str, screenshot_path: Path, timeout
         console.log(JSON.stringify({{
           run_id: runID,
           artifact_count: artifactBody.artifacts.length,
+          browser_sse_replay: {{
+            last_seq_before_reconnect: lastSeqBeforeReconnect,
+            replayed_event_count: replayedBrowserSSEEvents.length,
+            final_seq: Math.max(...replayedBrowserSSEEvents.map((event) => Number(event.seq))),
+          }},
           recovered_after_reload: finalText.includes("hello-ui-smoke"),
         }}));
+
+        async function readRunEventsInBrowser(page, runID, after, options) {{
+          return await page.evaluate(
+            (input) =>
+              new Promise((resolve, reject) => {{
+                const runEventTypes = [
+                  "run.queued",
+                  "run.started",
+                  "model.token",
+                  "tool.started",
+                  "tool.output",
+                  "tool.finished",
+                  "approval.needed",
+                  "artifact.created",
+                  "run.succeeded",
+                  "run.failed",
+                  "run.canceled",
+                ];
+                const events = [];
+                const params = input.after > 0 ? `?after=${{encodeURIComponent(String(input.after))}}` : "";
+                const source = new EventSource(`/api/runs/${{encodeURIComponent(input.runID)}}/events${{params}}`);
+                const timer = setTimeout(() => {{
+                  source.close();
+                  reject(
+                    new Error(
+                      `timed out reading browser SSE events for ${{input.runID}} after ${{input.after}}; got ${{JSON.stringify(events)}}`,
+                    ),
+                  );
+                }}, input.timeout);
+
+                for (const type of runEventTypes) {{
+                  source.addEventListener(type, (message) => {{
+                    if (!message.data) return;
+                    const event = JSON.parse(message.data);
+                    events.push(event);
+                    if (
+                      (input.stopCount && events.length >= input.stopCount) ||
+                      (input.stopType && event.type === input.stopType)
+                    ) {{
+                      clearTimeout(timer);
+                      source.close();
+                      resolve(events);
+                    }}
+                  }});
+                }}
+                source.onerror = () => {{
+                  if (events.length > 0) return;
+                  clearTimeout(timer);
+                  source.close();
+                  reject(new Error(`browser SSE errored before receiving events for ${{input.runID}}`));
+                }};
+              }}),
+            {{
+              runID,
+              after,
+              stopCount: options.stopCount || 0,
+              stopType: options.stopType || "",
+              timeout,
+            }},
+          );
+        }}
         """
     )
     env = os.environ.copy()
