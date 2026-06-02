@@ -500,7 +500,7 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 make check-alerts
 ```
 
-`alertmanager.example.yml` 中的 webhook URL 都使用 `example.invalid` 占位，生产部署时应替换为真实的告警路由器、IM、短信/电话或云监控地址，并在 Alertmanager Secret 中管理真实 webhook token。生产环境建议再用 Prometheus 自带的 `promtool check rules deployments/monitoring/prometheus-alerts.yml`、Alertmanager 的 `amtool check-config deployments/monitoring/alertmanager.example.yml` 和真实 Grafana 导入做最终校验。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span、主要 agent 执行内部 span、Redis 低层命令 span 和 Postgres repository `db.command` span；外部告警系统接入时优先把 `request_id`、`trace_id`、`run_id` 放入排障模板。
+`make check-alerts` 已进入 GitHub `Test and build` 默认门禁，用来防止仓库内 Prometheus 规则、Alertmanager 路由样例和 Grafana dashboard JSON 样例漂移。`alertmanager.example.yml` 中的 webhook URL 都使用 `example.invalid` 占位，生产部署时应替换为真实的告警路由器、IM、短信/电话或云监控地址，并在 Alertmanager Secret 中管理真实 webhook token。生产环境建议再用 Prometheus 自带的 `promtool check rules deployments/monitoring/prometheus-alerts.yml`、Alertmanager 的 `amtool check-config deployments/monitoring/alertmanager.example.yml` 和真实 Grafana 导入做最终校验。OpenTelemetry traces 已有 OTLP HTTP exporter、入站 HTTP span、主要 agent 执行内部 span、Redis 低层命令 span 和 Postgres repository `db.command` span；外部告警系统接入时优先把 `request_id`、`trace_id`、`run_id` 放入排障模板。
 
 ## Sandbox 安全边界
 
