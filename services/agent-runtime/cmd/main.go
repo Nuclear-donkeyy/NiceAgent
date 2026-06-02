@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -35,6 +38,7 @@ func main() {
 	agentEngine := engine.NewEinoAgentEngine(newSandboxExecutor(cfg, logger))
 	metrics := platform.NewMetrics("agent_runtime")
 	agentEngine.Tools.Metrics = metrics
+	configureHTTPSkillTransport(cfg, agentEngine, logger)
 	configureSkillRateLimiter(cfg, agentEngine, logger)
 	configureSkillRiskPolicy(cfg, agentEngine, logger)
 	modelProvider, err := modelProviderFromEnv(cfg, logger)
@@ -59,6 +63,37 @@ func main() {
 	if err := http.ListenAndServe(cfg.Addr, handler); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func configureHTTPSkillTransport(cfg config.Config, agentEngine *engine.EinoAgentEngine, logger *slog.Logger) {
+	if agentEngine == nil || agentEngine.Tools == nil {
+		return
+	}
+	agentEngine.Tools.AllowLocalHTTP = cfg.HTTPSkillAllowLocalTargets
+	if cfg.HTTPSkillAllowLocalTargets {
+		logger.Warn("HTTP skill local targets are enabled; use only for local smoke tests or trusted internal environments")
+	}
+	if strings.TrimSpace(cfg.HTTPSkillCAFile) == "" {
+		return
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	pemData, err := os.ReadFile(cfg.HTTPSkillCAFile)
+	if err != nil {
+		log.Fatalf("read HTTP_SKILL_CA_FILE: %v", err)
+	}
+	if ok := pool.AppendCertsFromPEM(pemData); !ok {
+		log.Fatalf("HTTP_SKILL_CA_FILE did not contain a valid PEM certificate")
+	}
+	agentEngine.Tools.Client = &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+		},
+	}
+	logger.Info("using HTTP skill custom CA bundle", "path", cfg.HTTPSkillCAFile)
 }
 
 func configureSkillRateLimiter(cfg config.Config, agentEngine *engine.EinoAgentEngine, logger *slog.Logger) {

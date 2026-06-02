@@ -334,6 +334,14 @@ Skill 存储分为四层：
 
 HTTP Skill 默认只允许 `https` URL，禁用重定向，拒绝 URL 中携带用户名/密码，并阻断 `localhost`、`.local`、metadata host、字面量 private/link-local/loopback IP。Runtime 发出请求前还会解析目标 host；如果 DNS 结果包含 private、link-local、loopback、multicast 或 unspecified 地址，会返回 `ssrf_rejected` observation，不会发起外部请求。排查 HTTP Skill 失败时优先看 observation 的 `error_type`：`ssrf_rejected` 表示策略拒绝，`upstream_dns` 表示解析失败，`upstream_tls` 表示证书或 TLS 问题。
 
+真实 HTTP Skill 后端链路可用本地 smoke 验证：
+
+```bash
+make smoke-http-skill-backend
+```
+
+该命令会启动临时 Control Plane、Agent Runtime、Sandbox Executor、fake OpenAI-compatible model server 和本地 HTTPS Skill backend。fake model 会通过 Eino tool calling 选择用户 HTTP Skill，Runtime 会调用 HTTPS backend，并把 `tool.started`、`tool.output`、`run.succeeded` 回写 Control Plane。为避免依赖公网服务，脚本会给 Runtime 显式设置 `HTTP_SKILL_ALLOW_LOCAL_TARGETS=true` 和 `HTTP_SKILL_CA_FILE=<临时自签证书>`；默认生产配置仍保持关闭，不会允许本地/private 目标。
+
 HTTP/MCP Skill `runtime_config` 支持最小 retry/rate limit：`retry.max_attempts` 默认 1、最大 5，只对 429、5xx 和网络/超时类错误重试；`rate_limit.requests_per_minute` 默认 0 表示关闭，最大 600。`SKILL_RATE_LIMIT_MODE=local` 时按单个 Agent Runtime 进程内的 skill id 做固定窗口限流；`SKILL_RATE_LIMIT_MODE=redis` 时使用 `REDIS_ADDR` 和 `SKILL_RATE_LIMIT_PREFIX` 在 Redis 中按分钟窗口计数，让多个 Runtime 副本共享同一个 skill rate limit。命中限流会返回 `rate_limited` observation，不会发起请求，并递增 `niceagent_skill_rate_limit_denials_total{kind,mode}`。仓库的 Prometheus 告警规则已包含 `NiceAgentSkillRateLimitDenials`，可用于发现第三方 API 容量不足、导入 Skill 配置过紧或模型反复调用同一工具；排障步骤、初始 `requests_per_minute` 建议和 local/redis 模式换算见 [Skill Rate Limit 容量与告警 Runbook](runbooks/skill-rate-limit-capacity.md)。仓库也提供可导入的 Grafana dashboard 样例，用于同时观察 skill rate-limit、risk policy、quota denial、tool 调用压力和模型失败。Redis 计数异常时当前策略是 fail closed，优先保护第三方 API；这不替代 Control Plane 的项目级 quota 和账单级配额。
 
 Agent Runtime 还支持 `SKILL_RISK_POLICY` 作为执行前风险门禁，默认 `allow` 保持本地开发兼容。可选值：

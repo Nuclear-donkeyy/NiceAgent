@@ -61,6 +61,7 @@ type DefaultToolBridge struct {
 	RateLimiter    SkillRateLimiter
 	SecretResolver SecretResolver
 	RiskPolicy     SkillRiskPolicy
+	AllowLocalHTTP bool
 	Metrics        *platform.Metrics
 }
 
