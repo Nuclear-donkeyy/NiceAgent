@@ -21,7 +21,7 @@ OIDC 浏览器登录接口：
 
 启用浏览器登录时需要配置 `OIDC_CLIENT_ID`、`OIDC_AUTH_URL`、`OIDC_TOKEN_URL`、`OIDC_SESSION_SECRET`；`OIDC_CLIENT_SECRET`、`OIDC_REDIRECT_URL` 和 `OIDC_SESSION_TTL_SECONDS` 可按 IdP 和部署环境配置。前端调用会话刷新和退出时会自动从 `niceagent_csrf` cookie 读取 token，并写入 `X-NiceAgent-CSRF` header。Control Plane 会把 browser session 写入 `oidc_browser_sessions`，外部 API 读取 cookie session 时会校验该 session 未撤销且未过期。
 
-`X-NiceAgent-Roles` 的最小 RBAC 语义：`owner`、`admin`、`member`、`editor`、`writer` 可以执行普通写操作；`viewer` 只能读。组织/项目成员管理只允许 `owner/admin` 操作。网关没有传 roles 时，Control Plane 优先使用 `project_members` 的持久项目角色；组织成员 API 会读取 `organization_members`；如果项目属于当前 actor 的组织，项目 API 也可以继承 `organization_members` 中的组织角色。更完整的 action 级 policy 和邀请流程仍是后续工作。
+`X-NiceAgent-Roles` 的最小 RBAC 语义：`owner`、`admin`、`member`、`editor`、`writer` 可以执行普通写操作；`viewer` 只能读。Control Plane 内置 action-level policy，会把 `chat.create`、`message.create`、`skill.create` 等 action 映射到 write requirement，把 `project.quota.update`、`project.member.upsert` 等 action 映射到 project admin requirement，把 `organization.member.upsert`、`invitation.create`、`invitation.email_suppression.delete` 等 action 映射到 organization admin requirement。网关没有传 roles 时，Control Plane 优先使用 `project_members` 的持久项目角色；组织成员 API 会读取 `organization_members`；如果项目属于当前 actor 的组织，项目 API 也可以继承 `organization_members` 中的组织角色。当前 action policy 仍是代码内置策略，后续可继续扩展为数据库或 OPA/Casbin 等外部策略源。
 
 所有 Control Plane 请求都会返回 `X-Request-ID`。如果请求头已提供合法 `X-Request-ID`，服务会透传；否则服务会生成一个新的 request id。request log 和 audit event 会记录同一个 request id，便于串联排障。
 
@@ -421,7 +421,7 @@ MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。
 
 `POST /api/invitations/{token}/accept`
 
-当前登录 actor 接受邀请。该接口允许尚未有组织/项目成员关系的已认证用户调用；接受组织邀请会写入 `organization_members`，接受项目邀请会写入 `project_members`。在 `trusted-header`/`oidc` 边界下，请求必须携带可信邮箱 claim/header，且该邮箱必须与邀请邮箱一致。当前已支持可选 SMTP 邀请邮件、可信 `issuer + sub + email` 绑定，以及最小 NiceAgent OIDC 浏览器登录/session；生产环境仍需要结合真实 IdP、回调域名、cookie 安全策略和更细 action policy 做联调。
+当前登录 actor 接受邀请。该接口允许尚未有组织/项目成员关系的已认证用户调用；接受组织邀请会写入 `organization_members`，接受项目邀请会写入 `project_members`。在 `trusted-header`/`oidc` 边界下，请求必须携带可信邮箱 claim/header，且该邮箱必须与邀请邮箱一致。当前已支持可选 SMTP 邀请邮件、可信 `issuer + sub + email` 绑定、最小 NiceAgent OIDC 浏览器登录/session，以及内置 action-level policy；生产环境仍需要结合真实 IdP、回调域名、cookie 安全策略、可配置策略源和更细 action 条件做联调。
 
 如果上游同时传入 `X-NiceAgent-Identity-Issuer` 和 `X-NiceAgent-Identity-Subject`，接受邀请前也会经过 `user_identities` 绑定校验；如果只传其中一个会返回 401，发生身份冲突会返回 409。
 

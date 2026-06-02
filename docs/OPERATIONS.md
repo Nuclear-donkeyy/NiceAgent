@@ -74,7 +74,7 @@ OIDC 浏览器登录额外配置：
 
 浏览器入口为 `GET /auth/oidc/login`；callback 成功后写入 `niceagent_session` HttpOnly cookie 和 `niceagent_csrf` cookie，后续外部 API 在没有 bearer token 时会读取该 session。前端侧栏的“登录会话”面板会触发 OIDC 登录、`POST /auth/oidc/refresh` 刷新 session，以及 `POST /auth/logout` 清理 session；这两个 POST 会把 `niceagent_csrf` cookie 写入 `X-NiceAgent-CSRF` header，Control Plane 会校验 header、cookie 和签名 session 中的 token 三者一致。Control Plane 会把 browser session 写入 `oidc_browser_sessions`，refresh 成功会撤销旧 session 并签发新 session，logout 会撤销当前 session；旧 cookie 即使被重放也会被拒绝。当前 session cookie 采用 HMAC 签名和 HttpOnly/SameSite=Lax，生产部署应使用 HTTPS、稳定域名、足够长的 `OIDC_SESSION_SECRET`，并结合 IdP 侧 refresh token 生命周期和撤销策略。
 
-最小 RBAC 优先读取 trusted header 中的 `X-NiceAgent-Roles`：`viewer` 只允许读取，`owner/admin/member/editor/writer` 允许创建聊天、发送消息、取消 run 和管理 HTTP Skill；项目成员管理只允许 `owner/admin`。缺少 roles 时会从 `project_members` 持久角色绑定中读取；仍找不到成员关系时返回 `403`，并写入 `auth.authorize` deny audit event。当前 migration 会给 `demo-user/demo-project` 写入 `owner` 角色。
+最小 RBAC 优先读取 trusted header 中的 `X-NiceAgent-Roles`：`viewer` 只允许读取，`owner/admin/member/editor/writer` 允许创建聊天、发送消息、取消 run 和管理 HTTP Skill。Control Plane 已有内置 action-level policy，把普通写 action 映射到 write requirement，把项目配置/成员 action 映射到 project admin requirement，把组织成员、邀请、邮件治理 action 映射到 organization admin requirement；拒绝时会写入带 `required_roles` 的 deny audit event。缺少 roles 时会从 `project_members` 持久角色绑定中读取；仍找不到成员关系时返回 `403`，并写入 `auth.authorize` deny audit event。当前 migration 会给 `demo-user/demo-project` 写入 `owner` 角色。
 
 项目成员管理 API 已有最小版本：
 
@@ -85,7 +85,7 @@ PATCH /api/projects/{project_id}/members/{user_id}
 DELETE /api/projects/{project_id}/members/{user_id}
 ```
 
-这些 API 只管理当前 actor 所在项目的 `project_members`，不会跨项目修改成员；第一版也不允许修改或删除自己的成员关系，避免把自己锁出项目。organization 级成员管理、邀请创建/接受、可信身份绑定、可选 SMTP 邀请邮件和 NiceAgent 最小 OIDC 浏览器登录/session 已有闭环；更细粒度 action policy 和生产 IdP 联调仍是后续工作。
+这些 API 只管理当前 actor 所在项目的 `project_members`，不会跨项目修改成员；第一版也不允许修改或删除自己的成员关系，避免把自己锁出项目。organization 级成员管理、邀请创建/接受、可信身份绑定、可选 SMTP 邀请邮件、NiceAgent 最小 OIDC 浏览器登录/session 和内置 action policy 已有闭环；可配置策略源、生产 IdP 联调和更细 action 条件仍是后续工作。
 
 邀请邮件默认关闭，适合本地开发。需要由 Control Plane 直接发送邀请邮件时配置：
 
