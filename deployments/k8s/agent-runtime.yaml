@@ -168,6 +168,11 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: SKILL_RATE_LIMIT_PREFIX
+            - name: SKILL_RISK_POLICY
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: SKILL_RISK_POLICY
             - name: RUN_QUEUE_STREAM
               valueFrom:
                 configMapKeyRef:

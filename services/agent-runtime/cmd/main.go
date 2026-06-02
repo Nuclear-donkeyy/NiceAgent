@@ -34,6 +34,7 @@ func main() {
 	defer shutdownTelemetryWithTimeout(shutdownTelemetry)
 	agentEngine := engine.NewEinoAgentEngine(newSandboxExecutor(cfg, logger))
 	configureSkillRateLimiter(cfg, agentEngine, logger)
+	configureSkillRiskPolicy(cfg, agentEngine, logger)
 	metrics := platform.NewMetrics("agent_runtime")
 	modelProvider, err := modelProviderFromEnv(cfg, logger)
 	if err != nil {
@@ -70,6 +71,18 @@ func configureSkillRateLimiter(cfg config.Config, agentEngine *engine.EinoAgentE
 		logger.Info("using redis skill rate limiter", "addr", cfg.RedisAddr, "prefix", cfg.SkillRateLimitPrefix)
 		agentEngine.Tools.RateLimiter = tools.NewRedisSkillRateLimiter(cfg.RedisAddr, cfg.SkillRateLimitPrefix)
 	}
+}
+
+func configureSkillRiskPolicy(cfg config.Config, agentEngine *engine.EinoAgentEngine, logger *slog.Logger) {
+	if agentEngine == nil || agentEngine.Tools == nil {
+		return
+	}
+	policy := tools.SkillRiskPolicy(strings.TrimSpace(cfg.SkillRiskPolicy))
+	if policy == "" {
+		policy = tools.SkillRiskPolicyAllow
+	}
+	agentEngine.Tools.RiskPolicy = policy
+	logger.Info("using skill risk policy", "policy", string(policy))
 }
 
 func shutdownTelemetryWithTimeout(shutdown func(context.Context) error) {

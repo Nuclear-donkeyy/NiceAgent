@@ -83,6 +83,7 @@ data:
   REDIS_ADDR: "niceagent-redis:6379"
   SKILL_RATE_LIMIT_MODE: "redis"
   SKILL_RATE_LIMIT_PREFIX: "niceagent:skill-rate"
+  SKILL_RISK_POLICY: "block-destructive"
   RUN_QUEUE_STREAM: "niceagent:runs"
   RUN_QUEUE_GROUP: "agent-runtimes"
   RUN_QUEUE_MAX_LEN: "0"

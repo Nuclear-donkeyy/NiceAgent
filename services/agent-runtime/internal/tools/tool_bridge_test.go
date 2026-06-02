@@ -203,6 +203,72 @@ func TestToolBridgeRegistersSandboxArtifactsIncrementally(t *testing.T) {
 	}
 }
 
+func TestToolBridgeBlocksHighRiskSkillByPolicy(t *testing.T) {
+	executor := &recordingSandboxExecutor{}
+	bridge := NewDefaultToolBridge(executor)
+	bridge.RiskPolicy = SkillRiskPolicyBlockHigh
+	sink := &eventRecordingSink{}
+	runtimeTools := bridge.BuildTools(protocol.RunRequest{
+		RunID:       "run_1",
+		WorkspaceID: "ws_1",
+		Skills: []protocol.RuntimeSkill{{
+			Skill: protocol.Skill{
+				ID:          "cli.exec",
+				Kind:        protocol.SkillKindBuiltin,
+				Scope:       protocol.SkillScopeSystem,
+				Risk:        protocol.SkillRiskHigh,
+				Annotations: `{"readOnlyHint":true,"destructiveHint":false}`,
+				Enabled:     true,
+			},
+		}},
+	}, sink)
+
+	output, err := runtimeTools[0].(einotool.InvokableTool).InvokableRun(context.Background(), `{"command":["echo","hello"]}`)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if executor.called {
+		t.Fatal("sandbox executor should not run when high risk skill is denied")
+	}
+	if !strings.Contains(output, "skill_policy_denied") || !strings.Contains(output, "block-high") {
+		t.Fatalf("policy output = %s", output)
+	}
+	if len(sink.events) != 2 || sink.events[0].typ != protocol.EventToolOutput || sink.events[1].typ != protocol.EventToolFinished {
+		t.Fatalf("events = %#v, want output and finished events", sink.events)
+	}
+}
+
+func TestToolBridgeReadOnlyPolicyUsesAnnotations(t *testing.T) {
+	bridge := NewDefaultToolBridge(&recordingSandboxExecutor{})
+	bridge.RiskPolicy = SkillRiskPolicyReadOnly
+	allowed := evaluateSkillRiskPolicy(bridge.RiskPolicy, protocol.Skill{
+		ID:          "workspace.read",
+		Risk:        protocol.SkillRiskLow,
+		Annotations: `{"readOnlyHint":true,"destructiveHint":false}`,
+	})
+	if !allowed.Allowed {
+		t.Fatalf("read-only skill denied: %#v", allowed)
+	}
+
+	destructive := evaluateSkillRiskPolicy(bridge.RiskPolicy, protocol.Skill{
+		ID:          "dangerous.tool",
+		Risk:        protocol.SkillRiskMedium,
+		Annotations: `{"readOnlyHint":true,"destructiveHint":true}`,
+	})
+	if destructive.Allowed || destructive.Reason != "skill is marked destructive" {
+		t.Fatalf("destructive decision = %#v, want denied destructive", destructive)
+	}
+
+	missingHint := evaluateSkillRiskPolicy(bridge.RiskPolicy, protocol.Skill{
+		ID:          "unknown.tool",
+		Risk:        protocol.SkillRiskLow,
+		Annotations: `{}`,
+	})
+	if missingHint.Allowed || missingHint.Reason != "skill is not marked read-only" {
+		t.Fatalf("missing hint decision = %#v, want denied missing readOnlyHint", missingHint)
+	}
+}
+
 type fakeWorkspaceReader struct {
 	artifacts    []protocol.Artifact
 	text         protocol.ArtifactTextResponse
@@ -229,6 +295,21 @@ func (recordingSink) Emit(string, protocol.RunEventType, string, any) error { re
 func (recordingSink) Complete(string, string, ...protocol.Artifact) error   { return nil }
 func (recordingSink) Fail(string, string) error                             { return nil }
 func (recordingSink) IsCanceled(string) bool                                { return false }
+
+type recordedEvent struct {
+	typ     protocol.RunEventType
+	payload any
+}
+
+type eventRecordingSink struct {
+	recordingSink
+	events []recordedEvent
+}
+
+func (s *eventRecordingSink) Emit(_ string, typ protocol.RunEventType, _ string, payload any) error {
+	s.events = append(s.events, recordedEvent{typ: typ, payload: payload})
+	return nil
+}
 
 type quotaRecordingSink struct {
 	recordingSink

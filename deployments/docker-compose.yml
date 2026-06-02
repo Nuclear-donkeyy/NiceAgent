@@ -128,6 +128,7 @@ services:
       REDIS_ADDR: redis:6379
       SKILL_RATE_LIMIT_MODE: local
       SKILL_RATE_LIMIT_PREFIX: niceagent:skill-rate
+      SKILL_RISK_POLICY: allow
       RUN_QUEUE_STREAM: niceagent:runs
       RUN_QUEUE_GROUP: agent-runtimes
       RUN_QUEUE_CONSUMER: agent-runtime-compose

@@ -60,6 +60,7 @@ type DefaultToolBridge struct {
 	Resolver       HostResolver
 	RateLimiter    SkillRateLimiter
 	SecretResolver SecretResolver
+	RiskPolicy     SkillRiskPolicy
 }
 
 func NewDefaultToolBridge(executor SandboxExecutor) *DefaultToolBridge {
@@ -69,8 +70,18 @@ func NewDefaultToolBridge(executor SandboxExecutor) *DefaultToolBridge {
 		Resolver:       net.DefaultResolver,
 		RateLimiter:    NewSkillRateLimiter(),
 		SecretResolver: LocalSecretResolver{},
+		RiskPolicy:     SkillRiskPolicyAllow,
 	}
 }
+
+type SkillRiskPolicy string
+
+const (
+	SkillRiskPolicyAllow            SkillRiskPolicy = "allow"
+	SkillRiskPolicyBlockHigh        SkillRiskPolicy = "block-high"
+	SkillRiskPolicyBlockDestructive SkillRiskPolicy = "block-destructive"
+	SkillRiskPolicyReadOnly         SkillRiskPolicy = "read-only"
+)
 
 type SkillRateLimiter interface {
 	Allow(ctx context.Context, key string, limitPerMinute int) bool
@@ -177,6 +188,9 @@ func (t *runtimeTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...tool.Option) (string, error) {
 	skill := t.runtimeSkill.Skill
 	toolName := toolNameForSkillID(skill.ID)
+	if output, allowed := t.enforceRiskPolicy(skill, toolName); !allowed {
+		return output, nil
+	}
 	if output, reserved, err := t.reserveToolQuota(ctx, skill, argumentsInJSON); !reserved {
 		if err != nil {
 			return output, nil
@@ -229,6 +243,30 @@ func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, 
 		"ok":       ok && err == nil,
 	})
 	return output, err
+}
+
+func (t *runtimeTool) enforceRiskPolicy(skill protocol.Skill, toolName string) (string, bool) {
+	decision := evaluateSkillRiskPolicy(t.bridge.RiskPolicy, skill)
+	if decision.Allowed {
+		return "", true
+	}
+	output := marshalSkillRiskPolicyObservation(decision)
+	payload := map[string]any{
+		"skill_id": skill.ID,
+		"tool":     toolName,
+		"output":   output,
+		"ok":       false,
+		"policy":   string(decision.Policy),
+		"reason":   decision.Reason,
+	}
+	_ = t.sink.Emit(t.runID, protocol.EventToolOutput, "Skill invocation blocked by risk policy.", payload)
+	_ = t.sink.Emit(t.runID, protocol.EventToolFinished, "Finished skill invocation.", map[string]any{
+		"skill_id": skill.ID,
+		"tool":     toolName,
+		"ok":       false,
+		"policy":   string(decision.Policy),
+	})
+	return output, false
 }
 
 func (t *runtimeTool) registerArtifactsFromOutput(ctx context.Context, output string) string {
@@ -487,6 +525,82 @@ func marshalToolQuotaObservation(ok bool, errorType, message, quota string) stri
 		payload["quota"] = quota
 	}
 	body, _ := json.Marshal(payload)
+	return string(body)
+}
+
+type skillRiskPolicyDecision struct {
+	Allowed bool
+	Policy  SkillRiskPolicy
+	Reason  string
+}
+
+func evaluateSkillRiskPolicy(policy SkillRiskPolicy, skill protocol.Skill) skillRiskPolicyDecision {
+	if policy == "" {
+		policy = SkillRiskPolicyAllow
+	}
+	switch policy {
+	case SkillRiskPolicyAllow:
+		return skillRiskPolicyDecision{Allowed: true, Policy: policy}
+	case SkillRiskPolicyBlockHigh:
+		if skill.Risk == protocol.SkillRiskHigh {
+			return skillRiskPolicyDecision{Policy: policy, Reason: "skill risk is high"}
+		}
+	case SkillRiskPolicyBlockDestructive:
+		if skillAnnotations(skill).DestructiveHint {
+			return skillRiskPolicyDecision{Policy: policy, Reason: "skill is marked destructive"}
+		}
+	case SkillRiskPolicyReadOnly:
+		annotations := skillAnnotations(skill)
+		if skill.Risk == protocol.SkillRiskHigh {
+			return skillRiskPolicyDecision{Policy: policy, Reason: "skill risk is high"}
+		}
+		if annotations.DestructiveHint {
+			return skillRiskPolicyDecision{Policy: policy, Reason: "skill is marked destructive"}
+		}
+		if !annotations.ReadOnlyHint {
+			return skillRiskPolicyDecision{Policy: policy, Reason: "skill is not marked read-only"}
+		}
+	default:
+		return skillRiskPolicyDecision{Allowed: true, Policy: SkillRiskPolicyAllow}
+	}
+	return skillRiskPolicyDecision{Allowed: true, Policy: policy}
+}
+
+type skillAnnotationHints struct {
+	ReadOnlyHint    bool
+	DestructiveHint bool
+}
+
+func skillAnnotations(skill protocol.Skill) skillAnnotationHints {
+	var raw map[string]any
+	_ = json.Unmarshal([]byte(skill.Annotations), &raw)
+	return skillAnnotationHints{
+		ReadOnlyHint:    boolAnnotation(raw, "readOnlyHint"),
+		DestructiveHint: boolAnnotation(raw, "destructiveHint"),
+	}
+}
+
+func boolAnnotation(values map[string]any, key string) bool {
+	if values == nil {
+		return false
+	}
+	switch value := values[key].(type) {
+	case bool:
+		return value
+	case string:
+		return strings.EqualFold(strings.TrimSpace(value), "true")
+	default:
+		return false
+	}
+}
+
+func marshalSkillRiskPolicyObservation(decision skillRiskPolicyDecision) string {
+	body, _ := json.Marshal(map[string]any{
+		"ok":         false,
+		"error_type": "skill_policy_denied",
+		"policy":     string(decision.Policy),
+		"message":    "skill invocation blocked by runtime risk policy: " + decision.Reason,
+	})
 	return string(body)
 }
 

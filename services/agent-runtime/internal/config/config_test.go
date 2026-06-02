@@ -108,3 +108,23 @@ func TestValidateRejectsUnsupportedSkillRateLimitMode(t *testing.T) {
 		t.Fatal("expected unsupported skill rate limit mode to fail validation")
 	}
 }
+
+func TestFromEnvReadsSkillRiskPolicy(t *testing.T) {
+	t.Setenv("SKILL_RISK_POLICY", "read-only")
+
+	cfg := FromEnv()
+
+	if cfg.SkillRiskPolicy != "read-only" {
+		t.Fatalf("skill risk policy = %q, want read-only", cfg.SkillRiskPolicy)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate skill risk policy: %v", err)
+	}
+}
+
+func TestValidateRejectsUnsupportedSkillRiskPolicy(t *testing.T) {
+	cfg := Config{SkillRiskPolicy: "surprise-me"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected unsupported skill risk policy to fail validation")
+	}
+}
