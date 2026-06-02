@@ -127,13 +127,20 @@ curl -X POST http://control-plane:8080/api/organizations/$ORG_ID/invitations/$IN
 
 邮件服务商的 delivery/bounce/complaint/drop 事件可以通过 `POST /api/organizations/{organization_id}/invitation-email-events` 写入 `invitation_email_events`。其中 `bounced`、`complaint` 和 `dropped` 会把对应 outbox delivery 标记为 `bounced`，把 provider 返回的原因写入 `last_error`，并写入 `invitation_email_suppressions`。后续同一组织内创建邀请时不会自动发送该邮箱，outbox worker 也不会 claim 该邮箱的 pending delivery，管理员重发会得到 `409`；`delivered` 会把 delivery 标记为 `sent`。
 
+管理员可以查询和解除当前组织的停发邮箱。解除操作不会删除历史 provider event，只会删除 suppression 记录；解除后可以再调用 resend API 重新投递仍 `pending` 且未过期的邀请：
+
+```bash
+curl http://control-plane:8080/api/organizations/$ORG_ID/invitation-email-suppressions
+curl -X DELETE http://control-plane:8080/api/organizations/$ORG_ID/invitation-email-suppressions/$SUPPRESSION_ID
+```
+
 生产接入邮件服务商 webhook 时，优先使用无登录态的 `POST /webhooks/invitation-email-events`，并配置：
 
 ```bash
 INVITATION_EMAIL_WEBHOOK_SECRET=<random-secret>
 ```
 
-调用方需要设置 `X-NiceAgent-Webhook-Signature: sha256=<hex>`，其中 `<hex>` 是 `hmac_sha256(secret, raw_body)`。未配置 secret 时 webhook 入口返回 404，签名错误返回 401。当前入口仍要求服务商回调先被转换成 NiceAgent 的 provider-neutral 事件格式；服务商原生签名校验、字段映射、suppression 解除/管理 UI 和管理后台重发按钮仍可在后续 adapter/UI 层继续补齐。
+调用方需要设置 `X-NiceAgent-Webhook-Signature: sha256=<hex>`，其中 `<hex>` 是 `hmac_sha256(secret, raw_body)`。未配置 secret 时 webhook 入口返回 404，签名错误返回 401。当前入口仍要求服务商回调先被转换成 NiceAgent 的 provider-neutral 事件格式；服务商原生签名校验、字段映射、suppression 管理 UI 和管理后台重发按钮仍可在后续 adapter/UI 层继续补齐。
 
 run 配额是最小治理边界，默认关闭。env 配置是 fallback：
 

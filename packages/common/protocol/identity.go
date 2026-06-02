@@ -174,6 +174,26 @@ type InvitationEmailEventsResponse struct {
 	Events []InvitationEmailEvent `json:"events"`
 }
 
+type InvitationEmailSuppression struct {
+	ID                string    `json:"id"`
+	OrganizationID    string    `json:"organization_id"`
+	Email             string    `json:"email"`
+	Reason            string    `json:"reason,omitempty"`
+	SourceEventID     string    `json:"source_event_id,omitempty"`
+	Provider          string    `json:"provider,omitempty"`
+	ProviderMessageID string    `json:"provider_message_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type InvitationEmailSuppressionsResponse struct {
+	Suppressions []InvitationEmailSuppression `json:"suppressions"`
+}
+
+type InvitationEmailSuppressionResponse struct {
+	Suppression InvitationEmailSuppression `json:"suppression"`
+}
+
 type ProjectMember struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`

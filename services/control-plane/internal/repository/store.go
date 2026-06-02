@@ -30,7 +30,7 @@ type Store struct {
 	invitations       map[string]protocol.Invitation
 	emailDeliveries   map[string]protocol.InvitationEmailDelivery
 	emailEvents       []protocol.InvitationEmailEvent
-	emailSuppressions map[string]invitationEmailSuppression
+	emailSuppressions map[string]protocol.InvitationEmailSuppression
 	skills            map[string]protocol.Skill
 	skillGrants       map[string][]string
 	skillSecrets      map[string]map[string]protocol.RuntimeSecret
@@ -61,7 +61,7 @@ func NewStore() *Store {
 		invitations:       map[string]protocol.Invitation{},
 		emailDeliveries:   map[string]protocol.InvitationEmailDelivery{},
 		emailEvents:       []protocol.InvitationEmailEvent{},
-		emailSuppressions: map[string]invitationEmailSuppression{},
+		emailSuppressions: map[string]protocol.InvitationEmailSuppression{},
 		skills:            map[string]protocol.Skill{},
 		skillGrants:       map[string][]string{},
 		skillSecrets:      map[string]map[string]protocol.RuntimeSecret{},
@@ -926,6 +926,45 @@ func (s *Store) IsInvitationEmailSuppressed(orgID, email string) bool {
 	return isInvitationEmailSuppressedLocked(s.emailSuppressions, orgID, email)
 }
 
+func (s *Store) ListInvitationEmailSuppressions(orgID string, limit int) []protocol.InvitationEmailSuppression {
+	orgID = strings.TrimSpace(orgID)
+	if limit <= 0 {
+		limit = 100
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	suppressions := make([]protocol.InvitationEmailSuppression, 0, len(s.emailSuppressions))
+	for _, suppression := range s.emailSuppressions {
+		if suppression.OrganizationID == orgID {
+			suppressions = append(suppressions, suppression)
+		}
+	}
+	sort.Slice(suppressions, func(i, j int) bool {
+		return suppressions[i].UpdatedAt.After(suppressions[j].UpdatedAt)
+	})
+	if len(suppressions) > limit {
+		suppressions = suppressions[:limit]
+	}
+	return suppressions
+}
+
+func (s *Store) DeleteInvitationEmailSuppression(orgID, suppressionID string) (protocol.InvitationEmailSuppression, error) {
+	orgID = strings.TrimSpace(orgID)
+	suppressionID = strings.TrimSpace(suppressionID)
+	if orgID == "" || suppressionID == "" {
+		return protocol.InvitationEmailSuppression{}, app.ErrInvalidInput
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, suppression := range s.emailSuppressions {
+		if suppression.ID == suppressionID && suppression.OrganizationID == orgID {
+			delete(s.emailSuppressions, key)
+			return suppression, nil
+		}
+	}
+	return protocol.InvitationEmailSuppression{}, app.ErrNotFound
+}
+
 func (s *Store) ListInvitationEmailEvents(orgID string, opts app.InvitationEmailEventListOptions) []protocol.InvitationEmailEvent {
 	orgID = strings.TrimSpace(orgID)
 	opts.InvitationID = strings.TrimSpace(opts.InvitationID)
@@ -968,23 +1007,11 @@ func normalizeInvitationEmailEventType(raw string) protocol.InvitationEmailEvent
 	}
 }
 
-type invitationEmailSuppression struct {
-	ID                string
-	OrganizationID    string
-	Email             string
-	Reason            string
-	SourceEventID     string
-	Provider          string
-	ProviderMessageID string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-}
-
 func invitationEmailSuppressionKey(orgID, email string) string {
 	return strings.TrimSpace(orgID) + "\x00" + strings.ToLower(strings.TrimSpace(email))
 }
 
-func isInvitationEmailSuppressedLocked(suppressions map[string]invitationEmailSuppression, orgID, email string) bool {
+func isInvitationEmailSuppressedLocked(suppressions map[string]protocol.InvitationEmailSuppression, orgID, email string) bool {
 	if strings.TrimSpace(orgID) == "" || strings.TrimSpace(email) == "" {
 		return false
 	}
@@ -998,7 +1025,7 @@ func suppressesInvitationEmail(eventType protocol.InvitationEmailEventType) bool
 		eventType == protocol.InvitationEmailEventDropped
 }
 
-func recordInvitationEmailSuppressionLocked(suppressions map[string]invitationEmailSuppression, orgID, email string, event protocol.InvitationEmailEvent) {
+func recordInvitationEmailSuppressionLocked(suppressions map[string]protocol.InvitationEmailSuppression, orgID, email string, event protocol.InvitationEmailEvent) {
 	orgID = strings.TrimSpace(orgID)
 	email = strings.ToLower(strings.TrimSpace(email))
 	if orgID == "" || email == "" {
