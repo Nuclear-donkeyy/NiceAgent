@@ -45,6 +45,14 @@ ARTIFACT_CLEANUP_DELETE_FILES=true
 
 本地文件回收只处理 `storage_backend` 为空或 `local` 的 artifact，并复用 workspace root、`output/` 路径限制、symlink escape 和 regular file 校验；不能安全解析或删除的文件会出现在响应的 `file_errors` 中。对象存储对象仍需要后续生命周期策略或归档任务处理。
 
+本地生命周期清理可用 smoke 验证：
+
+```bash
+make smoke-artifact-cleanup
+```
+
+该命令会启动临时 Control Plane，创建 run 和 workspace，登记一个已经过期的本地 artifact，然后调用 `/internal/artifacts/cleanup-expired` 并验证 artifact metadata 对外不可见、本地 `output/` 文件已删除、`file_errors` 为空。它覆盖本地文件回收闭环，不覆盖对象存储生命周期。
+
 ## 认证与配额
 
 外部 API 支持三种模式：
