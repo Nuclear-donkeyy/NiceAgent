@@ -240,16 +240,18 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if len(emailEvents) != 1 || emailEvents[0].Reason != "recipient complained" {
 		t.Fatalf("listed email events = %#v, want recorded complaint", emailEvents)
 	}
-	requeued, err := reloaded.RequeueInvitationEmail(app.DemoOrgID, orgInvitation.ID, 3)
-	if err != nil {
-		t.Fatalf("requeue invitation email: %v", err)
+	if !reloaded.IsInvitationEmailSuppressed(app.DemoOrgID, orgInvitation.Email) {
+		t.Fatalf("invitation email should be suppressed after complaint")
 	}
-	if requeued.ID != delivery.ID || requeued.Status != protocol.InvitationEmailPending || requeued.Attempts != 0 || requeued.MaxAttempts != 3 || requeued.LastError != "" || requeued.Invitation.Token != orgInvitation.Token {
-		t.Fatalf("requeued delivery = %#v", requeued)
+	if _, err := reloaded.RequeueInvitationEmail(app.DemoOrgID, orgInvitation.ID, 3); err != app.ErrInvalidInput {
+		t.Fatalf("requeue suppressed invitation email err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := reloaded.EnqueueInvitationEmail(orgInvitation, 3); err != app.ErrInvalidInput {
+		t.Fatalf("enqueue suppressed invitation email err = %v, want ErrInvalidInput", err)
 	}
 	claimedDeliveries = reloaded.ClaimDueInvitationEmails(1, "postgres-worker-resend", time.Now().UTC().Add(time.Minute))
-	if len(claimedDeliveries) != 1 || claimedDeliveries[0].ID != delivery.ID || claimedDeliveries[0].Attempts != 1 || claimedDeliveries[0].LockedBy != "postgres-worker-resend" {
-		t.Fatalf("requeued invitation email claim = %#v", claimedDeliveries)
+	if len(claimedDeliveries) != 0 {
+		t.Fatalf("suppressed delivery was claimed again: %#v", claimedDeliveries)
 	}
 	invitations := reloaded.ListInvitations(app.DemoOrgID)
 	if len(invitations) == 0 || invitations[0].Token != "" {

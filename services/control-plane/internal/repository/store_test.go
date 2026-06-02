@@ -577,16 +577,18 @@ func TestStoreManagesInvitations(t *testing.T) {
 	if len(emailEvents) != 1 || emailEvents[0].Reason != "mailbox unavailable" {
 		t.Fatalf("listed email events = %#v, want recorded bounce", emailEvents)
 	}
-	requeued, err := store.RequeueInvitationEmail(app.DemoOrgID, orgInvitation.ID, 3)
-	if err != nil {
-		t.Fatalf("requeue invitation email: %v", err)
+	if !store.IsInvitationEmailSuppressed(app.DemoOrgID, orgInvitation.Email) {
+		t.Fatalf("invitation email should be suppressed after bounce")
 	}
-	if requeued.ID != delivery.ID || requeued.Status != protocol.InvitationEmailPending || requeued.Attempts != 0 || requeued.MaxAttempts != 3 || requeued.LastError != "" || requeued.Invitation.Token != orgInvitation.Token {
-		t.Fatalf("requeued delivery = %#v", requeued)
+	if _, err := store.RequeueInvitationEmail(app.DemoOrgID, orgInvitation.ID, 3); err != app.ErrInvalidInput {
+		t.Fatalf("requeue suppressed invitation email err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := store.EnqueueInvitationEmail(orgInvitation, 3); err != app.ErrInvalidInput {
+		t.Fatalf("enqueue suppressed invitation email err = %v, want ErrInvalidInput", err)
 	}
 	claimed = store.ClaimDueInvitationEmails(1, "worker-resend", time.Now().UTC().Add(time.Minute))
-	if len(claimed) != 1 || claimed[0].ID != delivery.ID || claimed[0].Attempts != 1 || claimed[0].LockedBy != "worker-resend" {
-		t.Fatalf("requeued delivery claim = %#v", claimed)
+	if len(claimed) != 0 {
+		t.Fatalf("suppressed delivery was claimed again: %#v", claimed)
 	}
 	invitations := store.ListInvitations(app.DemoOrgID)
 	if len(invitations) != 1 || invitations[0].Token != "" {

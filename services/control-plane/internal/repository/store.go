@@ -13,62 +13,64 @@ import (
 )
 
 type Store struct {
-	mu               sync.RWMutex
-	users            map[string]protocol.User
-	identities       map[string]protocol.UserIdentity
-	userIdentities   map[string]string
-	projects         map[string]protocol.Project
-	chats            map[string]protocol.ChatSession
-	messages         map[string][]protocol.Message
-	runs             map[string]protocol.Run
-	runUsage         map[string]protocol.RunUsage
-	events           map[string][]protocol.RunEvent
-	auditEvents      []protocol.AuditEvent
-	skillInvocations []protocol.SkillInvocationRecord
-	workspaces       map[string]protocol.Workspace
-	artifacts        map[string]protocol.Artifact
-	invitations      map[string]protocol.Invitation
-	emailDeliveries  map[string]protocol.InvitationEmailDelivery
-	emailEvents      []protocol.InvitationEmailEvent
-	skills           map[string]protocol.Skill
-	skillGrants      map[string][]string
-	skillSecrets     map[string]map[string]protocol.RuntimeSecret
-	orgRoles         map[string][]string
-	projectRoles     map[string][]string
-	quotaPolicies    map[string]protocol.ProjectQuotaPolicy
-	runtimePolicies  map[string]protocol.ProjectRuntimePolicy
-	subscribers      map[string]map[chan protocol.RunEvent]struct{}
-	seq              map[string]int64
+	mu                sync.RWMutex
+	users             map[string]protocol.User
+	identities        map[string]protocol.UserIdentity
+	userIdentities    map[string]string
+	projects          map[string]protocol.Project
+	chats             map[string]protocol.ChatSession
+	messages          map[string][]protocol.Message
+	runs              map[string]protocol.Run
+	runUsage          map[string]protocol.RunUsage
+	events            map[string][]protocol.RunEvent
+	auditEvents       []protocol.AuditEvent
+	skillInvocations  []protocol.SkillInvocationRecord
+	workspaces        map[string]protocol.Workspace
+	artifacts         map[string]protocol.Artifact
+	invitations       map[string]protocol.Invitation
+	emailDeliveries   map[string]protocol.InvitationEmailDelivery
+	emailEvents       []protocol.InvitationEmailEvent
+	emailSuppressions map[string]invitationEmailSuppression
+	skills            map[string]protocol.Skill
+	skillGrants       map[string][]string
+	skillSecrets      map[string]map[string]protocol.RuntimeSecret
+	orgRoles          map[string][]string
+	projectRoles      map[string][]string
+	quotaPolicies     map[string]protocol.ProjectQuotaPolicy
+	runtimePolicies   map[string]protocol.ProjectRuntimePolicy
+	subscribers       map[string]map[chan protocol.RunEvent]struct{}
+	seq               map[string]int64
 }
 
 func NewStore() *Store {
 	now := time.Now().UTC()
 	store := &Store{
-		users:            map[string]protocol.User{},
-		identities:       map[string]protocol.UserIdentity{},
-		userIdentities:   map[string]string{},
-		projects:         map[string]protocol.Project{},
-		chats:            map[string]protocol.ChatSession{},
-		messages:         map[string][]protocol.Message{},
-		runs:             map[string]protocol.Run{},
-		runUsage:         map[string]protocol.RunUsage{},
-		events:           map[string][]protocol.RunEvent{},
-		auditEvents:      []protocol.AuditEvent{},
-		skillInvocations: []protocol.SkillInvocationRecord{},
-		workspaces:       map[string]protocol.Workspace{},
-		artifacts:        map[string]protocol.Artifact{},
-		invitations:      map[string]protocol.Invitation{},
-		emailDeliveries:  map[string]protocol.InvitationEmailDelivery{},
-		emailEvents:      []protocol.InvitationEmailEvent{},
-		skills:           map[string]protocol.Skill{},
-		skillGrants:      map[string][]string{},
-		skillSecrets:     map[string]map[string]protocol.RuntimeSecret{},
-		orgRoles:         map[string][]string{},
-		projectRoles:     map[string][]string{},
-		quotaPolicies:    map[string]protocol.ProjectQuotaPolicy{},
-		runtimePolicies:  map[string]protocol.ProjectRuntimePolicy{},
-		subscribers:      map[string]map[chan protocol.RunEvent]struct{}{},
-		seq:              map[string]int64{},
+		users:             map[string]protocol.User{},
+		identities:        map[string]protocol.UserIdentity{},
+		userIdentities:    map[string]string{},
+		projects:          map[string]protocol.Project{},
+		chats:             map[string]protocol.ChatSession{},
+		messages:          map[string][]protocol.Message{},
+		runs:              map[string]protocol.Run{},
+		runUsage:          map[string]protocol.RunUsage{},
+		events:            map[string][]protocol.RunEvent{},
+		auditEvents:       []protocol.AuditEvent{},
+		skillInvocations:  []protocol.SkillInvocationRecord{},
+		workspaces:        map[string]protocol.Workspace{},
+		artifacts:         map[string]protocol.Artifact{},
+		invitations:       map[string]protocol.Invitation{},
+		emailDeliveries:   map[string]protocol.InvitationEmailDelivery{},
+		emailEvents:       []protocol.InvitationEmailEvent{},
+		emailSuppressions: map[string]invitationEmailSuppression{},
+		skills:            map[string]protocol.Skill{},
+		skillGrants:       map[string][]string{},
+		skillSecrets:      map[string]map[string]protocol.RuntimeSecret{},
+		orgRoles:          map[string][]string{},
+		projectRoles:      map[string][]string{},
+		quotaPolicies:     map[string]protocol.ProjectQuotaPolicy{},
+		runtimePolicies:   map[string]protocol.ProjectRuntimePolicy{},
+		subscribers:       map[string]map[chan protocol.RunEvent]struct{}{},
+		seq:               map[string]int64{},
 	}
 	store.users["demo-user"] = protocol.User{
 		ID:        "demo-user",
@@ -657,6 +659,9 @@ func (s *Store) EnqueueInvitationEmail(invitation protocol.Invitation, maxAttemp
 	now := time.Now().UTC()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if isInvitationEmailSuppressedLocked(s.emailSuppressions, invitation.OrganizationID, invitation.Email) {
+		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
+	}
 	for _, existing := range s.emailDeliveries {
 		if existing.InvitationID == invitation.ID {
 			existing.Invitation = invitation
@@ -694,6 +699,9 @@ func (s *Store) RequeueInvitationEmail(orgID, invitationID string, maxAttempts i
 		return protocol.InvitationEmailDelivery{}, app.ErrNotFound
 	}
 	if invitation.Status != protocol.InvitationPending || !invitation.ExpiresAt.After(now) {
+		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
+	}
+	if isInvitationEmailSuppressedLocked(s.emailSuppressions, invitation.OrganizationID, invitation.Email) {
 		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
 	}
 	var delivery protocol.InvitationEmailDelivery
@@ -765,6 +773,15 @@ func (s *Store) ClaimDueInvitationEmails(limit int, lockedBy string, lockUntil t
 		if !ok {
 			delivery.Status = protocol.InvitationEmailFailed
 			delivery.LastError = "invitation not found"
+			delivery.UpdatedAt = now
+			s.emailDeliveries[id] = delivery
+			continue
+		}
+		if isInvitationEmailSuppressedLocked(s.emailSuppressions, invitation.OrganizationID, invitation.Email) {
+			delivery.Status = protocol.InvitationEmailFailed
+			delivery.LastError = "invitation email suppressed"
+			delivery.LockedBy = ""
+			delivery.LockedUntil = nil
 			delivery.UpdatedAt = now
 			s.emailDeliveries[id] = delivery
 			continue
@@ -855,7 +872,8 @@ func (s *Store) RecordInvitationEmailEvent(input protocol.InvitationEmailEventIn
 	if invitationID == "" {
 		return protocol.InvitationEmailEvent{}, app.ErrInvalidInput
 	}
-	if _, ok := invitationByID(s.invitations, invitationID); !ok {
+	invitation, ok := invitationByID(s.invitations, invitationID)
+	if !ok {
 		return protocol.InvitationEmailEvent{}, app.ErrNotFound
 	}
 	if deliveryID != "" {
@@ -896,7 +914,16 @@ func (s *Store) RecordInvitationEmailEvent(input protocol.InvitationEmailEventIn
 			s.emailDeliveries[deliveryID] = delivery
 		}
 	}
+	if suppressesInvitationEmail(eventType) {
+		recordInvitationEmailSuppressionLocked(s.emailSuppressions, invitation.OrganizationID, invitation.Email, event)
+	}
 	return event, nil
+}
+
+func (s *Store) IsInvitationEmailSuppressed(orgID, email string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return isInvitationEmailSuppressedLocked(s.emailSuppressions, orgID, email)
 }
 
 func (s *Store) ListInvitationEmailEvents(orgID string, opts app.InvitationEmailEventListOptions) []protocol.InvitationEmailEvent {
@@ -939,6 +966,59 @@ func normalizeInvitationEmailEventType(raw string) protocol.InvitationEmailEvent
 	default:
 		return ""
 	}
+}
+
+type invitationEmailSuppression struct {
+	ID                string
+	OrganizationID    string
+	Email             string
+	Reason            string
+	SourceEventID     string
+	Provider          string
+	ProviderMessageID string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+func invitationEmailSuppressionKey(orgID, email string) string {
+	return strings.TrimSpace(orgID) + "\x00" + strings.ToLower(strings.TrimSpace(email))
+}
+
+func isInvitationEmailSuppressedLocked(suppressions map[string]invitationEmailSuppression, orgID, email string) bool {
+	if strings.TrimSpace(orgID) == "" || strings.TrimSpace(email) == "" {
+		return false
+	}
+	_, ok := suppressions[invitationEmailSuppressionKey(orgID, email)]
+	return ok
+}
+
+func suppressesInvitationEmail(eventType protocol.InvitationEmailEventType) bool {
+	return eventType == protocol.InvitationEmailEventBounced ||
+		eventType == protocol.InvitationEmailEventComplaint ||
+		eventType == protocol.InvitationEmailEventDropped
+}
+
+func recordInvitationEmailSuppressionLocked(suppressions map[string]invitationEmailSuppression, orgID, email string, event protocol.InvitationEmailEvent) {
+	orgID = strings.TrimSpace(orgID)
+	email = strings.ToLower(strings.TrimSpace(email))
+	if orgID == "" || email == "" {
+		return
+	}
+	now := time.Now().UTC()
+	key := invitationEmailSuppressionKey(orgID, email)
+	suppression := suppressions[key]
+	if suppression.ID == "" {
+		suppression.ID = platform.NewID("invmailsup")
+		suppression.OrganizationID = orgID
+		suppression.Email = email
+		suppression.CreatedAt = now
+	}
+	suppression.Reason = firstNonEmpty(event.Reason, string(event.Type))
+	suppression.SourceEventID = event.ID
+	suppression.Provider = event.Provider
+	suppression.ProviderMessageID = event.ProviderMessageID
+	suppression.UpdatedAt = now
+	suppressions[key] = suppression
 }
 
 func cloneMap(input map[string]any) map[string]any {

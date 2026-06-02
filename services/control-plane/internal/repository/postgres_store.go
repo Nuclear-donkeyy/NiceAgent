@@ -947,6 +947,9 @@ func (s *PostgresStore) EnqueueInvitationEmail(invitation protocol.Invitation, m
 	if maxAttempts <= 0 {
 		maxAttempts = 1
 	}
+	if s.IsInvitationEmailSuppressed(invitation.OrganizationID, invitation.Email) {
+		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
+	}
 	now := time.Now().UTC()
 	delivery := protocol.InvitationEmailDelivery{
 		ID:            platform.NewID("invmail"),
@@ -1025,6 +1028,17 @@ func (s *PostgresStore) RequeueInvitationEmail(orgID, invitationID string, maxAt
 	if invitation.Status != protocol.InvitationPending || !invitation.ExpiresAt.After(now) {
 		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
 	}
+	var suppressed bool
+	if err := tx.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM invitation_email_suppressions
+			WHERE organization_id = $1 AND email = lower($2)
+		)`, invitation.OrganizationID, invitation.Email).Scan(&suppressed); err != nil {
+		return protocol.InvitationEmailDelivery{}, err
+	}
+	if suppressed {
+		return protocol.InvitationEmailDelivery{}, app.ErrInvalidInput
+	}
 
 	delivery := protocol.InvitationEmailDelivery{Invitation: invitation}
 	row := tx.QueryRow(`
@@ -1079,6 +1093,10 @@ func (s *PostgresStore) ClaimDueInvitationEmails(limit int, lockedBy string, loc
 			  AND d.attempts < d.max_attempts
 			  AND i.status = 'pending'
 			  AND i.expires_at > now()
+			  AND NOT EXISTS (
+			    SELECT 1 FROM invitation_email_suppressions s
+			    WHERE s.organization_id = i.organization_id AND s.email = lower(i.email)
+			  )
 			ORDER BY d.next_attempt_at ASC, d.created_at ASC
 			LIMIT $1
 			FOR UPDATE SKIP LOCKED
@@ -1196,12 +1214,13 @@ func (s *PostgresStore) RecordInvitationEmailEvent(input protocol.InvitationEmai
 	if invitationID == "" {
 		return protocol.InvitationEmailEvent{}, app.ErrInvalidInput
 	}
-	var exists bool
-	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM invitations WHERE id = $1)`, invitationID).Scan(&exists); err != nil {
+	var invitationOrgID string
+	var invitationEmail string
+	if err := tx.QueryRow(`SELECT organization_id, email FROM invitations WHERE id = $1`, invitationID).Scan(&invitationOrgID, &invitationEmail); err != nil {
+		if err == sql.ErrNoRows {
+			return protocol.InvitationEmailEvent{}, app.ErrNotFound
+		}
 		return protocol.InvitationEmailEvent{}, err
-	}
-	if !exists {
-		return protocol.InvitationEmailEvent{}, app.ErrNotFound
 	}
 	if deliveryID != "" {
 		var deliveryInvitationID string
@@ -1253,10 +1272,52 @@ func (s *PostgresStore) RecordInvitationEmailEvent(input protocol.InvitationEmai
 			}
 		}
 	}
+	if suppressesInvitationEmail(eventType) {
+		if _, err := tx.Exec(`
+			INSERT INTO invitation_email_suppressions (
+				id, organization_id, email, reason, source_event_id, provider, provider_message_id, created_at, updated_at
+			)
+			VALUES ($1, $2, lower($3), $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8, $9)
+			ON CONFLICT (organization_id, email)
+			DO UPDATE SET reason = EXCLUDED.reason,
+			              source_event_id = EXCLUDED.source_event_id,
+			              provider = EXCLUDED.provider,
+			              provider_message_id = EXCLUDED.provider_message_id,
+			              updated_at = EXCLUDED.updated_at`,
+			platform.NewID("invmailsup"),
+			invitationOrgID,
+			invitationEmail,
+			firstNonEmpty(event.Reason, string(event.Type)),
+			event.ID,
+			event.Provider,
+			event.ProviderMessageID,
+			now,
+			now,
+		); err != nil {
+			return protocol.InvitationEmailEvent{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return protocol.InvitationEmailEvent{}, err
 	}
 	return event, nil
+}
+
+func (s *PostgresStore) IsInvitationEmailSuppressed(orgID, email string) bool {
+	orgID = strings.TrimSpace(orgID)
+	email = strings.ToLower(strings.TrimSpace(email))
+	if orgID == "" || email == "" {
+		return false
+	}
+	var suppressed bool
+	if err := s.queryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM invitation_email_suppressions
+			WHERE organization_id = $1 AND email = $2
+		)`, orgID, email).Scan(&suppressed); err != nil {
+		return false
+	}
+	return suppressed
 }
 
 func (s *PostgresStore) ListInvitationEmailEvents(orgID string, opts app.InvitationEmailEventListOptions) []protocol.InvitationEmailEvent {
