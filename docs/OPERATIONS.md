@@ -161,6 +161,8 @@ GET /api/projects/{project_id}/usage?window=24h|7d|30d
 
 `GET /api/projects/{project_id}/usage` 提供最小账单维度统计：按 provider、model、currency、是否估算和 token estimator 聚合 run usage，并返回窗口总计。当前支持 `window=24h|7d|30d` 或 `since=<RFC3339>`，只允许 `owner/admin` 访问。这个接口可以用于运营看板、成本排查和后续账单导出，但还不是强一致计费系统；更完整 tokenizer 覆盖、按租户/模型的分布式 token bucket 和外部告警仍是后续工作。
 
+前端左侧“项目容量”区域会读取 `GET /api/projects/{project_id}/quota` 和 `GET /api/projects/{project_id}/usage?window=24h`，展示模型 token、tool calls、sandbox 秒数、run 数、artifact 大小和 provider/model 使用分布。这是最小容量视图，适合本地与早期运营排查；生产级容量看板仍需要接入 Prometheus/Grafana、告警联动和容量建议。
+
 三服务内部 API 使用同一个 bearer token：
 
 ```bash

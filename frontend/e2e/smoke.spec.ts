@@ -57,6 +57,9 @@ test("smoke covers chat, CLI state, artifacts, HTTP/MCP Skill and refresh recove
 
   await expect(page.getByRole("heading", { name: "远端任务演示" })).toBeVisible();
   await expect(page.getByText("先检查一下工作区")).toBeVisible();
+  await expect(page.getByText("项目容量")).toBeVisible();
+  await expect(page.getByText("1,200 / 10,000")).toBeVisible();
+  await expect(page.getByText("3 / 100")).toBeVisible();
   await expect(page.getByRole("link", { name: "下载 summary.txt" })).toBeVisible();
 
   await page.getByPlaceholder("发送消息给远端 agent").fill("请用 CLI 获取信息并生成报告");
@@ -425,6 +428,87 @@ async function installApiMocks(page: Page) {
       await json(route, {
         skills: [systemSkill, ...userSkills],
         groups: { system: [systemSkill], user: userSkills },
+      });
+      return;
+    }
+
+    if (method === "GET" && path === "/api/projects/demo-project/runtime-policy") {
+      await json(route, {
+        policy: {
+          project_id: "demo-project",
+          skill_risk_policy: "allow",
+          created_at: now,
+          updated_at: now,
+        },
+      });
+      return;
+    }
+
+    if (method === "GET" && path === "/api/projects/demo-project/quota") {
+      await json(route, {
+        policy: {
+          project_id: "demo-project",
+          max_concurrent_runs: 2,
+          max_runs_per_hour: 20,
+          max_model_tokens_per_day: 10_000,
+          max_tool_calls_per_day: 100,
+          max_sandbox_seconds_per_day: 3_600,
+          created_at: now,
+          updated_at: now,
+        },
+      });
+      return;
+    }
+
+    if (method === "GET" && path === "/api/projects/demo-project/usage") {
+      await json(route, {
+        project_id: "demo-project",
+        window: url.searchParams.get("window") || "24h",
+        since: now,
+        buckets: [
+          {
+            provider: "mock",
+            model: "mock",
+            run_count: 2,
+            input_tokens: 500,
+            output_tokens: 700,
+            reasoning_tokens: 0,
+            cached_tokens: 0,
+            total_tokens: 1_200,
+            cost: 0,
+            latency_millis: 120,
+            retry_count: 0,
+            tool_calls: 3,
+            tool_errors: 0,
+            sandbox_commands: 1,
+            sandbox_duration_millis: 2_000,
+            sandbox_output_bytes: 256,
+            sandbox_cpu_millis: 0,
+            sandbox_memory_max_bytes: 0,
+            artifact_count: 1,
+            artifact_bytes: 2_048,
+          },
+        ],
+        total: {
+          run_count: 2,
+          input_tokens: 500,
+          output_tokens: 700,
+          reasoning_tokens: 0,
+          cached_tokens: 0,
+          total_tokens: 1_200,
+          cost: 0,
+          latency_millis: 120,
+          retry_count: 0,
+          tool_calls: 3,
+          tool_errors: 0,
+          sandbox_commands: 1,
+          sandbox_duration_millis: 2_000,
+          sandbox_output_bytes: 256,
+          sandbox_cpu_millis: 0,
+          sandbox_memory_max_bytes: 0,
+          artifact_count: 1,
+          artifact_bytes: 2_048,
+        },
       });
       return;
     }
