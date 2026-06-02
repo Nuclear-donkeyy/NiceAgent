@@ -3,8 +3,13 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -770,6 +775,92 @@ func TestServerMapsSESInvitationEmailSNSWebhook(t *testing.T) {
 	}
 	if !store.IsInvitationEmailSuppressed(app.DemoOrgID, invitation.Email) {
 		t.Fatal("ses complained invitation email was not suppressed")
+	}
+}
+
+func TestServerRecordsMailgunSignedInvitationEmailWebhook(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{
+		InvitationWebhookVerification: InvitationWebhookVerification{
+			MailgunSigningKey: "mailgun-signing-key",
+		},
+	})
+	invitation, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email: "mailgun-bounced@example.test",
+		Role:  "viewer",
+	})
+	if err != nil {
+		t.Fatalf("create invitation: %v", err)
+	}
+	delivery, err := store.EnqueueInvitationEmail(invitation, 1)
+	if err != nil {
+		t.Fatalf("enqueue invitation email: %v", err)
+	}
+	timestamp := "1717238400"
+	token := "mailgun-token-a"
+	body := []byte(`{
+		"signature":{
+			"timestamp":"` + timestamp + `",
+			"token":"` + token + `",
+			"signature":"` + signedMailgunWebhook("mailgun-signing-key", timestamp, token) + `"
+		},
+		"event-data":{
+			"event":"failed",
+			"reason":"bounce",
+			"message":{"headers":{"message-id":"mailgun-message-a"}},
+			"user-variables":{"invitation_id":"` + invitation.ID + `","delivery_id":"` + delivery.ID + `"}
+		}
+	}`)
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/invitation-email-events", bytes.NewReader(body))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("mailgun webhook status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var output protocol.InvitationEmailEventResponse
+	decodeJSON(t, response.Body, &output)
+	if output.Event.Provider != "mailgun" || output.Event.Type != protocol.InvitationEmailEventBounced || output.Event.DeliveryID != delivery.ID {
+		t.Fatalf("mailgun event = %#v", output.Event)
+	}
+}
+
+func TestServerRejectsInvalidMailgunNativeSignature(t *testing.T) {
+	_, handler := newTestHandlerWithOptions(ServerOptions{
+		InvitationWebhookVerification: InvitationWebhookVerification{
+			MailgunSigningKey: "mailgun-signing-key",
+		},
+	})
+	body := []byte(`{"signature":{"timestamp":"1717238400","token":"mailgun-token-a","signature":"bad"},"event-data":{"event":"failed"}}`)
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/invitation-email-events", bytes.NewReader(body))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid mailgun webhook status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestVerifySendGridWebhookSignature(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal public key: %v", err)
+	}
+	publicKey := base64.StdEncoding.EncodeToString(publicDER)
+	body := []byte(`[{"event":"delivered"}]`)
+	timestamp := "1717238400"
+	digest := sha256.Sum256(append([]byte(timestamp), body...))
+	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, digest[:])
+	if err != nil {
+		t.Fatalf("sign sendgrid payload: %v", err)
+	}
+	encodedSignature := base64.StdEncoding.EncodeToString(signature)
+	if !verifySendGridWebhookSignature(publicKey, body, timestamp, encodedSignature) {
+		t.Fatal("sendgrid signature was not accepted")
+	}
+	if verifySendGridWebhookSignature(publicKey, append(body, 'x'), timestamp, encodedSignature) {
+		t.Fatal("tampered sendgrid body was accepted")
 	}
 }
 
@@ -2683,6 +2774,12 @@ func signedWebhookBody(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write(body)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func signedMailgunWebhook(signingKey, timestamp, token string) string {
+	mac := hmac.New(sha256.New, []byte(signingKey))
+	_, _ = mac.Write([]byte(timestamp + token))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func decodeJSON(t *testing.T, body io.Reader, target any) {

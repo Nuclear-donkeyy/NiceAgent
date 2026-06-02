@@ -470,7 +470,7 @@ MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。
 
 `POST /webhooks/invitation-email-events`
 
-邮件服务商 webhook 入口。该接口不使用用户登录态，而是要求配置 `INVITATION_EMAIL_WEBHOOK_SECRET` 并携带 `X-NiceAgent-Webhook-Signature`。签名算法为 `sha256=<hex(hmac_sha256(secret, raw_body))>`；未配置 secret 时接口返回 404，签名错误返回 401。
+邮件服务商 webhook 入口。该接口不使用用户登录态，而是要求至少配置一种 webhook 验证方式：`INVITATION_EMAIL_WEBHOOK_SECRET`、`INVITATION_EMAIL_SENDGRID_PUBLIC_KEY` 或 `INVITATION_EMAIL_MAILGUN_SIGNING_KEY`。NiceAgent 兼容签名算法为 `X-NiceAgent-Webhook-Signature: sha256=<hex(hmac_sha256(secret, raw_body))>`；SendGrid 原生签名使用 `X-Twilio-Email-Event-Webhook-Timestamp` 和 `X-Twilio-Email-Event-Webhook-Signature`；Mailgun 原生签名使用 payload 中的 `signature.timestamp`、`signature.token` 和 `signature.signature`。未配置任何验证方式时接口返回 404，签名错误返回 401。
 
 请求体继续兼容上面的 provider-neutral `InvitationEmailEventInput`。此外，webhook adapter 已支持最小服务商原生字段映射：
 
@@ -482,6 +482,8 @@ MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。
 
 ```http
 X-NiceAgent-Webhook-Signature: sha256=...
+X-Twilio-Email-Event-Webhook-Timestamp: 1717238400
+X-Twilio-Email-Event-Webhook-Signature: ...
 ```
 
 `GET /api/organizations/{organization_id}/invitation-email-suppressions`

@@ -60,6 +60,8 @@ type Config struct {
 	InvitationEmailRetryAttempts     int
 	InvitationEmailRetryInitialDelay int
 	InvitationEmailWebhookSecret     string
+	InvitationEmailSendGridPublicKey string
+	InvitationEmailMailgunSigningKey string
 	InternalAPIToken                 string
 	InternalTokenRequired            bool
 	MaxConcurrentRuns                int
@@ -129,6 +131,8 @@ func FromEnv() Config {
 		InvitationEmailRetryAttempts:     intEnv("INVITATION_EMAIL_RETRY_ATTEMPTS", 1),
 		InvitationEmailRetryInitialDelay: intEnv("INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS", 250),
 		InvitationEmailWebhookSecret:     os.Getenv("INVITATION_EMAIL_WEBHOOK_SECRET"),
+		InvitationEmailSendGridPublicKey: strings.TrimSpace(os.Getenv("INVITATION_EMAIL_SENDGRID_PUBLIC_KEY")),
+		InvitationEmailMailgunSigningKey: os.Getenv("INVITATION_EMAIL_MAILGUN_SIGNING_KEY"),
 		InternalAPIToken:                 strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN")),
 		InternalTokenRequired:            boolEnv("INTERNAL_API_TOKEN_REQUIRED", isNonLocalEnvironment(environment)),
 		MaxConcurrentRuns:                intEnv("QUOTA_MAX_CONCURRENT_RUNS", 0),

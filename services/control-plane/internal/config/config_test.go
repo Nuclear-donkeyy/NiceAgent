@@ -153,6 +153,8 @@ func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	t.Setenv("INVITATION_EMAIL_RETRY_ATTEMPTS", "3")
 	t.Setenv("INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS", "10")
 	t.Setenv("INVITATION_EMAIL_WEBHOOK_SECRET", "webhook-secret")
+	t.Setenv("INVITATION_EMAIL_SENDGRID_PUBLIC_KEY", "sendgrid-public-key")
+	t.Setenv("INVITATION_EMAIL_MAILGUN_SIGNING_KEY", "mailgun-signing-key")
 
 	cfg := FromEnv()
 
@@ -170,6 +172,9 @@ func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	}
 	if cfg.InvitationEmailWebhookSecret != "webhook-secret" {
 		t.Fatalf("invitation webhook secret = %q", cfg.InvitationEmailWebhookSecret)
+	}
+	if cfg.InvitationEmailSendGridPublicKey != "sendgrid-public-key" || cfg.InvitationEmailMailgunSigningKey != "mailgun-signing-key" {
+		t.Fatalf("invitation webhook provider keys = sendgrid:%q mailgun:%q", cfg.InvitationEmailSendGridPublicKey, cfg.InvitationEmailMailgunSigningKey)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected smtp config to validate: %v", err)
