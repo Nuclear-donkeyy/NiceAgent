@@ -9,6 +9,7 @@ import (
 
 	einotool "github.com/cloudwego/eino/components/tool"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 )
 
@@ -207,6 +208,7 @@ func TestToolBridgeBlocksHighRiskSkillByPolicy(t *testing.T) {
 	executor := &recordingSandboxExecutor{}
 	bridge := NewDefaultToolBridge(executor)
 	bridge.RiskPolicy = SkillRiskPolicyBlockHigh
+	bridge.Metrics = platform.NewMetrics("agent_runtime_test")
 	sink := &eventRecordingSink{}
 	runtimeTools := bridge.BuildTools(protocol.RunRequest{
 		RunID:       "run_1",
@@ -235,6 +237,10 @@ func TestToolBridgeBlocksHighRiskSkillByPolicy(t *testing.T) {
 	}
 	if len(sink.events) != 2 || sink.events[0].typ != protocol.EventToolOutput || sink.events[1].typ != protocol.EventToolFinished {
 		t.Fatalf("events = %#v, want output and finished events", sink.events)
+	}
+	renderedMetrics := bridge.Metrics.Render()
+	if !strings.Contains(renderedMetrics, `niceagent_skill_policy_denials_total{service="agent_runtime_test",kind="builtin",policy="block-high",reason="high_risk",risk="high"} 1`) {
+		t.Fatalf("policy denial metric missing:\n%s", renderedMetrics)
 	}
 }
 

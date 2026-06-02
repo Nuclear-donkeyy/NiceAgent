@@ -62,7 +62,7 @@ HTTP dispatcher 已经把完整 `RuntimeSkill` 下发给 Runtime。Redis queue �
 
 - Vault、KMS、External Secrets 等生产 secret resolver。
 - 完整 MCP stdio/SSE/streamable HTTP transport、initialize/session negotiation 和动态 tool list invalidation。
-- 风险策略告警、容量看板和 Redis rate limit 容量/告警。
+- 容量看板和 Redis rate limit 容量/告警。
 
 ## 扩展点
 
@@ -128,7 +128,7 @@ OpenAPI/MCP 导入放在下一层：
 1. 最小生产闭环：schema validation、HTTP Skill 错误模型、secret redaction、Runtime 输入校验。
 2. Secret resolver：本地开发继续支持 `encrypted_value`，`env://` 和 `file://` secret_ref 已可用；生产继续补阿里云 KMS/Vault/External Secrets 原生 resolver。
 3. 导入能力：OpenAPI JSON/YAML dry-run API 与最小保存向导已落地；MCP manifest preview、保存 API、前端导入入口和 Runtime 最小 HTTP JSON-RPC 执行 adapter 已落地；继续实现完整 MCP transport/session 支持和更完整前端导入体验。
-4. 治理能力：Runtime 进程内和 Redis 跨副本 per-skill rate limit 已有最小闭环；`SKILL_RISK_POLICY` 已提供 Runtime 默认风险门禁；项目级 `skill_risk_policy` 持久化、API、下发和前端展示已有最小闭环；`audit_events` 和 `skill_invocations` 已记录脱敏 skill invocation 起止轨迹；后续继续补策略告警、容量看板和更完整 metrics/tracing。
+4. 治理能力：Runtime 进程内和 Redis 跨副本 per-skill rate limit 已有最小闭环；`SKILL_RISK_POLICY` 已提供 Runtime 默认风险门禁；项目级 `skill_risk_policy` 持久化、API、下发和前端展示已有最小闭环；风险策略命中会进入 `niceagent_skill_policy_denials_total`，并已有 Prometheus 告警样例；`audit_events` 和 `skill_invocations` 已记录脱敏 skill invocation 起止轨迹；后续继续补容量看板和更完整 metrics/tracing。
 
 ## 风险与验收
 

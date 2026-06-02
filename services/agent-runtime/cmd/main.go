@@ -33,9 +33,10 @@ func main() {
 	}
 	defer shutdownTelemetryWithTimeout(shutdownTelemetry)
 	agentEngine := engine.NewEinoAgentEngine(newSandboxExecutor(cfg, logger))
+	metrics := platform.NewMetrics("agent_runtime")
+	agentEngine.Tools.Metrics = metrics
 	configureSkillRateLimiter(cfg, agentEngine, logger)
 	configureSkillRiskPolicy(cfg, agentEngine, logger)
-	metrics := platform.NewMetrics("agent_runtime")
 	modelProvider, err := modelProviderFromEnv(cfg, logger)
 	if err != nil {
 		log.Fatal(err)

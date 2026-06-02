@@ -61,6 +61,7 @@ type DefaultToolBridge struct {
 	RateLimiter    SkillRateLimiter
 	SecretResolver SecretResolver
 	RiskPolicy     SkillRiskPolicy
+	Metrics        *platform.Metrics
 }
 
 func NewDefaultToolBridge(executor SandboxExecutor) *DefaultToolBridge {
@@ -258,6 +259,12 @@ func (t *runtimeTool) enforceRiskPolicy(skill protocol.Skill, toolName string) (
 	if decision.Allowed {
 		return "", true
 	}
+	t.bridge.Metrics.IncCounter("niceagent_skill_policy_denials_total", platform.Labels{
+		"policy": string(decision.Policy),
+		"reason": safeMetricReason(decision.Reason),
+		"risk":   string(skill.Risk),
+		"kind":   string(skill.Kind),
+	})
 	output := marshalSkillRiskPolicyObservation(decision)
 	payload := map[string]any{
 		"skill_id": skill.ID,
@@ -610,6 +617,20 @@ func marshalSkillRiskPolicyObservation(decision skillRiskPolicyDecision) string 
 		"message":    "skill invocation blocked by runtime risk policy: " + decision.Reason,
 	})
 	return string(body)
+}
+
+func safeMetricReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	switch reason {
+	case "skill risk is high":
+		return "high_risk"
+	case "skill is marked destructive":
+		return "destructive"
+	case "skill is not marked read-only":
+		return "not_read_only"
+	default:
+		return "unknown"
+	}
 }
 
 func toolNameForSkillID(id string) string {
