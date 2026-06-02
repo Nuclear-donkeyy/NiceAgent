@@ -134,13 +134,15 @@ curl http://control-plane:8080/api/organizations/$ORG_ID/invitation-email-suppre
 curl -X DELETE http://control-plane:8080/api/organizations/$ORG_ID/invitation-email-suppressions/$SUPPRESSION_ID
 ```
 
+前端侧栏的“邮件治理”面板会调用同一组 API，展示当前 demo 组织的停发邮箱并支持解除停发。真实多组织登录接入后，面板需要从 actor/session 读取当前组织，而不是使用 demo 组织。
+
 生产接入邮件服务商 webhook 时，优先使用无登录态的 `POST /webhooks/invitation-email-events`，并配置：
 
 ```bash
 INVITATION_EMAIL_WEBHOOK_SECRET=<random-secret>
 ```
 
-调用方需要设置 `X-NiceAgent-Webhook-Signature: sha256=<hex>`，其中 `<hex>` 是 `hmac_sha256(secret, raw_body)`。未配置 secret 时 webhook 入口返回 404，签名错误返回 401。当前入口仍要求服务商回调先被转换成 NiceAgent 的 provider-neutral 事件格式；服务商原生签名校验、字段映射、suppression 管理 UI 和管理后台重发按钮仍可在后续 adapter/UI 层继续补齐。
+调用方需要设置 `X-NiceAgent-Webhook-Signature: sha256=<hex>`，其中 `<hex>` 是 `hmac_sha256(secret, raw_body)`。未配置 secret 时 webhook 入口返回 404，签名错误返回 401。当前入口仍要求服务商回调先被转换成 NiceAgent 的 provider-neutral 事件格式；服务商原生签名校验、字段映射和管理后台重发按钮仍可在后续 adapter/UI 层继续补齐。
 
 run 配额是最小治理边界，默认关闭。env 配置是 fallback：
 
