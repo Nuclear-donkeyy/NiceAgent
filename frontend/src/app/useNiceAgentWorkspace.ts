@@ -7,7 +7,12 @@ import * as runApi from "../api/runs";
 import * as skillApi from "../api/skills";
 import type { Artifact } from "../domain/artifact";
 import type { ChatSession, Message } from "../domain/chat";
-import type { ProjectRuntimePolicy, SkillRiskPolicy } from "../domain/project";
+import type {
+  ProjectQuotaPolicy,
+  ProjectRuntimePolicy,
+  ProjectUsageResponse,
+  SkillRiskPolicy,
+} from "../domain/project";
 import type {
   HTTPSkillInput,
   MCPImportCreateInput,
@@ -29,6 +34,14 @@ const defaultRuntimePolicy: ProjectRuntimePolicy = {
   project_id: demoProjectID,
   skill_risk_policy: "allow",
 };
+const defaultQuotaPolicy: ProjectQuotaPolicy = {
+  project_id: demoProjectID,
+  max_concurrent_runs: 0,
+  max_runs_per_hour: 0,
+  max_model_tokens_per_day: 0,
+  max_tool_calls_per_day: 0,
+  max_sandbox_seconds_per_day: 0,
+};
 
 export function useNiceAgentWorkspace() {
   const [chats, setChats] = useState<ChatSession[]>([]);
@@ -38,6 +51,10 @@ export function useNiceAgentWorkspace() {
   const [skillGroups, setSkillGroups] = useState<SkillGroups>(emptySkillGroups);
   const [runtimePolicy, setRuntimePolicy] = useState<ProjectRuntimePolicy>(defaultRuntimePolicy);
   const [runtimePolicyLoading, setRuntimePolicyLoading] = useState(false);
+  const [quotaPolicy, setQuotaPolicy] = useState<ProjectQuotaPolicy>(defaultQuotaPolicy);
+  const [projectUsage, setProjectUsage] = useState<ProjectUsageResponse | null>(null);
+  const [capacityLoading, setCapacityLoading] = useState(false);
+  const [capacityError, setCapacityError] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatus>("idle");
   const [assistantDraft, setAssistantDraft] = useState("");
@@ -93,7 +110,7 @@ export function useNiceAgentWorkspace() {
 
   async function boot() {
     try {
-      await Promise.all([loadChats(true), loadSkills(), loadRuntimePolicy()]);
+      await Promise.all([loadChats(true), loadSkills(), loadRuntimePolicy(), loadCapacity()]);
     } catch (error) {
       setNotice(errorMessage(error));
     }
@@ -130,6 +147,25 @@ export function useNiceAgentWorkspace() {
       setNotice(`运行策略加载失败：${message}`);
     } finally {
       setRuntimePolicyLoading(false);
+    }
+  }
+
+  async function loadCapacity() {
+    setCapacityLoading(true);
+    setCapacityError("");
+    try {
+      const [quota, usage] = await Promise.all([
+        projectApi.getProjectQuotaPolicy(demoProjectID),
+        projectApi.getProjectUsage(demoProjectID, "24h"),
+      ]);
+      setQuotaPolicy(quota);
+      setProjectUsage(usage);
+    } catch (error) {
+      const message = errorMessage(error);
+      setCapacityError(message);
+      setNotice(`容量数据加载失败：${message}`);
+    } finally {
+      setCapacityLoading(false);
     }
   }
 
@@ -366,6 +402,7 @@ export function useNiceAgentWorkspace() {
             source.close();
             setAgentStatus(next === "succeeded" ? "Agent 已完成回复" : statusText[next] || next);
             if (refreshOnTerminal) {
+              void loadCapacity();
               scheduleChatRefresh(chatIdForRefresh);
             }
           }
@@ -435,6 +472,8 @@ export function useNiceAgentWorkspace() {
     artifacts,
     canCancel,
     cancelRun,
+    capacityError,
+    capacityLoading,
     chatError,
     chatQuery,
     chats,
@@ -448,7 +487,10 @@ export function useNiceAgentWorkspace() {
     input,
     messageLoading,
     notice,
+    projectUsage,
+    quotaPolicy,
     refreshChats: () => loadChats(false),
+    refreshCapacity: loadCapacity,
     runtimePolicy,
     runtimePolicyLoading,
     runStatus,

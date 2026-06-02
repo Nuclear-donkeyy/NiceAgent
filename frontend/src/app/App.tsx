@@ -2,6 +2,7 @@ import { ChatList } from "../features/chats/ChatList";
 import { Composer } from "../features/conversation/Composer";
 import { MessageList } from "../features/conversation/MessageList";
 import { ArtifactList } from "../features/artifacts/ArtifactList";
+import { CapacityPanel } from "../features/capacity/CapacityPanel";
 import { SkillPanel } from "../features/skills/SkillPanel";
 import { statusText } from "../domain/labels";
 import { useNiceAgentWorkspace } from "./useNiceAgentWorkspace";
@@ -41,6 +42,14 @@ export default function App() {
           onSelectChat={(chatID) => void workspace.selectChat(chatID)}
           onShowArchivedChange={workspace.setShowArchived}
           showArchived={workspace.showArchived}
+        />
+
+        <CapacityPanel
+          error={workspace.capacityError}
+          loading={workspace.capacityLoading}
+          policy={workspace.quotaPolicy}
+          usage={workspace.projectUsage}
+          onRefresh={() => void workspace.refreshCapacity()}
         />
 
         <SkillPanel
