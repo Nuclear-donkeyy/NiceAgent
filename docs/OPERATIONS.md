@@ -180,7 +180,7 @@ QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL=
 
 `QUOTA_COUNTER_MODE=repository` 是默认模式，直接从 Postgres/memory 统计 run 状态。`QUOTA_COUNTER_MODE=redis` 会在创建 run 前用 Redis 对 `max_concurrent_runs` 和 `max_runs_per_hour` 做预占：并发计数在 run 进入 `succeeded/failed/canceled` 后释放，小时窗口计数保留到窗口 TTL。Redis quota 只作为高频计数和预占层，项目 policy 和最终 run 状态仍以 Control Plane repository 为权威。
 
-Redis quota 支持两种模型 token 预占模式。`QUOTA_MODEL_TOKEN_RESERVATION_MODE=fixed` 时，如果 `QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN>0`，每个 run 创建前会按固定值预占每日 token；`dynamic` 时，Control Plane 会按当前用户消息长度估算 input tokens，并叠加 `QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER` 作为输出缓冲。run 成功时按真实 `RunUsage.total_tokens` 结算差额；失败或取消时按 0 用量释放预占。动态模式比固定值更贴近请求大小，但无法预知模型真实输出。`QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL` 可指定动态预占使用的 tokenizer 模型，例如 `gpt-4o` 使用 `o200k_base`，`deepseek-chat` 和多数 OpenAI-compatible chat 模型使用 `cl100k_base` 兼容估算；为空或未知模型时回退到 `heuristic_rune_div4`。估算路径会在 `RunUsage.token_estimator` 中标记当前估算器。更精细的按模型/租户/账单维度 token bucket 仍属于后续工作。
+Redis quota 支持两种模型 token 预占模式。`QUOTA_MODEL_TOKEN_RESERVATION_MODE=fixed` 时，如果 `QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN>0`，每个 run 创建前会按固定值预占每日 token；`dynamic` 时，Control Plane 会按当前用户消息长度估算 input tokens，并叠加 `QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER` 作为输出缓冲。run 成功时按真实 `RunUsage.total_tokens` 结算差额；失败或取消时按 0 用量释放预占。动态模式比固定值更贴近请求大小，但无法预知模型真实输出。`QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL` 可指定动态预占使用的 tokenizer 模型，例如 `gpt-4o`、`gpt-5-*`、`o3-*` 和 `o4-*` 使用 `o200k_base`，`deepseek-*`、`qwen-*`、`kimi-*`、`moonshot-*`、`doubao-*`、`glm-*`、`mistral-*`、`llama-*` 等常见 OpenAI-compatible 模型族使用 `cl100k_base` 兼容估算；为空或未知模型时回退到 `heuristic_rune_div4`。估算路径会在 `RunUsage.token_estimator` 中标记当前估算器。更精细的按模型/租户/账单维度 token bucket 和 provider 官方 tokenizer 仍属于后续工作。
 
 项目级持久 quota policy 已有最小版本：
 
@@ -247,7 +247,7 @@ make smoke-deepseek-runtime
 
 该命令会启动临时 Agent Runtime，开启一次主动 model health probe，并轮询 `/healthz` 的 `model_provider` 快照。未设置 key 或模型名时会安全 `SKIP`，避免 CI 或本地默认检查产生真实模型调用。详细流程、结果记录和错误分类见 [DeepSeek Runtime 冒烟 Runbook](runbooks/deepseek-runtime-smoke.md)。
 
-Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，优先采集 provider response 中的真实 token usage；缺失 usage 时按 run 的输入/输出文本做估算并标记 `estimated=true`、`token_estimator`，可为 `tiktoken_o200k_base`、`tiktoken_cl100k_base` 或 `heuristic_rune_div4`。如果配置了价格，Runtime 会在 `RunUsage.cost` 和 `RunUsage.currency` 中回写本次 run 的估算费用；模型价格仍以服务商官方控制台/文档为准，不在仓库中硬编码。
+Runtime 当前通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 执行 agentic loop。模型输出统一写成 `model.token` run event，tool 调用统一写成 `tool.started`、`tool.output`、`tool.finished`。OpenAI-compatible provider 通过 `eino-ext` OpenAI ChatModel 接入，优先采集 provider response 中的真实 token usage；缺失 usage 时按 run 的输入/输出文本做估算并标记 `estimated=true`、`token_estimator`，可为 `tiktoken_o200k_base`、`tiktoken_cl100k_base` 或 `heuristic_rune_div4`。其中 `o200k_base` 覆盖 OpenAI 新一代 `gpt-4o`、`gpt-4.1`、`gpt-4.5`、`gpt-5` 和 `o*` 模型族；`cl100k_base` 覆盖 DeepSeek、Qwen、Moonshot/Kimi、Doubao、GLM、Mistral、Llama 等 OpenAI-compatible 模型族的兼容估算。真实账单仍以 provider 返回的 usage 或官方控制台为准。如果配置了价格，Runtime 会在 `RunUsage.cost` 和 `RunUsage.currency` 中回写本次 run 的估算费用；模型价格仍以服务商官方控制台/文档为准，不在仓库中硬编码。
 
 Control Plane 会把内部 `tool.started` 和 `tool.finished` event 同步写入 `audit_events`，形成 run 级 skill invocation 起止轨迹。审计 metadata 只保留 `skill_id`、tool 名、event id/seq 和完成状态，不复制 `tool.output` 原始内容；排查原始 observation 时仍以 run event 权威记录为准，并注意其中可能包含第三方响应文本。
 
