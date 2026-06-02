@@ -32,14 +32,15 @@ type Run struct {
 }
 
 type RunRequest struct {
-	RunID       string         `json:"run_id"`
-	ChatID      string         `json:"chat_id"`
-	UserID      string         `json:"user_id"`
-	WorkspaceID string         `json:"workspace_id"`
-	AttemptID   string         `json:"attempt_id,omitempty"`
-	SkillIDs    []string       `json:"skill_ids"`
-	Skills      []RuntimeSkill `json:"skills,omitempty"`
-	ModelPolicy string         `json:"model_policy"`
+	RunID           string         `json:"run_id"`
+	ChatID          string         `json:"chat_id"`
+	UserID          string         `json:"user_id"`
+	WorkspaceID     string         `json:"workspace_id"`
+	AttemptID       string         `json:"attempt_id,omitempty"`
+	SkillIDs        []string       `json:"skill_ids"`
+	Skills          []RuntimeSkill `json:"skills,omitempty"`
+	ModelPolicy     string         `json:"model_policy"`
+	SkillRiskPolicy string         `json:"skill_risk_policy,omitempty"`
 }
 
 type RunExecutionRequest struct {

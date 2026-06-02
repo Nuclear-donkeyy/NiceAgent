@@ -919,6 +919,68 @@ func TestServerProjectQuotaManagementRequiresAdminRole(t *testing.T) {
 	}
 }
 
+func TestServerManagesProjectRuntimePolicy(t *testing.T) {
+	store := repository.NewStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := NewServerWithOptions(store, dispatchFunc(func(context.Context, protocol.Run, string) error { return nil }), log, ServerOptions{}).Handler()
+
+	getPolicy := httptest.NewRequest(http.MethodGet, "/api/projects/"+app.DemoProjectID+"/runtime-policy", nil)
+	getPolicyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(getPolicyResponse, getPolicy)
+	if getPolicyResponse.Code != http.StatusOK {
+		t.Fatalf("get runtime policy status = %d, body = %s", getPolicyResponse.Code, getPolicyResponse.Body.String())
+	}
+	var getOutput protocol.ProjectRuntimePolicyResponse
+	decodeJSON(t, getPolicyResponse.Body, &getOutput)
+	if getOutput.Policy.ProjectID != app.DemoProjectID || getOutput.Policy.SkillRiskPolicy != protocol.SkillRiskPolicyAllow {
+		t.Fatalf("default runtime policy = %#v", getOutput.Policy)
+	}
+
+	updatePolicy := httptest.NewRequest(http.MethodPatch, "/api/projects/"+app.DemoProjectID+"/runtime-policy", jsonBody(t, protocol.ProjectRuntimePolicyInput{
+		SkillRiskPolicy: protocol.SkillRiskPolicyReadOnly,
+	}))
+	updatePolicyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(updatePolicyResponse, updatePolicy)
+	if updatePolicyResponse.Code != http.StatusOK {
+		t.Fatalf("update runtime policy status = %d, body = %s", updatePolicyResponse.Code, updatePolicyResponse.Body.String())
+	}
+	var updateOutput protocol.ProjectRuntimePolicyResponse
+	decodeJSON(t, updatePolicyResponse.Body, &updateOutput)
+	if updateOutput.Policy.SkillRiskPolicy != protocol.SkillRiskPolicyReadOnly {
+		t.Fatalf("updated runtime policy = %#v", updateOutput.Policy)
+	}
+	if got, ok := store.GetProjectRuntimePolicy(app.DemoProjectID); !ok || got.SkillRiskPolicy != protocol.SkillRiskPolicyReadOnly {
+		t.Fatalf("stored runtime policy = %#v ok=%v", got, ok)
+	}
+
+	invalid := httptest.NewRequest(http.MethodPatch, "/api/projects/"+app.DemoProjectID+"/runtime-policy", jsonBody(t, protocol.ProjectRuntimePolicyInput{
+		SkillRiskPolicy: "dangerous",
+	}))
+	invalidResponse := httptest.NewRecorder()
+	handler.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid runtime policy status = %d, body = %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+}
+
+func TestServerProjectRuntimePolicyRequiresAdminRole(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectRole("viewer-user", "project-a", "viewer")
+
+	updatePolicy := httptest.NewRequest(http.MethodPatch, "/api/projects/project-a/runtime-policy", jsonBody(t, protocol.ProjectRuntimePolicyInput{
+		SkillRiskPolicy: protocol.SkillRiskPolicyReadOnly,
+	}))
+	setTrustedActorWithoutRoles(updatePolicy, "viewer-user", "project-a")
+	updatePolicyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(updatePolicyResponse, updatePolicy)
+	if updatePolicyResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer update runtime policy status = %d, body = %s", updatePolicyResponse.Code, updatePolicyResponse.Body.String())
+	}
+	if !strings.Contains(updatePolicyResponse.Body.String(), "管理项目") {
+		t.Fatalf("viewer runtime policy deny body = %s", updatePolicyResponse.Body.String())
+	}
+}
+
 func TestServerReturnsProjectUsageBuckets(t *testing.T) {
 	store := repository.NewStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

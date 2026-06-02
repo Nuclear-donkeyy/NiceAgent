@@ -204,3 +204,23 @@
   padding: 8px;
   white-space: pre-wrap;
 }
+
+.policyBox {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding: 10px 0 14px;
+}
+
+.policyBox select {
+  background: var(--white);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+  padding: 9px 10px;
+}
+
+.policyBox select:focus {
+  border-color: var(--black);
+}

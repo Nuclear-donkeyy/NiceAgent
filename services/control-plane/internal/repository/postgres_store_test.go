@@ -346,6 +346,19 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if !ok || gotPolicy.MaxConcurrentRuns != 3 || gotPolicy.MaxToolCallsPerDay != 33 || gotPolicy.MaxSandboxSecondsPerDay != 44 {
 		t.Fatalf("got quota policy = %#v ok=%v", gotPolicy, ok)
 	}
+	runtimePolicy, err := reloaded.SetProjectRuntimePolicy(app.DemoProjectID, protocol.ProjectRuntimePolicyInput{
+		SkillRiskPolicy: protocol.SkillRiskPolicyReadOnly,
+	})
+	if err != nil {
+		t.Fatalf("set project runtime policy: %v", err)
+	}
+	if runtimePolicy.SkillRiskPolicy != protocol.SkillRiskPolicyReadOnly {
+		t.Fatalf("runtime policy = %#v", runtimePolicy)
+	}
+	gotRuntimePolicy, ok := reloaded.GetProjectRuntimePolicy(app.DemoProjectID)
+	if !ok || gotRuntimePolicy.SkillRiskPolicy != protocol.SkillRiskPolicyReadOnly {
+		t.Fatalf("got runtime policy = %#v ok=%v", gotRuntimePolicy, ok)
+	}
 
 	_, canceledRun, err := reloaded.AddUserMessage(chat.ID, "demo-user", "cancel me")
 	if err != nil {

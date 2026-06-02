@@ -53,7 +53,7 @@ Agent Runtime 是独立部署的 agent 实例服务，不应由 Control Plane �
 
 当前主路径已经接入 Eino ADK `ChatModelAgent + Runner`。Runtime 会接收 Control Plane 下发的 `RuntimeSkill` manifest，通过 ToolBridge 构造 Eino tools；系统 CLI、用户 HTTP Skill 和用户 MCP Skill 都作为 tool 被 agentic loop 调用。模型层已切到 Eino 原生 `ToolCallingChatModel`：mock provider 直接实现 Eino 接口，OpenAI-compatible provider 通过 `github.com/cloudwego/eino-ext/components/model/openai` 接入。
 
-ToolBridge 会在调用具体工具前执行统一门禁：按 RunRequest 下发的 skill 白名单、schema、SSRF/secret 规则、rate limit 和可选 `SKILL_RISK_POLICY` 风险策略判断是否允许执行。被风险策略拒绝的调用只返回 agent 可读 observation 和审计事件，不触达外部 HTTP endpoint 或 Sandbox。
+ToolBridge 会在调用具体工具前执行统一门禁：按 RunRequest 下发的 skill 白名单、schema、SSRF/secret 规则、rate limit 和风险策略判断是否允许执行。风险策略默认来自 Agent Runtime 的 `SKILL_RISK_POLICY`，也可由 Control Plane 的项目级 Runtime policy 下发到 `RunRequest.skill_risk_policy` 并覆盖单次 run。被风险策略拒绝的调用只返回 agent 可读 observation 和审计事件，不触达外部 HTTP endpoint 或 Sandbox。
 
 MCP Skill 当前是最小 HTTP JSON-RPC adapter：Control Plane 从 `tools/list` manifest 保存 tool schema、annotations 和 server runtime config；Runtime 执行时调用远端 `tools/call`。该路径尚未实现 MCP stdio/SSE transport、initialize/session negotiation 或动态 `tools/list_changed` cache invalidation。
 
