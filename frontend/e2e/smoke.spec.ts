@@ -128,8 +128,8 @@ test("smoke covers chat, CLI state, artifacts, HTTP/MCP Skill and refresh recove
     }),
   );
   await page.getByRole("button", { name: "预览 MCP 能力" }).click();
-  await expect(page.getByText("lookup_docs")).toBeVisible();
-  await expect(page.getByText("查询内部文档")).toBeVisible();
+  await expect(page.locator("strong").filter({ hasText: "lookup_docs" })).toBeVisible();
+  await expect(page.locator("p").filter({ hasText: "查询内部文档" })).toBeVisible();
   await page.getByLabel("MCP Server URL").fill("https://mcp.example.com/rpc");
   await page.getByRole("button", { name: "保存选中的 MCP Skill" }).click();
   const mcpSkillCard = page.locator("article").filter({ hasText: "lookup_docs" });
@@ -224,7 +224,7 @@ async function installMockEventSource(page: Page) {
           setTimeout(() => this.emit(item), item.delay);
         }
         if (this.url === "/api/runs/run-cli/events" && this.openCount === 1) {
-          setTimeout(() => this.disconnect(), 220);
+          setTimeout(() => this.disconnect(), 900);
         }
       }
 
@@ -237,7 +237,7 @@ async function installMockEventSource(page: Page) {
           );
         return [
           {
-            delay: 20,
+            delay: 500,
             type: "tool.started",
             data: runEvent(2, "evt-tool-duplicate", "run-cli", "tool.started", "重复工具事件", {
               command: ["curl", "https://example.com"],
@@ -254,7 +254,7 @@ async function installMockEventSource(page: Page) {
         const errorEvent = new Event("error");
         this.onerror?.(errorEvent);
         this.dispatchEvent(errorEvent);
-        setTimeout(() => this.open(), 180);
+        setTimeout(() => this.open(), 600);
       }
 
       private emit(item: StreamItem) {
