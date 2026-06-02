@@ -18,7 +18,7 @@
 当前系统已经具备可演示链路，但还不能被描述为生产可用的远端 agent 平台：
 
 - Runtime 的模型层已经切到 Eino 原生 ChatModel，下一步仍需继续压实真实模型 tool calling 的端到端覆盖，并减少 provider-specific 兼容风险。
-- Skill registry 已有 metadata、version、grant、secret 存储模型，HTTP Skill schema/runtime_config 校验、结构化错误、SSRF 防护、retry、进程内或 Redis 跨副本 skill rate limit、rate limit denial metric 和 Prometheus 告警样例、Runtime 级 `SKILL_RISK_POLICY` 风险门禁、项目级 `skill_risk_policy` 配置与前端展示、风险策略 denial metric 和 Prometheus 告警样例、`env://` / 受限 `file://` secret ref、OpenAPI JSON/YAML preview 和选中 operation 保存为 HTTP Skill 的最小导入向导已有闭环；MCP tools/list 已支持预览、保存为用户 MCP Skill，并可通过最小 HTTP JSON-RPC `tools/call` adapter 执行；KMS/Vault/External Secrets 原生接入、完整 MCP transport/session 支持和更细审计仍待补齐。
+- Skill registry 已有 metadata、version、grant、secret 存储模型，HTTP Skill schema/runtime_config 校验、结构化错误、SSRF 防护、retry、进程内或 Redis 跨副本 skill rate limit、rate limit denial metric、Prometheus 告警样例和容量排障 runbook、Runtime 级 `SKILL_RISK_POLICY` 风险门禁、项目级 `skill_risk_policy` 配置与前端展示、风险策略 denial metric 和 Prometheus 告警样例、`env://` / 受限 `file://` secret ref、OpenAPI JSON/YAML preview 和选中 operation 保存为 HTTP Skill 的最小导入向导已有闭环；MCP tools/list 已支持预览、保存为用户 MCP Skill，并可通过最小 HTTP JSON-RPC `tools/call` adapter 执行；KMS/Vault/External Secrets 原生接入、完整 MCP transport/session 支持和更细审计仍待补齐。
 - Sandbox 还不是强隔离生产沙箱。当前 CLI 策略偏本地开发可用，K8s 已有基础 ingress/egress NetworkPolicy、ResourceQuota、LimitRange 和 securityContext；artifact 已支持可选过期时间、metadata 清理和本地文件回收，但仍需容器默认执行路径、workspace 隔离、对象存储归档/生命周期、RuntimeClass/独立节点池和云侧出口控制。
 - 前端已经隐藏原始事件面板，并支持 artifact 展示、下载、图片/PDF/音频/视频预览以及 CSV/TSV 表格内容预览；skill 配置校验、端到端测试和错误恢复体验还需要补强。
 - Control Plane 仍缺 NiceAgent 内置 OIDC/session/JWT、强一致账单级 quota、真实值班系统接入和生产级容量看板；前端已有基于项目 quota policy 与 24h usage 的最小容量视图。邀请创建/接受、可信身份绑定、可选 SMTP 邮件、投递模板、进程内内存队列、durable outbox、重试、provider-neutral 退信/投诉/丢弃事件记录和 HMAC webhook 入口已有最小闭环；Redis Runtime worker、重试/lease、跨副本 event fanout、审计、结构化 request log、基础 metrics/tracing、Prometheus 告警规则、Alertmanager 路由样例、Redis 低层命令 spans 和 Postgres repository spans 已有最小闭环。
@@ -54,7 +54,7 @@
 
 - 为 HTTP Skill 增加 input schema validation 和更明确的 runtime_config 校验。
 - 标准化 HTTP Skill 错误输出：网络错误、超时、非 2xx、无效响应都转为 agent 可读 observation 和审计事件。
-- HTTP Skill SSRF 防护已覆盖静态 URL 校验和 DNS 解析后的私网地址拦截；per-skill retry、Runtime 进程内 rate limit、可选 Redis 跨副本 rate limit、rate limit denial 告警样例、Runtime 默认风险门禁、项目级风险策略配置和前端最小容量看板已有闭环，后续继续补告警排障模板、容量建议和更细审计。
+- HTTP Skill SSRF 防护已覆盖静态 URL 校验和 DNS 解析后的私网地址拦截；per-skill retry、Runtime 进程内 rate limit、可选 Redis 跨副本 rate limit、rate limit denial 告警样例、容量排障 runbook、Runtime 默认风险门禁、项目级风险策略配置和前端最小容量看板已有闭环，后续继续补生产级 Grafana 看板和更细审计。
 - 抽象 secret resolver：本地继续支持 `encrypted_value`、`env://` 和受限 `file://`，生产路径预留阿里云 KMS、Vault 或 External Secrets。
 - OpenAPI JSON/YAML preview 和保存接口已能把 `GET/POST` operation 转成 HTTP Skill；MCP tools/list preview 和保存接口已能把选中的 MCP tool 转成用户 MCP Skill，并由 Runtime 通过 HTTP JSON-RPC `tools/call` 执行；前端已支持 Secret Ref 绑定，后续继续补完整 MCP transport/session 支持和更细审计。
 
