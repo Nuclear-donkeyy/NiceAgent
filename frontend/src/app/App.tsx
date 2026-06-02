@@ -2,6 +2,7 @@ import { ChatList } from "../features/chats/ChatList";
 import { Composer } from "../features/conversation/Composer";
 import { MessageList } from "../features/conversation/MessageList";
 import { ArtifactList } from "../features/artifacts/ArtifactList";
+import { AuthPanel } from "../features/auth/AuthPanel";
 import { CapacityPanel } from "../features/capacity/CapacityPanel";
 import { InvitationSuppressionPanel } from "../features/invitations/InvitationSuppressionPanel";
 import { SkillPanel } from "../features/skills/SkillPanel";
@@ -43,6 +44,13 @@ export default function App() {
           onSelectChat={(chatID) => void workspace.selectChat(chatID)}
           onShowArchivedChange={workspace.setShowArchived}
           showArchived={workspace.showArchived}
+        />
+
+        <AuthPanel
+          loading={workspace.authLoading}
+          onLogin={workspace.startOIDCLogin}
+          onLogout={() => void workspace.logout()}
+          onRefreshSession={() => void workspace.refreshOIDCSession()}
         />
 
         <CapacityPanel

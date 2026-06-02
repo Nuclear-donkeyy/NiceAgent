@@ -22,7 +22,7 @@
 1. DeepSeek 真实 key 冒烟与模型运营记录：在现有 OpenAI-compatible + Eino `ToolCallingChatModel` 路径上完成可复现 smoke，不提交密钥。
 2. Skill 治理补强：在已有 HTTP Skill schema validation、错误模型、secret redaction、OpenAPI preview/save、MCP manifest preview API/前端 dry-run 面板、per-skill retry、进程内/Redis 跨副本 rate limit 基础上，继续补 MCP 保存/执行 adapter 和更细审计。
 3. Sandbox 生产化：把 Compose/部署默认路径从 local executor 推向 container executor，在已有 K8s egress NetworkPolicy 和镜像白名单基础上补云侧出口控制、强隔离和更完整 artifact 预览。
-4. 平台化收口：在 `AUTH_MODE=trusted-header|oidc`、ActorContext、OIDC 浏览器 login/session/refresh token、RBAC、邀请、quota、metrics/tracing、告警规则、Alertmanager 路由样例、durable 邀请邮件 outbox、邀请邮件重发 API、provider-neutral 退信事件记录、HMAC webhook 入口、SendGrid/SES/Mailgun 最小原生字段映射、组织级自动停发、suppression 查询/解除 API 和前端“邮件治理”管理面板已有最小闭环基础上，补前端登录入口、更完整 tokenizer 覆盖、服务商原生签名校验和真实值班系统接入。
+4. 平台化收口：在 `AUTH_MODE=trusted-header|oidc`、ActorContext、OIDC 浏览器 login/session/refresh token、前端登录会话入口、RBAC、邀请、quota、metrics/tracing、告警规则、Alertmanager 路由样例、durable 邀请邮件 outbox、邀请邮件重发 API、provider-neutral 退信事件记录、HMAC webhook 入口、SendGrid/SES/Mailgun 最小原生字段映射、组织级自动停发、suppression 查询/解除 API 和前端“邮件治理”管理面板已有最小闭环基础上，补更完整 tokenizer 覆盖、服务商原生签名校验和真实值班系统接入。
 5. Redis 与多副本韧性：在 Redis Streams worker、attempt/lease/DLQ、consumer group lag 指标、跨 Control Plane nudge fanout 和 CI smoke 已落地后，继续补 Redis HA、容量压测和外部告警。
 6. 前端真实链路 E2E：在 artifact、skill 表单、mock smoke 和三服务 UI smoke 已有基础上，补真实 HTTP Skill 后端流和复杂 SSE 断线重连场景。
 

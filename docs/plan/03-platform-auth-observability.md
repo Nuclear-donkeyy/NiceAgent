@@ -47,7 +47,7 @@ Repository 仍保留偏底层的数据访问接口，权限主要在 HTTP handle
 
 仍待落地能力：
 
-- 前端登录入口、生产 IdP 联调、session 撤销/轮换策略和更细 action-level policy。
+- 生产 IdP 联调、session 撤销/轮换策略和更细 action-level policy。
 - 邀请邮件 subject/body 模板、进程内内存队列、durable outbox、投递重试、邀请邮件重发 API、provider-neutral delivery/bounce/complaint/drop 事件记录、HMAC webhook 入口、SendGrid/SES/Mailgun 最小原生字段映射、组织级自动停发、suppression 查询/解除 API 和前端“邮件治理”管理面板已落地；更细 action-level policy、服务商原生签名校验和管理后台 UI 仍待补。
 - 更多 provider 原生 tokenizer 覆盖、强一致账单级 quota、真实值班系统接入和容量看板。
 
@@ -129,7 +129,7 @@ RBAC 当前最小角色和后续第一版角色：
 ## 分阶段落地
 
 1. Auth middleware：增加 `AUTH_MODE=demo|trusted-header|oidc` 和 `ActorContext`，外部 API 保持行为不变。
-2. 身份/成员表：membership migration、当前组织/项目成员管理 API、邀请创建/接受 API、`user_identities` 绑定已落地并保留 demo 数据；组织成员 API 与同组织项目 API 已支持缺少 header roles 时从 `organization_members` 解析角色；邀请接受已校验可信邮箱 claim；NiceAgent OIDC 浏览器 login/session/refresh token 已有最小闭环；可选 SMTP 邀请邮件、subject/body 模板、进程内内存队列、durable outbox、重试、邀请邮件重发 API、provider-neutral 退信事件记录、HMAC webhook 入口、SendGrid/SES/Mailgun 最小原生字段映射、组织级自动停发、suppression 查询/解除 API 和前端“邮件治理”管理面板已有最小闭环；前端登录入口、服务商原生签名校验和管理后台 UI 仍待补。
+2. 身份/成员表：membership migration、当前组织/项目成员管理 API、邀请创建/接受 API、`user_identities` 绑定已落地并保留 demo 数据；组织成员 API 与同组织项目 API 已支持缺少 header roles 时从 `organization_members` 解析角色；邀请接受已校验可信邮箱 claim；NiceAgent OIDC 浏览器 login/session/refresh token 和前端登录会话入口已有最小闭环；可选 SMTP 邀请邮件、subject/body 模板、进程内内存队列、durable outbox、重试、邀请邮件重发 API、provider-neutral 退信事件记录、HMAC webhook 入口、SendGrid/SES/Mailgun 最小原生字段映射、组织级自动停发、suppression 查询/解除 API 和前端“邮件治理”管理面板已有最小闭环；服务商原生签名校验和管理后台 UI 仍待补。
 3. API 去 demo 常量：所有 handler 从 `ActorContext` 获取 user/project。
 4. RBAC：加入 resource/action 检查和基础角色。
 5. Quota：项目级持久 policy、Redis 并发/小时窗口预占、固定/动态模型 token 预扣/结算、run 级 tool/sandbox/artifact 用量记录和 tool/sandbox 最小实时预占已落地；后续需要支持更多 provider 原生 tokenizer 覆盖、分布式强一致 token bucket 和账单维度聚合。
