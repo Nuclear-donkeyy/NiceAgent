@@ -44,10 +44,10 @@ func tokenizerForModel(model string) (*tiktoken.Tiktoken, string, bool) {
 		return nil, "", false
 	}
 	switch {
-	case strings.HasPrefix(model, "gpt-4o"), strings.HasPrefix(model, "gpt-4.1"), strings.HasPrefix(model, "gpt-4.5"):
+	case hasAnyModelPrefix(model, o200kModelPrefixes):
 		encoding, err := tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
 		return encoding, TiktokenO200KTokenEstimator, err == nil
-	case strings.HasPrefix(model, "gpt-"), strings.HasPrefix(model, "deepseek"):
+	case hasAnyModelPrefix(model, cl100kCompatibleModelPrefixes):
 		encoding, err := tiktoken.GetEncoding(tiktoken.MODEL_CL100K_BASE)
 		return encoding, TiktokenCL100KTokenEstimator, err == nil
 	default:
@@ -56,4 +56,42 @@ func tokenizerForModel(model string) (*tiktoken.Tiktoken, string, bool) {
 		}
 		return nil, "", false
 	}
+}
+
+var o200kModelPrefixes = []string{
+	"chatgpt-4o",
+	"gpt-4o",
+	"gpt-4.1",
+	"gpt-4.5",
+	"gpt-5",
+	"o1",
+	"o3",
+	"o4",
+}
+
+var cl100kCompatibleModelPrefixes = []string{
+	"gpt-",
+	"deepseek",
+	"qwen",
+	"qwq",
+	"moonshot",
+	"kimi",
+	"doubao",
+	"glm",
+	"chatglm",
+	"yi-",
+	"baichuan",
+	"mistral",
+	"mixtral",
+	"codestral",
+	"llama",
+}
+
+func hasAnyModelPrefix(model string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+	return false
 }

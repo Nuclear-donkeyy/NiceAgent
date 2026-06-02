@@ -46,7 +46,7 @@ Agent Runtime 已有配置：
 
 Runtime engine 已使用 `model.ToolCallingChatModel`，按 run 下发 skills 构造 Eino tools，并用 `guardedToolModel` 阻止模型调用未授权 tool。`/cli ...` 仍保留为开发测试入口。
 
-模型层已经新增运营包装：`OperationalChatModel`、`RetryTransport`、`FallbackChatModel`、错误分类、usage tracker、pricing policy 和 redactor。Runtime 会优先从 Eino message metadata 收集真实 token usage，缺失时回退估算，并通过 `CompleteWithUsage` 回写 Control Plane。Control Plane 已有 `run_usage` 表、repository 和 complete handler 持久化。估算 usage 会设置 `estimated=true`，并记录 `token_estimator`，可为 `tiktoken_o200k_base`、`tiktoken_cl100k_base` 或 `heuristic_rune_div4`，用于区分真实 provider usage 和当前估算。`run_usage` 不只记录模型 token，也会记录 Eino tool observation 聚合出的 tool/sandbox/artifact 用量，包括 tool 调用数、tool 错误数、sandbox 命令数、sandbox 耗时/输出/资源摘要和 artifact 数量/大小。费用计算通过 `MODEL_*_PRICE_PER_1M_TOKENS` 环境变量配置，不在仓库中硬编码实时模型价格；fallback 已支持单一后备 provider，可在 `rate_limited`、`provider_unavailable`、`network_error` 时切换到 `mock` 或另一个 OpenAI-compatible provider。Agent Runtime 的 `/healthz` 已返回 `model_provider` 健康快照，`/metrics` 已暴露 `niceagent_model_runs_total`、`niceagent_model_latency_seconds_*`、`niceagent_model_health_probe_total` 和 `niceagent_model_health_probe_duration_seconds_*`，用于观察 provider/model/status/error_class/fallback/probe。
+模型层已经新增运营包装：`OperationalChatModel`、`RetryTransport`、`FallbackChatModel`、错误分类、usage tracker、pricing policy 和 redactor。Runtime 会优先从 Eino message metadata 收集真实 token usage，缺失时回退估算，并通过 `CompleteWithUsage` 回写 Control Plane。Control Plane 已有 `run_usage` 表、repository 和 complete handler 持久化。估算 usage 会设置 `estimated=true`，并记录 `token_estimator`，可为 `tiktoken_o200k_base`、`tiktoken_cl100k_base` 或 `heuristic_rune_div4`，用于区分真实 provider usage 和当前估算。`o200k_base` 已覆盖 OpenAI `gpt-4o`、`gpt-4.1`、`gpt-4.5`、`gpt-5` 和 `o*` 模型族；`cl100k_base` 已覆盖 DeepSeek、Qwen、Moonshot/Kimi、Doubao、GLM、Mistral、Llama 等常见 OpenAI-compatible 模型族的兼容估算。`run_usage` 不只记录模型 token，也会记录 Eino tool observation 聚合出的 tool/sandbox/artifact 用量，包括 tool 调用数、tool 错误数、sandbox 命令数、sandbox 耗时/输出/资源摘要和 artifact 数量/大小。费用计算通过 `MODEL_*_PRICE_PER_1M_TOKENS` 环境变量配置，不在仓库中硬编码实时模型价格；fallback 已支持单一后备 provider，可在 `rate_limited`、`provider_unavailable`、`network_error` 时切换到 `mock` 或另一个 OpenAI-compatible provider。Agent Runtime 的 `/healthz` 已返回 `model_provider` 健康快照，`/metrics` 已暴露 `niceagent_model_runs_total`、`niceagent_model_latency_seconds_*`、`niceagent_model_health_probe_total` 和 `niceagent_model_health_probe_duration_seconds_*`，用于观察 provider/model/status/error_class/fallback/probe。
 
 日志方面，主入口记录 provider/base_url/model，不记录 API key。`modelprovider` 已有 redactor，provider 错误、OpenAI style key、Authorization/Bearer/token/secret/password/cookie 等会被掩码。HTTP Skill observation 也会对 secret 和敏感 key 做 redaction。主动 provider 探针已通过 `MODEL_HEALTH_PROBE_ENABLED` 和间隔/超时配置落地，默认关闭；探针结果会进入 `/healthz` 和 `/metrics`，运维文档给出了基础告警建议。fake DeepSeek/OpenAI-compatible server 已覆盖普通回复、tool calling 响应解析、usage 采集和 401/402/429/503 错误分类。仍待补的是统一覆盖所有 run event、audit、tool raw output 的策略开关、真实 DeepSeek 生产 key 下的 smoke 记录和外部告警系统接入。
 
@@ -65,7 +65,7 @@ K8s 部署已经把 `MODEL_API_KEY` 从 `niceagent-model-provider` Secret 注入
 仍待落地能力：
 
 - 使用真实 DeepSeek API key 执行一次 smoke，并把脱敏结果作为发布验收记录保存在本地或运维系统。
-- 更完整 tokenizer 覆盖、跨 Runtime/provider 账号级容量协调、复杂多 provider 路由和外部 SLO 告警系统。
+- provider 官方 tokenizer 覆盖、跨 Runtime/provider 账号级容量协调、复杂多 provider 路由和外部 SLO 告警系统。
 - 覆盖所有 run event、audit、tool raw output 的集中 redaction 策略开关。
 
 ## 扩展点
