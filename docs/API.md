@@ -461,7 +461,15 @@ MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。
 
 `POST /webhooks/invitation-email-events`
 
-邮件服务商 webhook 入口。该接口不使用用户登录态，而是要求配置 `INVITATION_EMAIL_WEBHOOK_SECRET` 并携带 `X-NiceAgent-Webhook-Signature`。签名算法为 `sha256=<hex(hmac_sha256(secret, raw_body))>`；未配置 secret 时接口返回 404，签名错误返回 401。请求体与上面的 `InvitationEmailEventInput` 相同，仍要求 `invitation_id`；具体服务商字段映射应在 webhook adapter 或网关层转换成该 provider-neutral 格式。
+邮件服务商 webhook 入口。该接口不使用用户登录态，而是要求配置 `INVITATION_EMAIL_WEBHOOK_SECRET` 并携带 `X-NiceAgent-Webhook-Signature`。签名算法为 `sha256=<hex(hmac_sha256(secret, raw_body))>`；未配置 secret 时接口返回 404，签名错误返回 401。
+
+请求体继续兼容上面的 provider-neutral `InvitationEmailEventInput`。此外，webhook adapter 已支持最小服务商原生字段映射：
+
+- SendGrid Event Webhook：支持单条或数组 payload，读取 `event`、`sg_message_id`、`reason`、`timestamp`，并从 `custom_args` / `unique_args` / `metadata` 等字段读取 `invitation_id` 和 `delivery_id`。
+- Amazon SES SNS notification：支持 SNS envelope 中的 JSON 字符串 `Message`，读取 `notificationType`、`mail.messageId`、`mail.tags`、`bounce`、`complaint` 和 `delivery` 字段。
+- Mailgun webhook：支持 `event-data.event`、`event-data.message.headers.message-id`、`event-data.user-variables`、`reason` 和 `delivery-status.message`。
+
+原生 payload 仍必须携带可映射到 NiceAgent 的 `invitation_id` 或 `delivery_id`；通常应在发送邀请邮件时把这些值作为服务商 metadata/custom args/tags 注入。单条事件响应为 `InvitationEmailEventResponse`，批量事件响应为 `InvitationEmailEventsResponse`。
 
 ```http
 X-NiceAgent-Webhook-Signature: sha256=...

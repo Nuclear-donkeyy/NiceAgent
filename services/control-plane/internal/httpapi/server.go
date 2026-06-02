@@ -1082,27 +1082,35 @@ func (s *Server) invitationEmailWebhook(w http.ResponseWriter, r *http.Request) 
 		platform.WriteError(w, http.StatusUnauthorized, "invalid webhook signature")
 		return
 	}
-	var input protocol.InvitationEmailEventInput
-	if err := json.Unmarshal(body, &input); err != nil {
+	inputs, err := normalizeInvitationEmailWebhookInputs(body)
+	if err != nil {
 		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	input.InvitationID = strings.TrimSpace(input.InvitationID)
-	if input.InvitationID == "" {
-		platform.WriteError(w, http.StatusBadRequest, "invitation_id is required")
+	events := make([]protocol.InvitationEmailEvent, 0, len(inputs))
+	for _, input := range inputs {
+		input.InvitationID = strings.TrimSpace(input.InvitationID)
+		if input.InvitationID == "" {
+			platform.WriteError(w, http.StatusBadRequest, "invitation_id is required")
+			return
+		}
+		event, err := s.repo.RecordInvitationEmailEvent(input)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		events = append(events, event)
+		s.writeAuditEvent(r, app.ActorContext{}, "invitation.email_webhook.record", "invitation", event.InvitationID, "", protocol.AuditDecisionAllow, "", map[string]any{
+			"delivery_id": event.DeliveryID,
+			"type":        event.Type,
+			"provider":    event.Provider,
+		})
+	}
+	if len(events) == 1 {
+		platform.WriteJSON(w, http.StatusAccepted, protocol.InvitationEmailEventResponse{Event: events[0]})
 		return
 	}
-	event, err := s.repo.RecordInvitationEmailEvent(input)
-	if err != nil {
-		writeStoreErr(w, err)
-		return
-	}
-	s.writeAuditEvent(r, app.ActorContext{}, "invitation.email_webhook.record", "invitation", event.InvitationID, "", protocol.AuditDecisionAllow, "", map[string]any{
-		"delivery_id": event.DeliveryID,
-		"type":        event.Type,
-		"provider":    event.Provider,
-	})
-	platform.WriteJSON(w, http.StatusAccepted, protocol.InvitationEmailEventResponse{Event: event})
+	platform.WriteJSON(w, http.StatusAccepted, protocol.InvitationEmailEventsResponse{Events: events})
 }
 
 func verifyWebhookSignature(secret string, body []byte, signatureHeader string) bool {
