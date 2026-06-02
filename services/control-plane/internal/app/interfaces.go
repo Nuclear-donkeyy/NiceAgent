@@ -86,6 +86,7 @@ type Repository interface {
 	CreateInvitation(orgID, invitedByUserID string, input protocol.InvitationInput) (protocol.Invitation, error)
 	AcceptInvitation(token, userID, email, name string) (protocol.Invitation, error)
 	EnqueueInvitationEmail(invitation protocol.Invitation, maxAttempts int) (protocol.InvitationEmailDelivery, error)
+	RequeueInvitationEmail(orgID, invitationID string, maxAttempts int) (protocol.InvitationEmailDelivery, error)
 	ClaimDueInvitationEmails(limit int, lockedBy string, lockUntil time.Time) []protocol.InvitationEmailDelivery
 	MarkInvitationEmailSent(deliveryID string) error
 	MarkInvitationEmailFailed(deliveryID, lastError string, nextAttemptAt *time.Time, terminal bool) error

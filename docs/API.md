@@ -393,6 +393,23 @@ MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。
 }
 ```
 
+`POST /api/organizations/{organization_id}/invitations/{invitation_id}/resend`
+
+重新发送某个当前组织内的邀请邮件，只允许 `owner/admin`。该接口不会重新生成 invitation token，也不会修改邀请的角色、项目或过期时间；它只把仍处于 `pending` 且未过期的邀请重新交给当前配置的邀请邮件发送器。未配置 `INVITATION_EMAIL_MODE=smtp` 时返回 `503`。在 `outbox` 模式下，该接口会把对应 `invitation_email_outbox` delivery 重置为 `pending`、清除锁和上次错误，等待后台 worker 重新投递；响应不会返回完整 invitation token。
+
+```json
+{
+  "delivery": {
+    "id": "invmail_xxx",
+    "invitation_id": "inv_xxx",
+    "status": "pending",
+    "attempts": 0,
+    "max_attempts": 1,
+    "next_attempt_at": "2026-06-02T00:00:00Z"
+  }
+}
+```
+
 `POST /api/invitations/{token}/accept`
 
 当前登录 actor 接受邀请。该接口允许尚未有组织/项目成员关系的已认证用户调用；接受组织邀请会写入 `organization_members`，接受项目邀请会写入 `project_members`。在 `trusted-header`/`oidc` 边界下，请求必须携带 `X-NiceAgent-User-Email`，且该邮箱必须与邀请邮箱一致。当前已支持可选 SMTP 邀请邮件和可信 `issuer + sub + email` 绑定，但 NiceAgent 内置 OIDC 登录/JWT/session 仍未落地，因此生产环境仍应放在可信身份网关之后。

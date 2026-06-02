@@ -824,6 +824,75 @@ func TestServerSendsInvitationEmailWhenMailerConfigured(t *testing.T) {
 	}
 }
 
+func TestServerResendsInvitationEmail(t *testing.T) {
+	fakeMailer := &recordingInvitationMailer{}
+	store, handler := newTestHandlerWithOptions(ServerOptions{
+		AuthMode:         "trusted-header",
+		InvitationMailer: fakeMailer,
+	})
+	store.SetProjectOrganization("project-a", "org-project-a")
+	store.SetOrganizationRole("org-owner", "org-project-a", "owner")
+
+	create := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/invitations", jsonBody(t, protocol.InvitationInput{
+		Email:     "project-invited@example.test",
+		Role:      "viewer",
+		ProjectID: "project-a",
+	}))
+	setTrustedActorWithoutRoles(create, "org-owner", "project-a")
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create invitation status = %d, body = %s", createResponse.Code, createResponse.Body.String())
+	}
+	var created protocol.InvitationResponse
+	decodeJSON(t, createResponse.Body, &created)
+
+	resend := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/invitations/"+created.Invitation.ID+"/resend", nil)
+	setTrustedActorWithoutRoles(resend, "org-owner", "project-a")
+	resendResponse := httptest.NewRecorder()
+	handler.ServeHTTP(resendResponse, resend)
+	if resendResponse.Code != http.StatusOK {
+		t.Fatalf("resend invitation status = %d, body = %s", resendResponse.Code, resendResponse.Body.String())
+	}
+	var output protocol.InvitationEmailDeliveryResponse
+	decodeJSON(t, resendResponse.Body, &output)
+	if output.Delivery.InvitationID != created.Invitation.ID || output.Delivery.Status != protocol.InvitationEmailPending || output.Delivery.Invitation.Token != "" {
+		t.Fatalf("resend delivery = %#v", output.Delivery)
+	}
+	if len(fakeMailer.sent) != 2 {
+		t.Fatalf("sent invitations = %d, want create + resend", len(fakeMailer.sent))
+	}
+	if fakeMailer.sent[1].Token != created.Invitation.Token {
+		t.Fatalf("resent invitation token = %q, want original token", fakeMailer.sent[1].Token)
+	}
+	events := store.ListAuditEvents(app.ActorContext{UserID: "org-owner", ProjectID: "project-a", OrgID: "org-project-a", Roles: []string{"owner"}}, app.AuditEventListOptions{Action: "invitation.email.resend"})
+	if len(events) != 1 || events[0].Decision != protocol.AuditDecisionAllow {
+		t.Fatalf("resend audit events = %#v", events)
+	}
+}
+
+func TestServerRejectsInvitationEmailResendWhenMailerDisabled(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
+	store.SetProjectOrganization("project-a", "org-project-a")
+	store.SetOrganizationRole("org-owner", "org-project-a", "owner")
+	invitation, err := store.CreateInvitation("org-project-a", "org-owner", protocol.InvitationInput{
+		Email:     "project-invited@example.test",
+		Role:      "viewer",
+		ProjectID: "project-a",
+	})
+	if err != nil {
+		t.Fatalf("create invitation: %v", err)
+	}
+
+	resend := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/invitations/"+invitation.ID+"/resend", nil)
+	setTrustedActorWithoutRoles(resend, "org-owner", "project-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, resend)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("resend disabled status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestServerProjectMemberManagementRequiresAdminRole(t *testing.T) {
 	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
 	store.SetProjectRole("viewer-user", "project-a", "viewer")
