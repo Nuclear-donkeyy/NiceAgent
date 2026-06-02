@@ -896,6 +896,16 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request, orgID 
 		"role":            invitation.Role,
 	})
 	if s.invitationMailer != nil {
+		if s.repo.IsInvitationEmailSuppressed(invitation.OrganizationID, invitation.Email) {
+			s.auditDeny(r, "invitation.email.send", "invitation", invitation.ID, "", "invitation email suppressed", map[string]any{
+				"organization_id": invitation.OrganizationID,
+				"project_id":      invitation.ProjectID,
+				"email":           invitation.Email,
+				"error_class":     "email_suppressed",
+			})
+			platform.WriteJSON(w, http.StatusCreated, protocol.InvitationResponse{Invitation: invitation})
+			return
+		}
 		if err := s.invitationMailer.SendInvitation(r.Context(), invitation); err != nil {
 			s.log.Warn("invitation email send failed", "invitation_id", invitation.ID, "organization_id", invitation.OrganizationID, "project_id", invitation.ProjectID, "error", err)
 			s.auditDeny(r, "invitation.email.send", "invitation", invitation.ID, "", "email send failed", map[string]any{
@@ -927,6 +937,21 @@ func (s *Server) resendInvitationEmail(w http.ResponseWriter, r *http.Request, o
 	if !invitationBelongsToOrg(s.repo, orgID, invitationID) {
 		s.auditDeny(r, "invitation.email.resend", "invitation", invitationID, "", "invitation is outside actor organization", nil)
 		platform.WriteError(w, http.StatusNotFound, "not found")
+		return
+	}
+	invitation, ok := findInvitationInOrg(s.repo, orgID, invitationID)
+	if !ok {
+		s.auditDeny(r, "invitation.email.resend", "invitation", invitationID, "", "invitation is outside actor organization", nil)
+		platform.WriteError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if s.repo.IsInvitationEmailSuppressed(invitation.OrganizationID, invitation.Email) {
+		s.auditDeny(r, "invitation.email.resend", "invitation", invitationID, "", "invitation email suppressed", map[string]any{
+			"organization_id": orgID,
+			"email":           invitation.Email,
+			"error_class":     "email_suppressed",
+		})
+		platform.WriteError(w, http.StatusConflict, "invitation email is suppressed")
 		return
 	}
 	delivery, err := s.repo.RequeueInvitationEmail(orgID, invitationID, 1)
@@ -1054,12 +1079,17 @@ func verifyWebhookSignature(secret string, body []byte, signatureHeader string) 
 }
 
 func invitationBelongsToOrg(repo app.Repository, orgID, invitationID string) bool {
+	_, ok := findInvitationInOrg(repo, orgID, invitationID)
+	return ok
+}
+
+func findInvitationInOrg(repo app.Repository, orgID, invitationID string) (protocol.Invitation, bool) {
 	for _, invitation := range repo.ListInvitations(orgID) {
 		if invitation.ID == invitationID {
-			return true
+			return invitation, true
 		}
 	}
-	return false
+	return protocol.Invitation{}, false
 }
 
 func (s *Server) upsertOrganizationMember(w http.ResponseWriter, r *http.Request, orgID, pathUserID string) {

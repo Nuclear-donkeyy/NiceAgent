@@ -395,7 +395,7 @@ MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。
 
 `POST /api/organizations/{organization_id}/invitations/{invitation_id}/resend`
 
-重新发送某个当前组织内的邀请邮件，只允许 `owner/admin`。该接口不会重新生成 invitation token，也不会修改邀请的角色、项目或过期时间；它只把仍处于 `pending` 且未过期的邀请重新交给当前配置的邀请邮件发送器。未配置 `INVITATION_EMAIL_MODE=smtp` 时返回 `503`。在 `outbox` 模式下，该接口会把对应 `invitation_email_outbox` delivery 重置为 `pending`、清除锁和上次错误，等待后台 worker 重新投递；响应不会返回完整 invitation token。
+重新发送某个当前组织内的邀请邮件，只允许 `owner/admin`。该接口不会重新生成 invitation token，也不会修改邀请的角色、项目或过期时间；它只把仍处于 `pending` 且未过期的邀请重新交给当前配置的邀请邮件发送器。未配置 `INVITATION_EMAIL_MODE=smtp` 时返回 `503`。如果目标邮箱已经因为 `bounced`、`complaint` 或 `dropped` 事件被当前组织 suppression，接口返回 `409`，不会重新投递。在 `outbox` 模式下，该接口会把对应 `invitation_email_outbox` delivery 重置为 `pending`、清除锁和上次错误，等待后台 worker 重新投递；响应不会返回完整 invitation token。
 
 ```json
 {
@@ -445,7 +445,7 @@ MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。
 
 `POST /api/organizations/{organization_id}/invitation-email-events`
 
-记录 provider-neutral 的邀请邮件事件，只允许 `owner/admin`。`invitation_id` 必填且必须属于当前组织；`delivery_id` 可选，如果填写必须属于同一邀请。`type` 支持 `delivered`、`bounced`、`complaint`、`dropped`。记录 `delivered` 会把对应 outbox delivery 标记为 `sent`；记录 `bounced`、`complaint` 或 `dropped` 会把对应 delivery 标记为 `bounced`，并保存 `reason` 到 `last_error`。
+记录 provider-neutral 的邀请邮件事件，只允许 `owner/admin`。`invitation_id` 必填且必须属于当前组织；`delivery_id` 可选，如果填写必须属于同一邀请。`type` 支持 `delivered`、`bounced`、`complaint`、`dropped`。记录 `delivered` 会把对应 outbox delivery 标记为 `sent`；记录 `bounced`、`complaint` 或 `dropped` 会把对应 delivery 标记为 `bounced`，保存 `reason` 到 `last_error`，并按 `organization_id + email` 写入 `invitation_email_suppressions`，后续邀请邮件创建发送、outbox claim 和重发都会自动停发该邮箱。
 
 ```json
 {

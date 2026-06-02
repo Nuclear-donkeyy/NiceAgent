@@ -871,6 +871,51 @@ func TestServerResendsInvitationEmail(t *testing.T) {
 	}
 }
 
+func TestServerRejectsSuppressedInvitationEmailResend(t *testing.T) {
+	fakeMailer := &recordingInvitationMailer{}
+	store, handler := newTestHandlerWithOptions(ServerOptions{
+		AuthMode:         "trusted-header",
+		InvitationMailer: fakeMailer,
+	})
+	store.SetProjectOrganization("project-a", "org-project-a")
+	store.SetOrganizationRole("org-owner", "org-project-a", "owner")
+	invitation, err := store.CreateInvitation("org-project-a", "org-owner", protocol.InvitationInput{
+		Email:     "project-invited@example.test",
+		Role:      "viewer",
+		ProjectID: "project-a",
+	})
+	if err != nil {
+		t.Fatalf("create invitation: %v", err)
+	}
+	delivery, err := store.EnqueueInvitationEmail(invitation, 1)
+	if err != nil {
+		t.Fatalf("enqueue invitation email: %v", err)
+	}
+	if _, err := store.RecordInvitationEmailEvent(protocol.InvitationEmailEventInput{
+		InvitationID: invitation.ID,
+		DeliveryID:   delivery.ID,
+		Type:         string(protocol.InvitationEmailEventComplaint),
+		Reason:       "recipient complained",
+	}); err != nil {
+		t.Fatalf("record complaint event: %v", err)
+	}
+
+	resend := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/invitations/"+invitation.ID+"/resend", nil)
+	setTrustedActorWithoutRoles(resend, "org-owner", "project-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, resend)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("suppressed resend status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if len(fakeMailer.sent) != 0 {
+		t.Fatalf("sent suppressed invitations = %d, want none", len(fakeMailer.sent))
+	}
+	events := store.ListAuditEvents(app.ActorContext{UserID: "org-owner", ProjectID: "project-a", OrgID: "org-project-a", Roles: []string{"owner"}}, app.AuditEventListOptions{Action: "invitation.email.resend"})
+	if len(events) != 1 || events[0].Decision != protocol.AuditDecisionDeny || events[0].Reason != "invitation email suppressed" {
+		t.Fatalf("suppressed resend audit events = %#v", events)
+	}
+}
+
 func TestServerRejectsInvitationEmailResendWhenMailerDisabled(t *testing.T) {
 	store, handler := newTestHandlerWithOptions(ServerOptions{AuthMode: "trusted-header"})
 	store.SetProjectOrganization("project-a", "org-project-a")
