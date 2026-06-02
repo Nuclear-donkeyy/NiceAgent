@@ -62,6 +62,11 @@ func TestRedisWorkerFetchesExecutionContextExecutesAndAcks(t *testing.T) {
 
 	client := &fakeRedisQueueClient{
 		pendingCount: 3,
+		groupsInfo: []redisGroupInfo{{
+			Name:    "workers",
+			Pending: 3,
+			Lag:     42,
+		}},
 		streamLengths: map[string]int64{
 			"niceagent:runs:test:dlq": 2,
 		},
@@ -104,10 +109,13 @@ func TestRedisWorkerFetchesExecutionContextExecutesAndAcks(t *testing.T) {
 		t.Fatalf("user message = %q", engine.userMessage)
 	}
 	renderedMetrics := metrics.Render()
-	for _, want := range []string{"niceagent_redis_queue_messages_total", "niceagent_redis_queue_acked_total", "niceagent_redis_queue_pending_entries", "niceagent_redis_queue_dlq_length"} {
+	for _, want := range []string{"niceagent_redis_queue_messages_total", "niceagent_redis_queue_acked_total", "niceagent_redis_queue_pending_entries", "niceagent_redis_queue_lag_entries", "niceagent_redis_queue_dlq_length"} {
 		if !strings.Contains(renderedMetrics, want) {
 			t.Fatalf("metrics missing %s:\n%s", want, renderedMetrics)
 		}
+	}
+	if !strings.Contains(renderedMetrics, `niceagent_redis_queue_lag_entries{service="agent_runtime_test",consumer="runtime-a",group="workers",state="known",stream="niceagent:runs:test"} 42.000000`) {
+		t.Fatalf("lag gauge missing expected value:\n%s", renderedMetrics)
 	}
 	if !strings.Contains(renderedMetrics, `niceagent_redis_queue_pending_entries{service="agent_runtime_test",consumer="runtime-a",group="workers",stream="niceagent:runs:test"} 3.000000`) {
 		t.Fatalf("pending gauge missing expected value:\n%s", renderedMetrics)
@@ -312,6 +320,11 @@ func TestRedisWorkerMovesOverDeliveredPendingMessageToDLQ(t *testing.T) {
 func TestRedisWorkerSamplesOldestPendingIdleMetric(t *testing.T) {
 	client := &fakeRedisQueueClient{
 		pendingCount: 3,
+		groupsInfo: []redisGroupInfo{{
+			Name:    "workers",
+			Pending: 3,
+			Lag:     -1,
+		}},
 		pendingEntries: map[string][]redisPendingEntry{
 			"-:+": {{
 				ID:   "1700000000000-0",
@@ -343,6 +356,11 @@ func TestRedisWorkerSamplesOldestPendingIdleMetric(t *testing.T) {
 		!strings.Contains(renderedMetrics, `} 120.000000`) {
 		t.Fatalf("oldest pending idle gauge missing:\n%s", renderedMetrics)
 	}
+	if !strings.Contains(renderedMetrics, `niceagent_redis_queue_lag_entries{`) ||
+		!strings.Contains(renderedMetrics, `state="unknown"`) ||
+		!strings.Contains(renderedMetrics, `} 0.000000`) {
+		t.Fatalf("unknown lag gauge missing:\n%s", renderedMetrics)
+	}
 }
 
 type fakeEngine struct {
@@ -363,6 +381,7 @@ type fakeRedisQueueClient struct {
 	pending           map[string]int64
 	pendingEntries    map[string][]redisPendingEntry
 	pendingCount      int64
+	groupsInfo        []redisGroupInfo
 	streamLengths     map[string]int64
 	adds              []fakeXAdd
 	acked             []string
@@ -418,6 +437,10 @@ func (c *fakeRedisQueueClient) XPendingExt(_ context.Context, _, _, start, end s
 
 func (c *fakeRedisQueueClient) XPendingCount(_ context.Context, _, _ string) (int64, error) {
 	return c.pendingCount, nil
+}
+
+func (c *fakeRedisQueueClient) XInfoGroups(_ context.Context, _ string) ([]redisGroupInfo, error) {
+	return c.groupsInfo, nil
 }
 
 func (c *fakeRedisQueueClient) XLen(_ context.Context, stream string) (int64, error) {

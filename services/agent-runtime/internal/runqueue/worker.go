@@ -219,6 +219,7 @@ func (w *RedisWorker) sampleQueueDepths(ctx context.Context) {
 	if w.metrics == nil {
 		return
 	}
+	w.sampleQueueLag(ctx)
 	pendingCount, err := w.client.XPendingCount(ctx, w.cfg.Stream, w.cfg.Group)
 	if err != nil {
 		w.incQueueError("pending_sample")
@@ -238,6 +239,32 @@ func (w *RedisWorker) sampleQueueDepths(ctx context.Context) {
 	w.metrics.SetGauge("niceagent_redis_queue_dlq_length", w.baseMetricLabels(platform.Labels{
 		"dlq_stream": dlqStream,
 	}), float64(dlqLength))
+}
+
+func (w *RedisWorker) sampleQueueLag(ctx context.Context) {
+	groups, err := w.client.XInfoGroups(ctx, w.cfg.Stream)
+	if err != nil {
+		w.incQueueError("lag_sample")
+		return
+	}
+	for _, group := range groups {
+		if group.Name != w.cfg.Group {
+			continue
+		}
+		if group.Lag < 0 {
+			w.metrics.SetGauge("niceagent_redis_queue_lag_entries", w.baseMetricLabels(platform.Labels{
+				"state": "unknown",
+			}), 0)
+			return
+		}
+		w.metrics.SetGauge("niceagent_redis_queue_lag_entries", w.baseMetricLabels(platform.Labels{
+			"state": "known",
+		}), float64(group.Lag))
+		return
+	}
+	w.metrics.SetGauge("niceagent_redis_queue_lag_entries", w.baseMetricLabels(platform.Labels{
+		"state": "missing_group",
+	}), 0)
 }
 
 func (w *RedisWorker) sampleOldestPendingIdle(ctx context.Context, pendingCount int64) {
@@ -567,10 +594,17 @@ type redisPendingEntry struct {
 	RetryCount int64
 }
 
+type redisGroupInfo struct {
+	Name    string
+	Pending int64
+	Lag     int64
+}
+
 type redisQueueClient interface {
 	XGroupCreateMkStream(ctx context.Context, stream, group, start string) error
 	XReadGroup(ctx context.Context, stream, group, consumer string, count int64, block time.Duration) (redisStreamMessage, error)
 	XAutoClaim(ctx context.Context, stream, group, consumer string, minIdle time.Duration, start string, count int64) ([]redisStreamMessage, string, error)
+	XInfoGroups(ctx context.Context, stream string) ([]redisGroupInfo, error)
 	XPendingCount(ctx context.Context, stream, group string) (int64, error)
 	XPendingExt(ctx context.Context, stream, group, start, end string, count int64) ([]redisPendingEntry, error)
 	XLen(ctx context.Context, stream string) (int64, error)
@@ -673,6 +707,28 @@ func (c *goRedisQueueClient) XPendingExt(ctx context.Context, stream, group, sta
 	result := make([]redisPendingEntry, 0, len(entries))
 	for _, entry := range entries {
 		result = append(result, redisPendingEntry{ID: entry.ID, Idle: entry.Idle, RetryCount: entry.RetryCount})
+	}
+	return result, nil
+}
+
+func (c *goRedisQueueClient) XInfoGroups(ctx context.Context, stream string) ([]redisGroupInfo, error) {
+	ctx, endSpan := startRedisCommandSpan(ctx, "XINFO GROUPS", stream, "")
+	var err error
+	defer func() { endSpan(err, nil) }()
+	groups, err := c.client.XInfoGroups(ctx, stream).Result()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := make([]redisGroupInfo, 0, len(groups))
+	for _, group := range groups {
+		result = append(result, redisGroupInfo{
+			Name:    group.Name,
+			Pending: group.Pending,
+			Lag:     group.Lag,
+		})
 	}
 	return result, nil
 }
