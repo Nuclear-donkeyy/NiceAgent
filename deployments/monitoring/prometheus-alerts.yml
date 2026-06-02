@@ -40,6 +40,17 @@ groups:
           summary: "NiceAgent runtime runs are failing"
           description: "Runtime failed runs are increasing for service {{ $labels.service }}."
 
+      - alert: NiceAgentSkillPolicyDenials
+        expr: |
+          sum by (policy, reason, risk, kind) (rate(niceagent_skill_policy_denials_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: info
+          component: skill-policy
+        annotations:
+          summary: "NiceAgent skill risk policy is denying tool calls"
+          description: "Skill risk policy {{ $labels.policy }} is denying {{ $labels.kind }} skills because {{ $labels.reason }}."
+
       - alert: NiceAgentModelProviderErrors
         expr: |
           sum by (provider, model, error_class) (

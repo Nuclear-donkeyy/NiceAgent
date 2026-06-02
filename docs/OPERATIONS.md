@@ -287,7 +287,7 @@ GET /api/projects/{project_id}/runtime-policy
 PATCH /api/projects/{project_id}/runtime-policy
 ```
 
-项目级 `skill_risk_policy` 会随 HTTP dispatcher payload 或 Redis execution context 写入 `RunRequest.skill_risk_policy`，并覆盖 Agent Runtime 的环境变量默认值。前端“项目运行策略”区域也会展示和更新该值。被风险策略拒绝时，Runtime 不会调用真实 tool，也不会预占 tool quota；它会返回 `skill_policy_denied` observation，并写入 `tool.output`/`tool.finished` 事件。K8s 默认配置使用 `block-destructive`，让导入的 MCP/OpenAPI Skill 至少不会执行 manifest 明确标记为破坏性的能力。注意 annotations 仍来自 skill manifest/importer，不能替代 sandbox、SSRF、secret redaction 和真实权限边界。
+项目级 `skill_risk_policy` 会随 HTTP dispatcher payload 或 Redis execution context 写入 `RunRequest.skill_risk_policy`，并覆盖 Agent Runtime 的环境变量默认值。前端“项目运行策略”区域也会展示和更新该值。被风险策略拒绝时，Runtime 不会调用真实 tool，也不会预占 tool quota；它会返回 `skill_policy_denied` observation，写入 `tool.output`/`tool.finished` 事件，并递增 `niceagent_skill_policy_denials_total{policy,reason,risk,kind}`。仓库的 Prometheus 告警规则已包含 `NiceAgentSkillPolicyDenials`，可用于发现项目策略过严、导入 manifest 风险标注异常或模型反复尝试不可用工具。K8s 默认配置使用 `block-destructive`，让导入的 MCP/OpenAPI Skill 至少不会执行 manifest 明确标记为破坏性的能力。注意 annotations 仍来自 skill manifest/importer，不能替代 sandbox、SSRF、secret redaction 和真实权限边界。
 
 `workspace.read` 是系统内置只读 skill。它不会让 Runtime 直接读取任意磁盘路径，而是通过 Control Plane 内部 API 列出当前 run 已登记 artifacts，并只读取文本 artifact 的内容摘要。读取会校验 active `attempt_id`，并复用 artifact metadata、workspace root、`output/` 路径限制、symlink escape 检查、regular file 检查、MIME 文本限制和读取大小限制。前端 artifact 面板会对图片、PDF、音频和视频使用 `?disposition=inline` 做内联预览，下载按钮仍走默认 attachment；CSV/TSV 等文本表格会通过 `GET /api/artifacts/{id}/content` 读取前几行做表格预览。排查读取或预览失败时优先看 artifact 是否已登记、文件是否仍在 workspace、MIME 是否正确，以及路径是否在 `output/` 下。
 
@@ -414,7 +414,7 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 - `niceagent_redis_queue_dlq_length`：Agent Runtime 采样到的 DLQ stream 长度。
 - `niceagent_sandbox_exec_total`：Sandbox Executor 命令执行结果次数。
 
-这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。仓库提供了基础 Prometheus 告警规则文件：`deployments/monitoring/prometheus-alerts.yml`，覆盖 HTTP 5xx/延迟、runtime 失败、模型 provider 错误/探针失败/延迟、Redis queue error/pending/oldest idle/DLQ、quota denial 和 sandbox failure。仓库也提供了 Alertmanager 路由样例：`deployments/monitoring/alertmanager.example.yml`，按 `severity` 和 `component` 将告警分到 on-call、platform、model-ops、sandbox、quota 等接收组。可以用下面的仓库内检查做结构验证：
+这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。仓库提供了基础 Prometheus 告警规则文件：`deployments/monitoring/prometheus-alerts.yml`，覆盖 HTTP 5xx/延迟、runtime 失败、skill policy denial、模型 provider 错误/探针失败/延迟、Redis queue error/pending/oldest idle/DLQ、quota denial 和 sandbox failure。仓库也提供了 Alertmanager 路由样例：`deployments/monitoring/alertmanager.example.yml`，按 `severity` 和 `component` 将告警分到 on-call、platform、model-ops、sandbox、quota 等接收组。可以用下面的仓库内检查做结构验证：
 
 ```bash
 make check-alerts
