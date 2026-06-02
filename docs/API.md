@@ -15,11 +15,11 @@ Control Plane 支持 `AUTH_MODE=demo|trusted-header|oidc`：
 OIDC 浏览器登录接口：
 
 - `GET /auth/oidc/login`：生成 state cookie，并跳转到 `OIDC_AUTH_URL`。
-- `GET /auth/oidc/callback?code=...&state=...`：校验 state，向 `OIDC_TOKEN_URL` 交换 token，校验 `id_token`，写入 `niceagent_session` HttpOnly cookie，然后跳转到 `/`。
-- `POST /auth/oidc/refresh`：使用 session 中的 refresh token 换取新 token，并刷新 session cookie。
-- `POST /auth/logout`：清理 OIDC session 和 state cookie。
+- `GET /auth/oidc/callback?code=...&state=...`：校验 state，向 `OIDC_TOKEN_URL` 交换 token，校验 `id_token`，写入 `niceagent_session` HttpOnly cookie 和前端可读的 `niceagent_csrf` cookie，然后跳转到 `/`。
+- `POST /auth/oidc/refresh`：使用 session 中的 refresh token 换取新 token，并刷新 session cookie。请求必须携带 `X-NiceAgent-CSRF`，值与 `niceagent_csrf` cookie 一致。
+- `POST /auth/logout`：清理 OIDC session、state 和 CSRF cookie。如果请求带有有效 session，也必须携带 `X-NiceAgent-CSRF`。
 
-启用浏览器登录时需要配置 `OIDC_CLIENT_ID`、`OIDC_AUTH_URL`、`OIDC_TOKEN_URL`、`OIDC_SESSION_SECRET`；`OIDC_CLIENT_SECRET`、`OIDC_REDIRECT_URL` 和 `OIDC_SESSION_TTL_SECONDS` 可按 IdP 和部署环境配置。
+启用浏览器登录时需要配置 `OIDC_CLIENT_ID`、`OIDC_AUTH_URL`、`OIDC_TOKEN_URL`、`OIDC_SESSION_SECRET`；`OIDC_CLIENT_SECRET`、`OIDC_REDIRECT_URL` 和 `OIDC_SESSION_TTL_SECONDS` 可按 IdP 和部署环境配置。前端调用会话刷新和退出时会自动从 `niceagent_csrf` cookie 读取 token，并写入 `X-NiceAgent-CSRF` header。
 
 `X-NiceAgent-Roles` 的最小 RBAC 语义：`owner`、`admin`、`member`、`editor`、`writer` 可以执行普通写操作；`viewer` 只能读。组织/项目成员管理只允许 `owner/admin` 操作。网关没有传 roles 时，Control Plane 优先使用 `project_members` 的持久项目角色；组织成员 API 会读取 `organization_members`；如果项目属于当前 actor 的组织，项目 API 也可以继承 `organization_members` 中的组织角色。更完整的 action 级 policy 和邀请流程仍是后续工作。
 

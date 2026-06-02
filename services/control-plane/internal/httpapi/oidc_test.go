@@ -188,6 +188,10 @@ func TestOIDCBrowserLoginCreatesSessionCookie(t *testing.T) {
 	if sessionCookie == nil || sessionCookie.Value == "" || !sessionCookie.HttpOnly {
 		t.Fatalf("session cookie = %#v", sessionCookie)
 	}
+	csrfCookie := findCookie(callbackResponse.Result().Cookies(), oidcCSRFCookieName)
+	if csrfCookie == nil || csrfCookie.Value == "" || csrfCookie.HttpOnly {
+		t.Fatalf("csrf cookie = %#v", csrfCookie)
+	}
 
 	listChats := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
 	listChats.AddCookie(sessionCookie)
@@ -256,9 +260,11 @@ func TestOIDCBrowserRefreshUpdatesSession(t *testing.T) {
 		},
 	})
 
-	sessionCookie := loginOIDCTestSession(t, handler)
+	sessionCookie, csrfCookie := loginOIDCTestCookies(t, handler)
 	refresh := httptest.NewRequest(http.MethodPost, "/auth/oidc/refresh", nil)
 	refresh.AddCookie(sessionCookie)
+	refresh.AddCookie(csrfCookie)
+	refresh.Header.Set(oidcCSRFHeaderName, csrfCookie.Value)
 	refreshResponse := httptest.NewRecorder()
 	handler.ServeHTTP(refreshResponse, refresh)
 	if refreshResponse.Code != http.StatusOK {
@@ -270,6 +276,119 @@ func TestOIDCBrowserRefreshUpdatesSession(t *testing.T) {
 	nextSession := findCookie(refreshResponse.Result().Cookies(), oidcSessionCookieName)
 	if nextSession == nil || nextSession.Value == "" || nextSession.Value == sessionCookie.Value {
 		t.Fatalf("refreshed session cookie = %#v, old = %q", nextSession, sessionCookie.Value)
+	}
+	nextCSRF := findCookie(refreshResponse.Result().Cookies(), oidcCSRFCookieName)
+	if nextCSRF == nil || nextCSRF.Value == "" || nextCSRF.Value == csrfCookie.Value || nextCSRF.HttpOnly {
+		t.Fatalf("refreshed csrf cookie = %#v, old = %q", nextCSRF, csrfCookie.Value)
+	}
+}
+
+func TestOIDCBrowserRefreshRejectsMissingCSRF(t *testing.T) {
+	key := mustGenerateRSAKey(t)
+	issuer := "https://issuer.example.test"
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJWKS(t, w, key.PublicKey, "kid-1")
+	}))
+	defer jwksServer.Close()
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse token request: %v", err)
+		}
+		writeOIDCTokenResponse(t, w, signTestJWT(t, key, "kid-1", map[string]any{
+			"iss":                  issuer,
+			"sub":                  "csrf-user",
+			"aud":                  "niceagent-web",
+			"exp":                  time.Now().Add(time.Hour).Unix(),
+			"niceagent_project_id": "csrf-project",
+			"niceagent_roles":      []string{"owner"},
+		}), "refresh-a")
+	}))
+	defer tokenServer.Close()
+
+	_, handler := newTestHandlerWithOptions(ServerOptions{
+		AuthMode: "oidc",
+		OIDC: OIDCConfig{
+			Issuer:   issuer,
+			Audience: "niceagent-web",
+			JWKSURL:  jwksServer.URL,
+		},
+		OIDCBrowser: OIDCBrowserConfig{
+			ClientID:          "niceagent-web",
+			AuthURL:           "https://idp.example.test/authorize",
+			TokenURL:          tokenServer.URL,
+			SessionSecret:     "session-secret-session-secret",
+			SessionTTLSeconds: 3600,
+		},
+	})
+
+	sessionCookie := loginOIDCTestSession(t, handler)
+	refresh := httptest.NewRequest(http.MethodPost, "/auth/oidc/refresh", nil)
+	refresh.AddCookie(sessionCookie)
+	refreshResponse := httptest.NewRecorder()
+	handler.ServeHTTP(refreshResponse, refresh)
+	if refreshResponse.Code != http.StatusForbidden {
+		t.Fatalf("refresh without csrf status = %d, body = %s", refreshResponse.Code, refreshResponse.Body.String())
+	}
+}
+
+func TestOIDCBrowserLogoutRequiresCSRFWhenSessionExists(t *testing.T) {
+	key := mustGenerateRSAKey(t)
+	issuer := "https://issuer.example.test"
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJWKS(t, w, key.PublicKey, "kid-1")
+	}))
+	defer jwksServer.Close()
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse token request: %v", err)
+		}
+		writeOIDCTokenResponse(t, w, signTestJWT(t, key, "kid-1", map[string]any{
+			"iss":                  issuer,
+			"sub":                  "logout-user",
+			"aud":                  "niceagent-web",
+			"exp":                  time.Now().Add(time.Hour).Unix(),
+			"niceagent_project_id": "logout-project",
+			"niceagent_roles":      []string{"owner"},
+		}), "refresh-a")
+	}))
+	defer tokenServer.Close()
+
+	_, handler := newTestHandlerWithOptions(ServerOptions{
+		AuthMode: "oidc",
+		OIDC: OIDCConfig{
+			Issuer:   issuer,
+			Audience: "niceagent-web",
+			JWKSURL:  jwksServer.URL,
+		},
+		OIDCBrowser: OIDCBrowserConfig{
+			ClientID:          "niceagent-web",
+			AuthURL:           "https://idp.example.test/authorize",
+			TokenURL:          tokenServer.URL,
+			SessionSecret:     "session-secret-session-secret",
+			SessionTTLSeconds: 3600,
+		},
+	})
+
+	sessionCookie, csrfCookie := loginOIDCTestCookies(t, handler)
+	missingCSRF := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	missingCSRF.AddCookie(sessionCookie)
+	missingResponse := httptest.NewRecorder()
+	handler.ServeHTTP(missingResponse, missingCSRF)
+	if missingResponse.Code != http.StatusForbidden {
+		t.Fatalf("logout without csrf status = %d, body = %s", missingResponse.Code, missingResponse.Body.String())
+	}
+
+	logout := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	logout.AddCookie(sessionCookie)
+	logout.AddCookie(csrfCookie)
+	logout.Header.Set(oidcCSRFHeaderName, csrfCookie.Value)
+	logoutResponse := httptest.NewRecorder()
+	handler.ServeHTTP(logoutResponse, logout)
+	if logoutResponse.Code != http.StatusOK {
+		t.Fatalf("logout status = %d, body = %s", logoutResponse.Code, logoutResponse.Body.String())
+	}
+	if cleared := findCookie(logoutResponse.Result().Cookies(), oidcCSRFCookieName); cleared == nil || cleared.MaxAge != -1 {
+		t.Fatalf("cleared csrf cookie = %#v", cleared)
 	}
 }
 
@@ -296,6 +415,12 @@ func writeOIDCTokenResponse(t *testing.T, w http.ResponseWriter, idToken, refres
 }
 
 func loginOIDCTestSession(t *testing.T, handler http.Handler) *http.Cookie {
+	t.Helper()
+	sessionCookie, _ := loginOIDCTestCookies(t, handler)
+	return sessionCookie
+}
+
+func loginOIDCTestCookies(t *testing.T, handler http.Handler) (*http.Cookie, *http.Cookie) {
 	t.Helper()
 	login := httptest.NewRequest(http.MethodGet, "/auth/oidc/login", nil)
 	loginResponse := httptest.NewRecorder()
@@ -326,7 +451,11 @@ func loginOIDCTestSession(t *testing.T, handler http.Handler) *http.Cookie {
 	if sessionCookie == nil {
 		t.Fatal("callback response missing session cookie")
 	}
-	return sessionCookie
+	csrfCookie := findCookie(callbackResponse.Result().Cookies(), oidcCSRFCookieName)
+	if csrfCookie == nil {
+		t.Fatal("callback response missing csrf cookie")
+	}
+	return sessionCookie, csrfCookie
 }
 
 func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
