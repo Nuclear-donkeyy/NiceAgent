@@ -199,7 +199,7 @@ PR 1 的文档状态收口后，近期更适合继续推进这些真实生产化
 1. DeepSeek 真实 API key 冒烟和模型运营记录：可选 smoke 脚本、机器可读脱敏报告与 runbook 已落地，下一步是在本地或运维环境用真实 key 执行并保留脱敏结果。
 2. OIDC 浏览器登录已有最小 callback/session/refresh token、CSRF 防护、服务端 session 撤销/轮换和前端登录会话入口；内置 action-level policy 和 `ACTION_POLICY_FILE` 文件化覆盖已覆盖关键外部 API action；下一步补生产 IdP 联调和数据库/OPA/Casbin 等外部策略源。
 3. 邀请邮件 subject/body 模板、进程内内存队列、durable outbox、邀请邮件重发 API、provider-neutral 退信事件记录、HMAC webhook 入口、SendGrid/Mailgun 原生签名校验、Amazon SES SNS 原生证书签名校验、SendGrid/SES/Mailgun 最小原生字段映射、组织级自动停发、suppression 查询/解除 API、前端“邮件治理”管理面板和文件化 action-level policy 已落地；下一步补外部策略源、管理 UI 和更细 action 条件，让邀请流程从最小闭环走向可运营。
-4. provider 官方 tokenizer 覆盖、强一致账单级 quota、真实值班系统接入和生产级容量看板；当前前端只有基于项目 quota policy 与 `GET /api/projects/{project_id}/usage` 的最小 24h 容量视图，token 预扣已具备常见模型族的 tiktoken 兼容估算。
+4. provider 官方 tokenizer 覆盖、强一致账单级 quota、真实值班系统接入和生产级容量看板；当前前端只有基于项目 quota policy 与 `GET /api/projects/{project_id}/usage` 的最小 24h 容量视图，token 预扣已具备常见模型族的 tiktoken 兼容估算。Redis Streams 已有 `make smoke-redis-capacity` 轻量容量冒烟和机器可读报告入口，但生产级 Redis HA、故障演练和正式多副本压测仍待补齐。
 5. Sandbox container 默认执行路径、真实集群 RuntimeClass handler 启用、云侧出口控制和更完整容量建议；图片/PDF/音视频内联预览、CSV/TSV 表格预览、K8s egress NetworkPolicy、可选 RuntimeClass/专用节点池模板、镜像白名单、healthz 可观测与 `make smoke-sandbox-container` 容器路径验收已落地。
 
 ## 最小验收命令

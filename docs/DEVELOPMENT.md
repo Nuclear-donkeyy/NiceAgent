@@ -68,6 +68,14 @@ REDIS_ADDR=127.0.0.1:6379
 
 该模式只把 `run_id/seq` 作为提醒发到 Redis，事件正文仍以 repository/Postgres 为权威；前端断线后继续依赖 `?after=` replay 补齐。
 
+需要给 Redis Streams run queue 做轻量容量冒烟时，可以运行：
+
+```bash
+make smoke-redis-capacity
+```
+
+该命令默认启动临时 Redis 容器，写入并消费独立的 capacity stream，输出 JSON 报告；没有 Docker 时会 `SKIP`。如需验证已有 Redis，设置 `REDIS_ADDR=host:port` 并直接运行 `python3 scripts/smoke_redis_capacity.py`。
+
 如需模拟内部鉴权，三个服务使用同一个 `INTERNAL_API_TOKEN`；本地裸跑默认允许为空，内部 API 不校验 bearer token。上线或近云环境应开启：
 
 ```bash
