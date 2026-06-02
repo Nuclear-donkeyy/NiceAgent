@@ -23,6 +23,8 @@ import (
 const (
 	oidcSessionCookieName = "niceagent_session"
 	oidcStateCookieName   = "niceagent_oidc_state"
+	oidcCSRFCookieName    = "niceagent_csrf"
+	oidcCSRFHeaderName    = "X-NiceAgent-CSRF"
 )
 
 type OIDCBrowserConfig struct {
@@ -50,6 +52,7 @@ type oidcTokenResponse struct {
 type oidcSessionPayload struct {
 	Actor        app.ActorContext `json:"actor"`
 	RefreshToken string           `json:"refresh_token,omitempty"`
+	CSRFToken    string           `json:"csrf_token,omitempty"`
 	ExpiresAt    int64            `json:"expires_at"`
 }
 
@@ -147,6 +150,10 @@ func (s *Server) oidcRefresh(w http.ResponseWriter, r *http.Request) {
 		platform.WriteError(w, http.StatusUnauthorized, "missing OIDC session")
 		return
 	}
+	if !s.verifyOIDCCSRF(r, session) {
+		platform.WriteError(w, http.StatusForbidden, "invalid OIDC CSRF token")
+		return
+	}
 	if strings.TrimSpace(session.RefreshToken) == "" {
 		platform.WriteError(w, http.StatusUnauthorized, "OIDC refresh token is not available")
 		return
@@ -176,8 +183,13 @@ func (s *Server) oidcRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authLogout(w http.ResponseWriter, r *http.Request) {
+	if session, err := s.oidcSessionFromRequest(r); err == nil && !s.verifyOIDCCSRF(r, session) {
+		platform.WriteError(w, http.StatusForbidden, "invalid OIDC CSRF token")
+		return
+	}
 	clearCookie(w, r, oidcSessionCookieName)
 	clearCookie(w, r, oidcStateCookieName)
+	clearCookie(w, r, oidcCSRFCookieName)
 	platform.WriteJSON(w, http.StatusOK, map[string]any{"status": "logged_out"})
 }
 
@@ -233,9 +245,14 @@ func (s *Server) exchangeOIDCToken(ctx context.Context, fields map[string]string
 
 func (s *Server) setOIDCSession(w http.ResponseWriter, r *http.Request, actor app.ActorContext, refreshToken string) error {
 	expiresAt := s.oidcBrowser.Now().UTC().Add(time.Duration(s.oidcBrowser.SessionTTLSeconds) * time.Second)
+	csrfToken, err := randomURLToken(24)
+	if err != nil {
+		return err
+	}
 	payload := oidcSessionPayload{
 		Actor:        actor,
 		RefreshToken: strings.TrimSpace(refreshToken),
+		CSRFToken:    csrfToken,
 		ExpiresAt:    expiresAt.Unix(),
 	}
 	value, err := s.signOIDCSession(payload)
@@ -243,6 +260,7 @@ func (s *Server) setOIDCSession(w http.ResponseWriter, r *http.Request, actor ap
 		return err
 	}
 	setCookie(w, r, oidcSessionCookieName, value, time.Duration(s.oidcBrowser.SessionTTLSeconds)*time.Second)
+	setOIDCCSRFCookie(w, r, csrfToken, time.Duration(s.oidcBrowser.SessionTTLSeconds)*time.Second)
 	return nil
 }
 
@@ -289,10 +307,30 @@ func (s *Server) verifyOIDCSession(value string) (oidcSessionPayload, error) {
 	if payload.Actor.UserID == "" || payload.Actor.ProjectID == "" {
 		return oidcSessionPayload{}, errors.New("invalid OIDC session actor")
 	}
+	if strings.TrimSpace(payload.CSRFToken) == "" {
+		return oidcSessionPayload{}, errors.New("invalid OIDC session csrf token")
+	}
 	if s.oidcBrowser.Now().Unix() > payload.ExpiresAt {
 		return oidcSessionPayload{}, errors.New("OIDC session expired")
 	}
 	return payload, nil
+}
+
+func (s *Server) verifyOIDCCSRF(r *http.Request, session oidcSessionPayload) bool {
+	headerToken := strings.TrimSpace(r.Header.Get(oidcCSRFHeaderName))
+	if headerToken == "" {
+		return false
+	}
+	cookie, err := r.Cookie(oidcCSRFCookieName)
+	if err != nil {
+		return false
+	}
+	cookieToken := strings.TrimSpace(cookie.Value)
+	sessionToken := strings.TrimSpace(session.CSRFToken)
+	return cookieToken != "" &&
+		sessionToken != "" &&
+		hmac.Equal([]byte(headerToken), []byte(cookieToken)) &&
+		hmac.Equal([]byte(headerToken), []byte(sessionToken))
 }
 
 func (s *Server) verifyOIDCState(r *http.Request) bool {
@@ -331,6 +369,19 @@ func setCookie(w http.ResponseWriter, r *http.Request, name, value string, maxAg
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(maxAge.Seconds()),
+	})
+}
+
+func setOIDCCSRFCookie(w http.ResponseWriter, r *http.Request, value string, maxAge time.Duration) {
+	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	http.SetCookie(w, &http.Cookie{
+		Name:     oidcCSRFCookieName,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: false,
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(maxAge.Seconds()),
