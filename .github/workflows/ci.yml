@@ -51,11 +51,12 @@ jobs:
       - name: Check K8s sandbox hardening
         run: make check-k8s-sandbox
 
-      - name: Smoke Redis queue and fanout
+      - name: Smoke real service flows
         run: |
           make smoke-three-services-redis
           make smoke-control-plane-fanout
           make smoke-sse-replay
+          make smoke-http-skill-backend
 
       - name: Build container images
         run: make docker-build IMAGE_REGISTRY=niceagent-ci IMAGE_TAG=${{ github.sha }}

@@ -418,7 +418,7 @@ make smoke-three-services-redis
 make smoke-control-plane-fanout
 ```
 
-该脚本会启动临时 Postgres、Redis、两个 Control Plane、Agent Runtime 和 Sandbox Executor，验证第二个 Control Plane 能通过 Redis nudge + 共享 Postgres 补齐第一个 Control Plane 写入的 `tool.output`、`model.token` 和 `run.succeeded` SSE 事件。CI 的 `Test and build` 已把 `smoke-three-services-redis` 和 `smoke-control-plane-fanout` 纳入默认门禁；生产仍需要 Redis 高可用、保留策略和告警。
+该脚本会启动临时 Postgres、Redis、两个 Control Plane、Agent Runtime 和 Sandbox Executor，验证第二个 Control Plane 能通过 Redis nudge + 共享 Postgres 补齐第一个 Control Plane 写入的 `tool.output`、`model.token` 和 `run.succeeded` SSE 事件。CI 的 `Test and build` 已把 `smoke-three-services-redis`、`smoke-control-plane-fanout`、`smoke-sse-replay` 和 `smoke-http-skill-backend` 纳入默认门禁；生产仍需要 Redis 高可用、保留策略和告警。
 
 Redis Streams 容量冒烟入口：
 
