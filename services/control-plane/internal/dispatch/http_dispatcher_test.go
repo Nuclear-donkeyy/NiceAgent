@@ -23,6 +23,11 @@ func TestHTTPDispatcherCallsRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add user message: %v", err)
 	}
+	if _, err := store.SetProjectRuntimePolicy(app.DemoProjectID, protocol.ProjectRuntimePolicyInput{
+		SkillRiskPolicy: protocol.SkillRiskPolicyBlockDestructive,
+	}); err != nil {
+		t.Fatalf("set runtime policy: %v", err)
+	}
 	received := make(chan protocol.RunExecutionRequest, 1)
 	traceHeaders := make(chan string, 1)
 	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +65,9 @@ func TestHTTPDispatcherCallsRuntime(t *testing.T) {
 		}
 		if request.ControlPlaneURL != "http://control-plane.local" {
 			t.Fatalf("control plane url = %q", request.ControlPlaneURL)
+		}
+		if request.Request.SkillRiskPolicy != protocol.SkillRiskPolicyBlockDestructive {
+			t.Fatalf("skill risk policy = %q, want block-destructive", request.Request.SkillRiskPolicy)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("runtime did not receive dispatch request")

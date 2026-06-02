@@ -47,17 +47,19 @@ func (d *HTTPDispatcher) Dispatch(ctx context.Context, run protocol.Run, userMes
 
 func (d *HTTPDispatcher) dispatch(ctx context.Context, run protocol.Run, userMessage string) {
 	runtimeSkills := app.RuntimeSkillsForRun(d.repo, run)
+	runtimePolicy := app.RuntimePolicyForRun(d.repo, run)
 	skills := app.SkillIDsFromRuntimeSkills(runtimeSkills)
 	request := protocol.RunExecutionRequest{
 		Request: protocol.RunRequest{
-			RunID:       run.ID,
-			ChatID:      run.ChatID,
-			UserID:      run.UserID,
-			WorkspaceID: run.WorkspaceID,
-			AttemptID:   firstNonEmpty(run.AttemptID, platform.NewID("attempt")),
-			SkillIDs:    skills,
-			Skills:      runtimeSkills,
-			ModelPolicy: "mock-default",
+			RunID:           run.ID,
+			ChatID:          run.ChatID,
+			UserID:          run.UserID,
+			WorkspaceID:     run.WorkspaceID,
+			AttemptID:       firstNonEmpty(run.AttemptID, platform.NewID("attempt")),
+			SkillIDs:        skills,
+			Skills:          runtimeSkills,
+			ModelPolicy:     "mock-default",
+			SkillRiskPolicy: runtimePolicy.SkillRiskPolicy,
 		},
 		UserMessage:     userMessage,
 		ControlPlaneURL: d.controlPlaneURL,

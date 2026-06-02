@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"niceagent/common/protocol"
 )
 
 type Config struct {
@@ -150,7 +152,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("REDIS_ADDR is required when SKILL_RATE_LIMIT_MODE=redis")
 	}
 	switch c.SkillRiskPolicy {
-	case "", "allow", "block-high", "block-destructive", "read-only":
+	case "", protocol.SkillRiskPolicyAllow, protocol.SkillRiskPolicyBlockHigh, protocol.SkillRiskPolicyBlockDestructive, protocol.SkillRiskPolicyReadOnly:
 	default:
 		return fmt.Errorf("unsupported SKILL_RISK_POLICY %q", c.SkillRiskPolicy)
 	}

@@ -112,6 +112,17 @@ func RuntimeSkillsForRun(repo Repository, run protocol.Run) []protocol.RuntimeSk
 	return repo.ListRuntimeSkillsForUser(run.UserID, chat.ProjectID)
 }
 
+func RuntimePolicyForRun(repo Repository, run protocol.Run) protocol.ProjectRuntimePolicy {
+	chat, _, err := repo.GetChat(run.ChatID)
+	if err != nil {
+		return protocol.ProjectRuntimePolicy{ProjectID: "", SkillRiskPolicy: protocol.SkillRiskPolicyAllow}
+	}
+	if policy, ok := repo.GetProjectRuntimePolicy(chat.ProjectID); ok {
+		return policy
+	}
+	return protocol.ProjectRuntimePolicy{ProjectID: chat.ProjectID, SkillRiskPolicy: protocol.SkillRiskPolicyAllow}
+}
+
 func SkillIDsForRun(repo Repository, run protocol.Run) []string {
 	return SkillIDsFromRuntimeSkills(RuntimeSkillsForRun(repo, run))
 }

@@ -662,6 +662,29 @@ func TestStoreManagesProjectQuotaPolicy(t *testing.T) {
 	}
 }
 
+func TestStoreManagesProjectRuntimePolicy(t *testing.T) {
+	store := NewStore()
+	if _, ok := store.GetProjectRuntimePolicy(app.DemoProjectID); ok {
+		t.Fatal("unexpected default project runtime policy")
+	}
+	policy, err := store.SetProjectRuntimePolicy(app.DemoProjectID, protocol.ProjectRuntimePolicyInput{
+		SkillRiskPolicy: protocol.SkillRiskPolicyBlockDestructive,
+	})
+	if err != nil {
+		t.Fatalf("set runtime policy: %v", err)
+	}
+	if policy.ProjectID != app.DemoProjectID || policy.SkillRiskPolicy != protocol.SkillRiskPolicyBlockDestructive {
+		t.Fatalf("policy = %#v", policy)
+	}
+	got, ok := store.GetProjectRuntimePolicy(app.DemoProjectID)
+	if !ok || got.SkillRiskPolicy != protocol.SkillRiskPolicyBlockDestructive {
+		t.Fatalf("got policy = %#v ok=%v", got, ok)
+	}
+	if _, err := store.SetProjectRuntimePolicy(app.DemoProjectID, protocol.ProjectRuntimePolicyInput{SkillRiskPolicy: "nope"}); err != app.ErrInvalidInput {
+		t.Fatalf("invalid runtime policy err = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestStoreCountsRunsForQuota(t *testing.T) {
 	store := NewStore()
 	chat := mustCreateChat(t, store, "demo-user", "quota")

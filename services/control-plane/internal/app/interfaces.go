@@ -96,6 +96,8 @@ type Repository interface {
 	RemoveProjectMember(projectID, userID string) (protocol.ProjectMember, error)
 	GetProjectQuotaPolicy(projectID string) (protocol.ProjectQuotaPolicy, bool)
 	SetProjectQuotaPolicy(projectID string, input protocol.ProjectQuotaPolicyInput) (protocol.ProjectQuotaPolicy, error)
+	GetProjectRuntimePolicy(projectID string) (protocol.ProjectRuntimePolicy, bool)
+	SetProjectRuntimePolicy(projectID string, input protocol.ProjectRuntimePolicyInput) (protocol.ProjectRuntimePolicy, error)
 	ClaimRunAttempt(runID, attemptID, claimedBy string, leaseExpiresAt time.Time) (protocol.Run, error)
 	CheckRunAttempt(runID, attemptID string) (protocol.Run, error)
 	UpdateRunStatus(runID string, status protocol.RunStatus, errMessage string) (protocol.Run, error)

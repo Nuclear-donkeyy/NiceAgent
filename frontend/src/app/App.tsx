@@ -45,12 +45,15 @@ export default function App() {
 
         <SkillPanel
           groups={workspace.skillGroups}
+          runtimePolicy={workspace.runtimePolicy}
+          runtimePolicyLoading={workspace.runtimePolicyLoading}
           onCreateHTTPSkill={workspace.createHTTPSkill}
           onCreateOpenAPIImportedSkill={workspace.createOpenAPIImportedSkill}
           onCreateMCPImportedSkill={workspace.createMCPImportedSkill}
           onPreviewOpenAPIImport={workspace.previewOpenAPIImport}
           onPreviewMCPImport={workspace.previewMCPImport}
           onSetSkillEnabled={workspace.setSkillEnabled}
+          onUpdateRuntimeRiskPolicy={workspace.updateRuntimeRiskPolicy}
         />
       </aside>
 

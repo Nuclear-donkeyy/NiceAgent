@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import * as artifactApi from "../api/artifacts";
 import * as chatApi from "../api/chats";
+import * as projectApi from "../api/projects";
 import * as runApi from "../api/runs";
 import * as skillApi from "../api/skills";
 import type { Artifact } from "../domain/artifact";
 import type { ChatSession, Message } from "../domain/chat";
+import type { ProjectRuntimePolicy, SkillRiskPolicy } from "../domain/project";
 import type {
   HTTPSkillInput,
   MCPImportCreateInput,
@@ -22,6 +24,11 @@ import { runEventTypes, statusText } from "../domain/labels";
 import { foldRunEvent, statusFromRunEventType } from "./runEvents";
 
 const emptySkillGroups: SkillGroups = { system: [], user: [] };
+const demoProjectID = "demo-project";
+const defaultRuntimePolicy: ProjectRuntimePolicy = {
+  project_id: demoProjectID,
+  skill_risk_policy: "allow",
+};
 
 export function useNiceAgentWorkspace() {
   const [chats, setChats] = useState<ChatSession[]>([]);
@@ -29,6 +36,8 @@ export function useNiceAgentWorkspace() {
   const [activeChat, setActiveChat] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [skillGroups, setSkillGroups] = useState<SkillGroups>(emptySkillGroups);
+  const [runtimePolicy, setRuntimePolicy] = useState<ProjectRuntimePolicy>(defaultRuntimePolicy);
+  const [runtimePolicyLoading, setRuntimePolicyLoading] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatus>("idle");
   const [assistantDraft, setAssistantDraft] = useState("");
@@ -84,7 +93,7 @@ export function useNiceAgentWorkspace() {
 
   async function boot() {
     try {
-      await Promise.all([loadChats(true), loadSkills()]);
+      await Promise.all([loadChats(true), loadSkills(), loadRuntimePolicy()]);
     } catch (error) {
       setNotice(errorMessage(error));
     }
@@ -110,6 +119,35 @@ export function useNiceAgentWorkspace() {
 
   async function loadSkills() {
     setSkillGroups(await skillApi.listSkills());
+  }
+
+  async function loadRuntimePolicy() {
+    setRuntimePolicyLoading(true);
+    try {
+      setRuntimePolicy(await projectApi.getProjectRuntimePolicy(demoProjectID));
+    } catch (error) {
+      const message = errorMessage(error);
+      setNotice(`运行策略加载失败：${message}`);
+    } finally {
+      setRuntimePolicyLoading(false);
+    }
+  }
+
+  async function updateRuntimeRiskPolicy(policy: SkillRiskPolicy) {
+    setRuntimePolicyLoading(true);
+    try {
+      const updated = await projectApi.updateProjectRuntimePolicy(demoProjectID, {
+        skill_risk_policy: policy,
+      });
+      setRuntimePolicy(updated);
+      setNotice("项目运行策略已更新");
+    } catch (error) {
+      const message = errorMessage(error);
+      setNotice(`更新运行策略失败：${message}`);
+      throw new Error(message, { cause: error });
+    } finally {
+      setRuntimePolicyLoading(false);
+    }
   }
 
   async function createHTTPSkill(inputValue: HTTPSkillInput) {
@@ -411,6 +449,8 @@ export function useNiceAgentWorkspace() {
     messageLoading,
     notice,
     refreshChats: () => loadChats(false),
+    runtimePolicy,
+    runtimePolicyLoading,
     runStatus,
     selectChat,
     sendMessage,
@@ -422,6 +462,7 @@ export function useNiceAgentWorkspace() {
     setSkillEnabled,
     showArchived,
     skillGroups,
+    updateRuntimeRiskPolicy,
     visibleMessages,
   };
 }

@@ -156,6 +156,12 @@ func (b *DefaultToolBridge) BuildTools(req protocol.RunRequest, sink EventSink) 
 			runtimeSkills = append(runtimeSkills, protocol.RuntimeSkill{Skill: protocol.Skill{ID: id, Name: id, Kind: protocol.SkillKindBuiltin, Scope: protocol.SkillScopeSystem, Enabled: true}})
 		}
 	}
+	riskPolicy := b.RiskPolicy
+	if strings.TrimSpace(req.SkillRiskPolicy) != "" {
+		if normalized := protocol.NormalizeSkillRiskPolicy(req.SkillRiskPolicy); normalized != "" {
+			riskPolicy = SkillRiskPolicy(normalized)
+		}
+	}
 	tools := make([]tool.BaseTool, 0, len(runtimeSkills))
 	for _, runtimeSkill := range runtimeSkills {
 		if runtimeSkill.Skill.ID == "" || !runtimeSkill.Skill.Enabled {
@@ -166,6 +172,7 @@ func (b *DefaultToolBridge) BuildTools(req protocol.RunRequest, sink EventSink) 
 			runID:        req.RunID,
 			workspaceID:  req.WorkspaceID,
 			runtimeSkill: runtimeSkill,
+			riskPolicy:   riskPolicy,
 			sink:         sink,
 		})
 	}
@@ -177,6 +184,7 @@ type runtimeTool struct {
 	runID        string
 	workspaceID  string
 	runtimeSkill protocol.RuntimeSkill
+	riskPolicy   SkillRiskPolicy
 	sink         EventSink
 }
 
@@ -246,7 +254,7 @@ func (t *runtimeTool) InvokableRun(ctx context.Context, argumentsInJSON string, 
 }
 
 func (t *runtimeTool) enforceRiskPolicy(skill protocol.Skill, toolName string) (string, bool) {
-	decision := evaluateSkillRiskPolicy(t.bridge.RiskPolicy, skill)
+	decision := evaluateSkillRiskPolicy(t.riskPolicy, skill)
 	if decision.Allowed {
 		return "", true
 	}

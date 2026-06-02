@@ -238,6 +238,39 @@ func TestToolBridgeBlocksHighRiskSkillByPolicy(t *testing.T) {
 	}
 }
 
+func TestToolBridgeRunRequestRiskPolicyOverridesRuntimeDefault(t *testing.T) {
+	executor := &recordingSandboxExecutor{}
+	bridge := NewDefaultToolBridge(executor)
+	bridge.RiskPolicy = SkillRiskPolicyAllow
+	sink := &eventRecordingSink{}
+	runtimeTools := bridge.BuildTools(protocol.RunRequest{
+		RunID:           "run_1",
+		WorkspaceID:     "ws_1",
+		SkillRiskPolicy: protocol.SkillRiskPolicyBlockHigh,
+		Skills: []protocol.RuntimeSkill{{
+			Skill: protocol.Skill{
+				ID:          "cli.exec",
+				Kind:        protocol.SkillKindBuiltin,
+				Scope:       protocol.SkillScopeSystem,
+				Risk:        protocol.SkillRiskHigh,
+				Annotations: `{"readOnlyHint":true,"destructiveHint":false}`,
+				Enabled:     true,
+			},
+		}},
+	}, sink)
+
+	output, err := runtimeTools[0].(einotool.InvokableTool).InvokableRun(context.Background(), `{"command":["echo","hello"]}`)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if executor.called {
+		t.Fatal("sandbox executor should not run when request risk policy denies the skill")
+	}
+	if !strings.Contains(output, "skill_policy_denied") || !strings.Contains(output, "block-high") {
+		t.Fatalf("policy output = %s", output)
+	}
+}
+
 func TestToolBridgeReadOnlyPolicyUsesAnnotations(t *testing.T) {
 	bridge := NewDefaultToolBridge(&recordingSandboxExecutor{})
 	bridge.RiskPolicy = SkillRiskPolicyReadOnly

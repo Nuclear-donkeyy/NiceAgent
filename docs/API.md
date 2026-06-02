@@ -521,6 +521,32 @@ X-NiceAgent-Webhook-Signature: sha256=...
 }
 ```
 
+`GET /api/projects/{project_id}/runtime-policy`
+
+获取当前项目的有效 Runtime policy。若项目尚未持久化配置，则返回默认 `skill_risk_policy=allow`。该策略会在 Control Plane 创建 HTTP dispatch payload 或 Redis execution context 时下发到 `RunRequest.skill_risk_policy`，使同一组 Agent Runtime 可以按项目执行不同的 skill 风险门禁。
+
+```json
+{
+  "policy": {
+    "project_id": "demo-project",
+    "skill_risk_policy": "block-destructive"
+  }
+}
+```
+
+`PATCH /api/projects/{project_id}/runtime-policy`
+
+设置当前项目的持久 Runtime policy，只允许 `owner/admin`。当前字段：
+
+- `skill_risk_policy=allow`：只使用用户/项目授权列表，不额外阻断风险 skill。
+- `skill_risk_policy=block-high`：阻断 `risk=high` 的 skill。
+- `skill_risk_policy=block-destructive`：阻断 `annotations.destructiveHint=true` 的 skill。
+- `skill_risk_policy=read-only`：仅允许 `readOnlyHint=true` 且非 destructive/high risk 的 skill。
+
+```json
+{ "skill_risk_policy": "read-only" }
+```
+
 `GET /api/projects/{project_id}/usage?window=24h|7d|30d`
 
 按 provider、model、currency、`estimated` 和 `token_estimator` 聚合当前项目的 run usage，只允许 `owner/admin`。`project_id` 必须等于当前 actor 所在项目。默认窗口为 `24h`；也可以传 `since=<RFC3339>` 做自定义起点，此时响应中的 `window` 为 `custom`。该接口面向用量看板和账单维度分析，不改变 quota 判定逻辑。
@@ -868,7 +894,7 @@ Sandbox Executor 支持 `EXECUTOR_MODE=local|container`。`container` 模式可�
 
 Skill 元数据以 `skills` 和 `skill_versions` 为权威，`skill_grants` 表示用户/项目可用性，`skill_secrets` 只保存 secret 引用或本地开发密文。`input_schema`、`output_schema`、`annotations` 和 `runtime_config` 使用 JSON/JSONB；`annotations` 采用 MCP 风格字段，例如 `readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`。当前用户 Skill 支持 `kind=http` 和 `kind=mcp`：HTTP Skill 直接调用配置的 HTTPS endpoint；MCP Skill 通过最小 HTTP JSON-RPC `tools/call` adapter 调用远端 MCP-compatible endpoint。
 
-Agent Runtime 可通过 `SKILL_RISK_POLICY=allow|block-high|block-destructive|read-only` 在执行前拦截不符合策略的 skill。被拦截的调用会返回 `skill_policy_denied` 结构化 observation，并写入 `tool.output` / `tool.finished` 事件；Runtime 不会发起真实 tool 请求，也不会预占 skill quota。该配置不改变外部 Web API 或 `RunExecutionRequest` 结构。
+Agent Runtime 可通过 `SKILL_RISK_POLICY=allow|block-high|block-destructive|read-only` 配置默认风险门禁；Control Plane 也可以通过项目级 Runtime policy 把 `RunRequest.skill_risk_policy` 下发给单次 run，并优先覆盖 Runtime 默认值。被拦截的调用会返回 `skill_policy_denied` 结构化 observation，并写入 `tool.output` / `tool.finished` 事件；Runtime 不会发起真实 tool 请求，也不会预占 skill quota。
 
 Agent Runtime 可以使用 mock provider 或 OpenAI-compatible provider。当前主执行路径通过 Eino ADK `ChatModelAgent + Runner` 和 Eino 原生 `ToolCallingChatModel` 运行 agentic loop；模型输出仍通过 `model.token` 类型的 `RunEvent` 写回 Control Plane，并由前端折叠成 assistant 消息。
 

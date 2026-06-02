@@ -1457,6 +1457,42 @@ func (s *PostgresStore) SetProjectQuotaPolicy(projectID string, input protocol.P
 	return policy, nil
 }
 
+func (s *PostgresStore) GetProjectRuntimePolicy(projectID string) (protocol.ProjectRuntimePolicy, bool) {
+	var policy protocol.ProjectRuntimePolicy
+	err := s.queryRow(`
+		SELECT project_id, skill_risk_policy, created_at, updated_at
+		FROM project_runtime_policies
+		WHERE project_id = $1`, projectID).Scan(
+		&policy.ProjectID, &policy.SkillRiskPolicy, &policy.CreatedAt, &policy.UpdatedAt,
+	)
+	if err != nil {
+		return protocol.ProjectRuntimePolicy{}, false
+	}
+	return policy, true
+}
+
+func (s *PostgresStore) SetProjectRuntimePolicy(projectID string, input protocol.ProjectRuntimePolicyInput) (protocol.ProjectRuntimePolicy, error) {
+	riskPolicy := protocol.NormalizeSkillRiskPolicy(strings.TrimSpace(input.SkillRiskPolicy))
+	if riskPolicy == "" {
+		return protocol.ProjectRuntimePolicy{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	var policy protocol.ProjectRuntimePolicy
+	err := s.queryRow(`
+		INSERT INTO project_runtime_policies (project_id, skill_risk_policy, created_at, updated_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (project_id)
+		DO UPDATE SET skill_risk_policy = EXCLUDED.skill_risk_policy, updated_at = EXCLUDED.updated_at
+		RETURNING project_id, skill_risk_policy, created_at, updated_at`,
+		projectID, riskPolicy, now, now).Scan(
+		&policy.ProjectID, &policy.SkillRiskPolicy, &policy.CreatedAt, &policy.UpdatedAt,
+	)
+	if err != nil {
+		return protocol.ProjectRuntimePolicy{}, err
+	}
+	return policy, nil
+}
+
 func (s *PostgresStore) ClaimRunAttempt(runID, attemptID, claimedBy string, leaseExpiresAt time.Time) (protocol.Run, error) {
 	now := time.Now().UTC()
 	tx, err := s.begin()

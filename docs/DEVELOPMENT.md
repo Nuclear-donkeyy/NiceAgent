@@ -118,7 +118,7 @@ QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL=
 
 超过配额时，`POST /api/chats/{chat_id}/messages` 会返回 `429`，并写入 `quota.run.create` deny audit event。默认 `QUOTA_COUNTER_MODE=repository` 直接按 repository 统计；需要更接近多副本部署时可设 `QUOTA_COUNTER_MODE=redis`，让并发 run 和每小时 run 数先走 Redis 预占。`QUOTA_MODEL_TOKEN_RESERVATION_MODE=fixed` 时使用 `QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN` 固定预占；设为 `dynamic` 时会按当前用户消息长度估算 input tokens，并叠加 `QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER` 作为输出缓冲，run 结束时再按真实 `RunUsage.total_tokens` 结算差额。`QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL` 可指定动态预占使用的 tokenizer 模型，例如 `gpt-4o` 或 `deepseek-chat`；为空或未知模型时回退到 `heuristic_rune_div4`。tool calls 和 sandbox seconds 会先按已有 `RunUsage` 做 run 创建保护，并在 Runtime 每次调用 tool 前通过内部 quota reserve 做最小实时预占；更细粒度账单维度和分布式强一致 token bucket 仍是后续工作。
 
-Runtime 可用 `SKILL_RISK_POLICY` 做额外 skill 风险门禁：`allow` 保持本地开发默认行为，`block-high` 拒绝 `risk=high`，`block-destructive` 拒绝 `destructiveHint=true`，`read-only` 只允许 `readOnlyHint=true` 且非 destructive/high risk 的能力。策略拒绝会作为 `skill_policy_denied` observation 返回给 agent，不会调用真实 tool，也不会预占 tool quota。
+Runtime 可用 `SKILL_RISK_POLICY` 做额外 skill 风险门禁：`allow` 保持本地开发默认行为，`block-high` 拒绝 `risk=high`，`block-destructive` 拒绝 `destructiveHint=true`，`read-only` 只允许 `readOnlyHint=true` 且非 destructive/high risk 的能力。项目级配置可通过 `GET/PATCH /api/projects/{project_id}/runtime-policy` 管理，并会随 run 下发为 `RunRequest.skill_risk_policy`，优先覆盖 Runtime 默认值。策略拒绝会作为 `skill_policy_denied` observation 返回给 agent，不会调用真实 tool，也不会预占 tool quota。
 
 Agent Runtime 默认使用 `MODEL_PROVIDER=mock`。如需接 OpenAI-compatible 模型服务：
 

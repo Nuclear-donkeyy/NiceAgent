@@ -36,6 +36,7 @@ type Store struct {
 	orgRoles         map[string][]string
 	projectRoles     map[string][]string
 	quotaPolicies    map[string]protocol.ProjectQuotaPolicy
+	runtimePolicies  map[string]protocol.ProjectRuntimePolicy
 	subscribers      map[string]map[chan protocol.RunEvent]struct{}
 	seq              map[string]int64
 }
@@ -65,6 +66,7 @@ func NewStore() *Store {
 		orgRoles:         map[string][]string{},
 		projectRoles:     map[string][]string{},
 		quotaPolicies:    map[string]protocol.ProjectQuotaPolicy{},
+		runtimePolicies:  map[string]protocol.ProjectRuntimePolicy{},
 		subscribers:      map[string]map[chan protocol.RunEvent]struct{}{},
 		seq:              map[string]int64{},
 	}
@@ -1027,6 +1029,32 @@ func (s *Store) SetProjectQuotaPolicy(projectID string, input protocol.ProjectQu
 	policy.MaxSandboxSecondsPerDay = input.MaxSandboxSecondsPerDay
 	policy.UpdatedAt = now
 	s.quotaPolicies[projectID] = policy
+	return policy, nil
+}
+
+func (s *Store) GetProjectRuntimePolicy(projectID string) (protocol.ProjectRuntimePolicy, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	policy, ok := s.runtimePolicies[projectID]
+	return policy, ok
+}
+
+func (s *Store) SetProjectRuntimePolicy(projectID string, input protocol.ProjectRuntimePolicyInput) (protocol.ProjectRuntimePolicy, error) {
+	riskPolicy := protocol.NormalizeSkillRiskPolicy(strings.TrimSpace(input.SkillRiskPolicy))
+	if riskPolicy == "" {
+		return protocol.ProjectRuntimePolicy{}, app.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	policy := s.runtimePolicies[projectID]
+	if policy.CreatedAt.IsZero() {
+		policy.CreatedAt = now
+	}
+	policy.ProjectID = projectID
+	policy.SkillRiskPolicy = riskPolicy
+	policy.UpdatedAt = now
+	s.runtimePolicies[projectID] = policy
 	return policy, nil
 }
 

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 
 import { Empty } from "../../components/Empty";
 import { SectionTitle } from "../../components/SectionTitle";
+import type { ProjectRuntimePolicy, SkillRiskPolicy } from "../../domain/project";
 import type {
   HTTPSkillImportCandidate,
   HTTPSkillInput,
@@ -75,6 +76,8 @@ const defaultMCPPreviewForm: MCPPreviewFormState = {
 
 interface SkillPanelProps {
   groups: SkillGroups;
+  runtimePolicy: ProjectRuntimePolicy;
+  runtimePolicyLoading: boolean;
   onCreateHTTPSkill: (input: HTTPSkillInput) => Promise<void>;
   onCreateOpenAPIImportedSkill: (input: OpenAPIImportCreateInput) => Promise<void>;
   onCreateMCPImportedSkill: (input: MCPImportCreateInput) => Promise<void>;
@@ -83,16 +86,20 @@ interface SkillPanelProps {
   ) => Promise<OpenAPIImportPreviewResponse>;
   onPreviewMCPImport: (input: MCPImportPreviewInput) => Promise<MCPImportPreviewResponse>;
   onSetSkillEnabled: (skillID: string, enabled: boolean) => Promise<void>;
+  onUpdateRuntimeRiskPolicy: (policy: SkillRiskPolicy) => Promise<void>;
 }
 
 export function SkillPanel({
   groups,
+  runtimePolicy,
+  runtimePolicyLoading,
   onCreateHTTPSkill,
   onCreateOpenAPIImportedSkill,
   onCreateMCPImportedSkill,
   onPreviewOpenAPIImport,
   onPreviewMCPImport,
   onSetSkillEnabled,
+  onUpdateRuntimeRiskPolicy,
 }: SkillPanelProps) {
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<HTTPSkillInput>(defaultForm);
@@ -115,6 +122,7 @@ export function SkillPanel({
   const [savingMCP, setSavingMCP] = useState(false);
   const [pendingSkillID, setPendingSkillID] = useState("");
   const [actionError, setActionError] = useState("");
+  const [policyError, setPolicyError] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -155,6 +163,15 @@ export function SkillPanel({
       setActionError(`Skill 更新失败：${errorMessage(error)}`);
     } finally {
       setPendingSkillID("");
+    }
+  }
+
+  async function updateRiskPolicy(policy: SkillRiskPolicy) {
+    setPolicyError("");
+    try {
+      await onUpdateRuntimeRiskPolicy(policy);
+    } catch (error) {
+      setPolicyError(`运行策略更新失败：${errorMessage(error)}`);
     }
   }
 
@@ -287,6 +304,29 @@ export function SkillPanel({
 
   return (
     <>
+      <SectionTitle text="项目运行策略" />
+      <div className={styles.policyBox}>
+        <label className={styles.field}>
+          <span>Skill 风险门禁</span>
+          <select
+            disabled={runtimePolicyLoading}
+            value={runtimePolicy.skill_risk_policy}
+            onChange={(event) => void updateRiskPolicy(event.target.value as SkillRiskPolicy)}
+          >
+            <option value="allow">允许全部已授权 Skill</option>
+            <option value="block-high">阻断高风险 Skill</option>
+            <option value="block-destructive">阻断破坏性 Skill</option>
+            <option value="read-only">仅允许只读 Skill</option>
+          </select>
+        </label>
+        <p className={styles.hint}>{riskPolicyDescription(runtimePolicy.skill_risk_policy)}</p>
+        {policyError && (
+          <p className={styles.formError} role="alert">
+            {policyError}
+          </p>
+        )}
+      </div>
+
       <SectionTitle text="系统能力" />
       <div className={styles.list}>
         {groups.system.map((skill) => (
@@ -925,6 +965,19 @@ function parseJSONSummary(value: string | undefined): unknown {
     return JSON.parse(value) as unknown;
   } catch {
     return value;
+  }
+}
+
+function riskPolicyDescription(policy: SkillRiskPolicy) {
+  switch (policy) {
+    case "block-high":
+      return "Runtime 会在执行前阻断 risk=high 的 skill。";
+    case "block-destructive":
+      return "Runtime 会阻断 annotations.destructiveHint=true 的 skill。";
+    case "read-only":
+      return "Runtime 仅允许标记 readOnlyHint=true 且非破坏性的 skill。";
+    default:
+      return "Runtime 使用项目授权列表，不额外阻断风险 skill。";
   }
 }
 

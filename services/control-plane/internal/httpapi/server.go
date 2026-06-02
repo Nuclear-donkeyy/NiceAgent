@@ -747,6 +747,18 @@ func (s *Server) projectSubroutes(w http.ResponseWriter, r *http.Request) {
 		platform.WriteError(w, http.StatusNotFound, "project route not found")
 		return
 	}
+	if parts[1] == "runtime-policy" {
+		if len(parts) == 2 && r.Method == http.MethodGet {
+			platform.WriteJSON(w, http.StatusOK, protocol.ProjectRuntimePolicyResponse{Policy: s.effectiveRuntimePolicy(projectID)})
+			return
+		}
+		if len(parts) == 2 && r.Method == http.MethodPatch {
+			s.updateProjectRuntimePolicy(w, r, projectID)
+			return
+		}
+		platform.WriteError(w, http.StatusNotFound, "project route not found")
+		return
+	}
 	if parts[1] == "usage" {
 		if len(parts) == 2 && r.Method == http.MethodGet {
 			s.projectUsage(w, r, projectID)
@@ -1088,6 +1100,31 @@ func (s *Server) updateProjectQuotaPolicy(w http.ResponseWriter, r *http.Request
 		"max_model_tokens_per_day": policy.MaxModelTokensPerDay,
 	})
 	platform.WriteJSON(w, http.StatusOK, protocol.ProjectQuotaPolicyResponse{Policy: policy})
+}
+
+func (s *Server) updateProjectRuntimePolicy(w http.ResponseWriter, r *http.Request, projectID string) {
+	if !s.requireProjectAdminRole(w, r, "project.runtime_policy.update", "project", projectID, "") {
+		return
+	}
+	var input protocol.ProjectRuntimePolicyInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		platform.WriteError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	input.SkillRiskPolicy = strings.TrimSpace(input.SkillRiskPolicy)
+	if protocol.NormalizeSkillRiskPolicy(input.SkillRiskPolicy) == "" {
+		platform.WriteError(w, http.StatusBadRequest, "unsupported skill_risk_policy")
+		return
+	}
+	policy, err := s.repo.SetProjectRuntimePolicy(projectID, input)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	s.auditAllow(r, "project.runtime_policy.update", "project", projectID, "", map[string]any{
+		"skill_risk_policy": policy.SkillRiskPolicy,
+	})
+	platform.WriteJSON(w, http.StatusOK, protocol.ProjectRuntimePolicyResponse{Policy: policy})
 }
 
 func (s *Server) upsertProjectMember(w http.ResponseWriter, r *http.Request, projectID, pathUserID string) {
@@ -1565,16 +1602,18 @@ func (s *Server) internalRunExecutionContext(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	runtimeSkills := app.RuntimeSkillsForRun(s.repo, run)
+	runtimePolicy := app.RuntimePolicyForRun(s.repo, run)
 	platform.WriteJSON(w, http.StatusOK, protocol.RunExecutionRequest{
 		Request: protocol.RunRequest{
-			RunID:       run.ID,
-			ChatID:      run.ChatID,
-			UserID:      run.UserID,
-			WorkspaceID: run.WorkspaceID,
-			AttemptID:   firstNonEmpty(r.URL.Query().Get("attempt_id"), run.AttemptID),
-			SkillIDs:    app.SkillIDsFromRuntimeSkills(runtimeSkills),
-			Skills:      runtimeSkills,
-			ModelPolicy: "mock-default",
+			RunID:           run.ID,
+			ChatID:          run.ChatID,
+			UserID:          run.UserID,
+			WorkspaceID:     run.WorkspaceID,
+			AttemptID:       firstNonEmpty(r.URL.Query().Get("attempt_id"), run.AttemptID),
+			SkillIDs:        app.SkillIDsFromRuntimeSkills(runtimeSkills),
+			Skills:          runtimeSkills,
+			ModelPolicy:     "mock-default",
+			SkillRiskPolicy: runtimePolicy.SkillRiskPolicy,
 		},
 		UserMessage:     userMessage.Content,
 		ControlPlaneURL: s.publicControlPlaneURL(r),
@@ -2167,6 +2206,16 @@ func (s *Server) effectiveQuotaPolicy(projectID string) protocol.ProjectQuotaPol
 		MaxModelTokensPerDay:    s.runQuota.MaxTokensPerDay,
 		MaxToolCallsPerDay:      s.runQuota.MaxToolCallsPerDay,
 		MaxSandboxSecondsPerDay: s.runQuota.MaxSandboxSecondsPerDay,
+	}
+}
+
+func (s *Server) effectiveRuntimePolicy(projectID string) protocol.ProjectRuntimePolicy {
+	if policy, ok := s.repo.GetProjectRuntimePolicy(projectID); ok {
+		return policy
+	}
+	return protocol.ProjectRuntimePolicy{
+		ProjectID:       projectID,
+		SkillRiskPolicy: protocol.SkillRiskPolicyAllow,
 	}
 }
 
