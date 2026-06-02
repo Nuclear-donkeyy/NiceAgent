@@ -284,6 +284,26 @@ func (t *runtimeTool) enforceRiskPolicy(skill protocol.Skill, toolName string) (
 	return output, false
 }
 
+func (t *runtimeTool) recordRateLimitDenial(kind protocol.SkillKind) {
+	t.bridge.Metrics.IncCounter("niceagent_skill_rate_limit_denials_total", platform.Labels{
+		"kind": string(kind),
+		"mode": skillRateLimitMode(t.bridge.RateLimiter),
+	})
+}
+
+func skillRateLimitMode(limiter SkillRateLimiter) string {
+	switch limiter.(type) {
+	case nil:
+		return "none"
+	case *RedisSkillRateLimiter:
+		return "redis"
+	case *LocalSkillRateLimiter:
+		return "local"
+	default:
+		return "custom"
+	}
+}
+
 func (t *runtimeTool) registerArtifactsFromOutput(ctx context.Context, output string) string {
 	registrar, ok := t.sink.(ArtifactRegistrar)
 	if !ok {

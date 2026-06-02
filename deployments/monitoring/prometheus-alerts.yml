@@ -51,6 +51,17 @@ groups:
           summary: "NiceAgent skill risk policy is denying tool calls"
           description: "Skill risk policy {{ $labels.policy }} is denying {{ $labels.kind }} skills because {{ $labels.reason }}."
 
+      - alert: NiceAgentSkillRateLimitDenials
+        expr: |
+          sum by (kind, mode) (rate(niceagent_skill_rate_limit_denials_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: info
+          component: skill-rate-limit
+        annotations:
+          summary: "NiceAgent skill rate limits are denying tool calls"
+          description: "{{ $labels.kind }} skills are hitting rate limits in {{ $labels.mode }} mode."
+
       - alert: NiceAgentModelProviderErrors
         expr: |
           sum by (provider, model, error_class) (

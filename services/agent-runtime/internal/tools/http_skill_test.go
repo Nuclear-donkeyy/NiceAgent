@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"niceagent/common/platform"
 	"niceagent/common/protocol"
 )
 
@@ -365,6 +366,10 @@ func TestHTTPSkillRateLimitReturnsObservationWithoutRequest(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("calls = %d, want only first request", calls)
 	}
+	renderedMetrics := runtimeTool.bridge.Metrics.Render()
+	if !strings.Contains(renderedMetrics, `niceagent_skill_rate_limit_denials_total{service="agent_runtime_tool_test",kind="http",mode="local"} 1`) {
+		t.Fatalf("metrics body = %s", renderedMetrics)
+	}
 }
 
 func TestHTTPSkillRejectsPrivateAddressWithoutRequest(t *testing.T) {
@@ -501,6 +506,7 @@ func TestSSRFGuardedDialerRejectsReboundPrivateAddress(t *testing.T) {
 func newTestHTTPSkillTool(transport http.RoundTripper) *runtimeTool {
 	bridge := NewDefaultToolBridge(nil)
 	bridge.Client = &http.Client{Transport: transport}
+	bridge.Metrics = platform.NewMetrics("agent_runtime_tool_test")
 	bridge.Resolver = resolverFunc(func(_ context.Context, _ string) ([]net.IPAddr, error) {
 		return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
 	})

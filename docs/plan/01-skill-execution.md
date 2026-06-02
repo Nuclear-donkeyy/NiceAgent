@@ -62,7 +62,7 @@ HTTP dispatcher 已经把完整 `RuntimeSkill` 下发给 Runtime。Redis queue �
 
 - Vault、KMS、External Secrets 等生产 secret resolver。
 - 完整 MCP stdio/SSE/streamable HTTP transport、initialize/session negotiation 和动态 tool list invalidation。
-- 容量看板和 Redis rate limit 容量/告警。
+- 生产级容量看板、Redis rate limit 容量建议和告警联动排障模板；Runtime rate limit denial metric 与 Prometheus 告警样例已有最小版本。
 
 ## 扩展点
 
@@ -128,7 +128,7 @@ OpenAPI/MCP 导入放在下一层：
 1. 最小生产闭环：schema validation、HTTP Skill 错误模型、secret redaction、Runtime 输入校验。
 2. Secret resolver：本地开发继续支持 `encrypted_value`，`env://` 和 `file://` secret_ref 已可用；生产继续补阿里云 KMS/Vault/External Secrets 原生 resolver。
 3. 导入能力：OpenAPI JSON/YAML dry-run API 与最小保存向导已落地；MCP manifest preview、保存 API、前端导入入口和 Runtime 最小 HTTP JSON-RPC 执行 adapter 已落地；继续实现完整 MCP transport/session 支持和更完整前端导入体验。
-4. 治理能力：Runtime 进程内和 Redis 跨副本 per-skill rate limit 已有最小闭环；`SKILL_RISK_POLICY` 已提供 Runtime 默认风险门禁；项目级 `skill_risk_policy` 持久化、API、下发和前端展示已有最小闭环；风险策略命中会进入 `niceagent_skill_policy_denials_total`，并已有 Prometheus 告警样例；`audit_events` 和 `skill_invocations` 已记录脱敏 skill invocation 起止轨迹；后续继续补容量看板和更完整 metrics/tracing。
+4. 治理能力：Runtime 进程内和 Redis 跨副本 per-skill rate limit 已有最小闭环；rate limit 命中会进入 `niceagent_skill_rate_limit_denials_total`，并已有 Prometheus 告警样例；`SKILL_RISK_POLICY` 已提供 Runtime 默认风险门禁；项目级 `skill_risk_policy` 持久化、API、下发和前端展示已有最小闭环；风险策略命中会进入 `niceagent_skill_policy_denials_total`，并已有 Prometheus 告警样例；`audit_events` 和 `skill_invocations` 已记录脱敏 skill invocation 起止轨迹；后续继续补生产级容量看板和更完整 metrics/tracing。
 
 ## 风险与验收
 
@@ -148,7 +148,7 @@ OpenAPI/MCP 导入放在下一层：
 - timeout、DNS、TLS、非 2xx、invalid output 均转成结构化 tool observation。
 - HTTP Skill 默认拒绝 private/link-local/metadata IP，并在 DNS 解析后再次拦截解析到私网/本机/metadata 类地址的 host。
 - HTTP Skill 对 429、5xx、网络/超时错误按配置重试，且 `retry_count` 可观测。
-- HTTP Skill 命中 per-skill rate limit 时返回 `rate_limited` observation 且不发起请求；`SKILL_RATE_LIMIT_MODE=redis` 时多个 Runtime 副本共享同一 Redis 计数窗口。
+- HTTP/MCP Skill 命中 per-skill rate limit 时返回 `rate_limited` observation 且不发起请求，同时递增 `niceagent_skill_rate_limit_denials_total{kind,mode}`；`SKILL_RATE_LIMIT_MODE=redis` 时多个 Runtime 副本共享同一 Redis 计数窗口。
 - Runtime 风险策略命中时返回 `skill_policy_denied` observation，不调用真实 tool，不写 secret，不预占 tool quota。
 - OpenAPI JSON/YAML preview 不创建 skill、不保存 secret，只返回可供用户选择的 HTTP Skill 候选项；保存接口会按选中 operation 单独创建 skill。
 - MCP preview 不创建 skill、不保存 secret，只返回候选 skill manifest；保存接口会重新解析 manifest、按 `tool_name` 选择 tool，并创建 `kind=mcp` 用户 skill；Runtime MCP adapter 调用 `tools/call` 时不会把 bearer token 写入 run event、audit、invocation 或前端响应；MCP annotations 只作为提示，不作为安全边界。

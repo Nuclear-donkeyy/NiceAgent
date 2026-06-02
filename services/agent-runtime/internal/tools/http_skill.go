@@ -192,6 +192,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 		}), false, nil
 	}
 	if !t.allowHTTPSkill(ctx, cfg) {
+		t.recordRateLimitDenial(protocol.SkillKindHTTP)
 		return marshalObservation(httpSkillObservation{
 			OK:        false,
 			ErrorType: "rate_limited",

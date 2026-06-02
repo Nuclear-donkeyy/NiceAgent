@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"niceagent/common/platform"
+	"niceagent/common/protocol"
 	"niceagent/common/skillmanifest"
 )
 
@@ -91,6 +92,7 @@ func (t *runtimeTool) invokeMCP(ctx context.Context, argumentsInJSON string) (st
 		}), false, nil
 	}
 	if !t.allowMCPSkill(ctx, cfg) {
+		t.recordRateLimitDenial(protocol.SkillKindMCP)
 		return marshalMCPSkillObservation(mcpSkillObservation{
 			OK:        false,
 			ErrorType: "rate_limited",
