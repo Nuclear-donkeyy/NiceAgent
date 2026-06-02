@@ -24,6 +24,8 @@ type Config struct {
 	SkillRateLimitMode           string
 	SkillRateLimitPrefix         string
 	SkillRiskPolicy              string
+	HTTPSkillAllowLocalTargets   bool
+	HTTPSkillCAFile              string
 	RunQueueStream               string
 	RunQueueGroup                string
 	RunQueueConsumer             string
@@ -81,6 +83,8 @@ func FromEnv() Config {
 		SkillRateLimitMode:           strings.TrimSpace(env("SKILL_RATE_LIMIT_MODE", "local")),
 		SkillRateLimitPrefix:         strings.TrimSpace(env("SKILL_RATE_LIMIT_PREFIX", "niceagent:skill-rate")),
 		SkillRiskPolicy:              strings.TrimSpace(env("SKILL_RISK_POLICY", "allow")),
+		HTTPSkillAllowLocalTargets:   boolFromEnv("HTTP_SKILL_ALLOW_LOCAL_TARGETS", false),
+		HTTPSkillCAFile:              strings.TrimSpace(os.Getenv("HTTP_SKILL_CA_FILE")),
 		RunQueueStream:               env("RUN_QUEUE_STREAM", "niceagent:runs"),
 		RunQueueGroup:                env("RUN_QUEUE_GROUP", "agent-runtimes"),
 		RunQueueConsumer:             runtimeConsumer(),

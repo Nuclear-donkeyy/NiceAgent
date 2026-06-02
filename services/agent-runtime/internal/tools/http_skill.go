@@ -171,7 +171,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 			Message:   err.Error(),
 		}), false, nil
 	}
-	if err := rejectUnsafeHTTPURL(cfg.URL); err != nil {
+	if err := rejectUnsafeHTTPURL(cfg.URL, t.bridge.AllowLocalHTTP); err != nil {
 		return marshalObservation(httpSkillObservation{
 			OK:        false,
 			ErrorType: "ssrf_rejected",
@@ -180,7 +180,7 @@ func (t *runtimeTool) invokeHTTP(ctx context.Context, argumentsInJSON string) (s
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
 	defer cancel()
-	if err := rejectUnsafeResolvedHTTPHost(ctx, t.bridge.Resolver, cfg.URL); err != nil {
+	if err := rejectUnsafeResolvedHTTPHost(ctx, t.bridge.Resolver, cfg.URL, t.bridge.AllowLocalHTTP); err != nil {
 		errorType := "upstream_dns"
 		if errors.Is(err, ErrUnsafeResolvedHost) {
 			errorType = "ssrf_rejected"
@@ -318,7 +318,7 @@ func (t *runtimeTool) doHTTPSkillRequest(ctx context.Context, cfg skillmanifest.
 			return nil, retryCount, err
 		}
 		platform.InjectTraceHeaders(ctx, request.Header)
-		response, err := httpSkillClient(t.bridge.Client, t.bridge.Resolver).Do(request)
+		response, err := httpSkillClient(t.bridge.Client, t.bridge.Resolver, t.bridge.AllowLocalHTTP).Do(request)
 		if !shouldRetryHTTPSkill(ctx, response, err) || attempt == maxAttempts {
 			return response, retryCount, err
 		}
@@ -372,7 +372,7 @@ func buildHTTPSkillRequest(ctx context.Context, cfg skillmanifest.HTTPSkillRunti
 	return request, nil
 }
 
-func httpSkillClient(base *http.Client, resolver HostResolver) *http.Client {
+func httpSkillClient(base *http.Client, resolver HostResolver, allowLocal bool) *http.Client {
 	if base == nil {
 		base = &http.Client{}
 	}
@@ -381,14 +381,14 @@ func httpSkillClient(base *http.Client, resolver HostResolver) *http.Client {
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	if transport := guardedTransport(base.Transport, resolver); transport != nil {
+	if transport := guardedTransport(base.Transport, resolver, allowLocal); transport != nil {
 		client.Transport = transport
 	}
 	return &client
 }
 
-func guardedTransport(base http.RoundTripper, resolver HostResolver) http.RoundTripper {
-	guard := &ssrfGuardedDialer{Resolver: resolver}
+func guardedTransport(base http.RoundTripper, resolver HostResolver, allowLocal bool) http.RoundTripper {
+	guard := &ssrfGuardedDialer{Resolver: resolver, AllowLocal: allowLocal}
 	if base == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.DialContext = guard.DialContext
@@ -477,8 +477,9 @@ func retryAfterDelay(value string) time.Duration {
 }
 
 type ssrfGuardedDialer struct {
-	Resolver HostResolver
-	Dialer   net.Dialer
+	Resolver   HostResolver
+	Dialer     net.Dialer
+	AllowLocal bool
 }
 
 func (d *ssrfGuardedDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -488,7 +489,10 @@ func (d *ssrfGuardedDialer) DialContext(ctx context.Context, network, address st
 	}
 	host = strings.Trim(strings.ToLower(host), "[]")
 	if addr, err := netip.ParseAddr(host); err == nil {
-		if !isPublicAddr(addr) {
+		if isMetadataAddr(addr) {
+			return nil, fmt.Errorf("%w: dial target %q is not allowed", ErrUnsafeResolvedHost, addr.String())
+		}
+		if !d.AllowLocal && !isPublicAddr(addr) {
 			return nil, fmt.Errorf("%w: dial target %q is not allowed", ErrUnsafeResolvedHost, addr.String())
 		}
 		return d.Dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
@@ -504,7 +508,7 @@ func (d *ssrfGuardedDialer) DialContext(ctx context.Context, network, address st
 	var blocked []string
 	for _, resolved := range addrs {
 		addr, ok := netip.AddrFromSlice(resolved.IP)
-		if !ok || !isPublicAddr(addr) {
+		if !ok || isMetadataAddr(addr) || (!d.AllowLocal && !isPublicAddr(addr)) {
 			blocked = append(blocked, resolved.IP.String())
 			continue
 		}
@@ -585,7 +589,7 @@ func classifyHTTPClientError(ctx context.Context, err error) string {
 	return "upstream_network_error"
 }
 
-func rejectUnsafeHTTPURL(rawURL string) error {
+func rejectUnsafeHTTPURL(rawURL string, allowLocal bool) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return err
@@ -594,19 +598,24 @@ func rejectUnsafeHTTPURL(rawURL string) error {
 	if host == "" {
 		return errors.New("http skill host is required")
 	}
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
+	if !allowLocal && (host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local")) {
 		return fmt.Errorf("http skill host %q is not allowed", host)
 	}
 	if isMetadataHost(host) {
 		return fmt.Errorf("http skill metadata host %q is not allowed", host)
 	}
-	if addr, err := netip.ParseAddr(host); err == nil && !isPublicAddr(addr) {
-		return fmt.Errorf("http skill private address %q is not allowed", host)
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if isMetadataAddr(addr) {
+			return fmt.Errorf("http skill metadata address %q is not allowed", host)
+		}
+		if !allowLocal && !isPublicAddr(addr) {
+			return fmt.Errorf("http skill private address %q is not allowed", host)
+		}
 	}
 	return nil
 }
 
-func rejectUnsafeResolvedHTTPHost(ctx context.Context, resolver HostResolver, rawURL string) error {
+func rejectUnsafeResolvedHTTPHost(ctx context.Context, resolver HostResolver, rawURL string, allowLocal bool) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return err
@@ -633,7 +642,10 @@ func rejectUnsafeResolvedHTTPHost(ctx context.Context, resolver HostResolver, ra
 		if !ok {
 			return fmt.Errorf("%w: host %q resolved to invalid address %q", ErrUnsafeResolvedHost, host, resolved.IP.String())
 		}
-		if !isPublicAddr(addr) {
+		if isMetadataAddr(addr) {
+			return fmt.Errorf("%w: host %q resolved to metadata address %q", ErrUnsafeResolvedHost, host, addr.String())
+		}
+		if !allowLocal && !isPublicAddr(addr) {
 			return fmt.Errorf("%w: host %q resolved to private address %q", ErrUnsafeResolvedHost, host, addr.String())
 		}
 	}

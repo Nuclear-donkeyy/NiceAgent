@@ -397,6 +397,18 @@ func TestHTTPSkillRejectsPrivateAddressWithoutRequest(t *testing.T) {
 	}
 }
 
+func TestHTTPSkillLocalTargetOverrideKeepsMetadataBlocked(t *testing.T) {
+	if err := rejectUnsafeHTTPURL("https://localhost/hook", false); err == nil {
+		t.Fatal("localhost accepted without local target override")
+	}
+	if err := rejectUnsafeHTTPURL("https://localhost/hook", true); err != nil {
+		t.Fatalf("localhost rejected with local target override: %v", err)
+	}
+	if err := rejectUnsafeHTTPURL("https://169.254.169.254/latest/meta-data", true); err == nil {
+		t.Fatal("metadata address accepted with local target override")
+	}
+}
+
 func TestHTTPSkillRejectsPrivateResolvedAddressWithoutRequest(t *testing.T) {
 	var calls int
 	runtimeTool := newTestHTTPSkillTool(roundTripFunc(func(req *http.Request) (*http.Response, error) {

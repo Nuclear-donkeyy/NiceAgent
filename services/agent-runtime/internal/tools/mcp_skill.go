@@ -71,7 +71,7 @@ func (t *runtimeTool) invokeMCP(ctx context.Context, argumentsInJSON string) (st
 			Message:   err.Error(),
 		}), false, nil
 	}
-	if err := rejectUnsafeHTTPURL(cfg.ServerURL); err != nil {
+	if err := rejectUnsafeHTTPURL(cfg.ServerURL, t.bridge.AllowLocalHTTP); err != nil {
 		return marshalMCPSkillObservation(mcpSkillObservation{
 			OK:        false,
 			ErrorType: "ssrf_rejected",
@@ -80,7 +80,7 @@ func (t *runtimeTool) invokeMCP(ctx context.Context, argumentsInJSON string) (st
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
 	defer cancel()
-	if err := rejectUnsafeResolvedHTTPHost(ctx, t.bridge.Resolver, cfg.ServerURL); err != nil {
+	if err := rejectUnsafeResolvedHTTPHost(ctx, t.bridge.Resolver, cfg.ServerURL, t.bridge.AllowLocalHTTP); err != nil {
 		errorType := "upstream_dns"
 		if errors.Is(err, ErrUnsafeResolvedHost) {
 			errorType = "ssrf_rejected"
@@ -152,7 +152,7 @@ func (t *runtimeTool) invokeMCP(ctx context.Context, argumentsInJSON string) (st
 		"host":     safeURLHost(cfg.ServerURL),
 		"mcp_tool": cfg.ToolName,
 	})
-	resp, err := httpSkillClient(t.bridge.Client, t.bridge.Resolver).Do(req)
+	resp, err := httpSkillClient(t.bridge.Client, t.bridge.Resolver, t.bridge.AllowLocalHTTP).Do(req)
 	if err != nil {
 		errorType := classifyHTTPClientError(ctx, err)
 		endSpan(err, platform.Labels{"error_type": errorType})

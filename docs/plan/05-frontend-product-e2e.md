@@ -55,7 +55,7 @@ HTTP Skill 表单已有字段级错误、URL 客户端校验、Bearer token 条�
 
 仍待落地能力：
 
-- 真实 HTTP Skill 后端流、浏览器级真实断线恢复、失败重试和更大样本的 E2E。
+- 浏览器级真实断线恢复、失败重试和更大样本的 E2E；真实 HTTP Skill 后端流已有 `make smoke-http-skill-backend` 覆盖，但还未进入浏览器 UI smoke。
 - 更多文件类型预览、skill 导入向导和面向多用户/项目的导航体验。
 
 ## 扩展点
@@ -99,7 +99,7 @@ Skill 表单建议本地维护 `errors`：
 - `auth_type=bearer` 时 `bearer_token` 必填。
 - 服务端 400/500 错误展示在表单顶部，并保留输入。
 
-E2E 当前分三层：`frontend/e2e/smoke.spec.ts` 通过 fake backend 或网络 mock 验证前端行为；`make smoke-three-services-ui` 构建前端并启动三服务真实进程，验证 Control Plane 托管静态产物后的核心链路；`make smoke-sse-replay` 启动真实 Control Plane、Agent Runtime 和 Sandbox Executor，模拟 SSE 读到部分事件后断开，并用 `after=<last_seq>` 重连补齐，验证 replay 后没有重复 seq 且能收到 `run.succeeded`。后续再补真实 HTTP Skill 后端流、浏览器级真实断线恢复和更大样本测试。
+E2E 当前分三层：`frontend/e2e/smoke.spec.ts` 通过 fake backend 或网络 mock 验证前端行为；`make smoke-three-services-ui` 构建前端并启动三服务真实进程，验证 Control Plane 托管静态产物后的核心链路；`make smoke-sse-replay` 启动真实 Control Plane、Agent Runtime 和 Sandbox Executor，模拟 SSE 读到部分事件后断开，并用 `after=<last_seq>` 重连补齐，验证 replay 后没有重复 seq 且能收到 `run.succeeded`；`make smoke-http-skill-backend` 启动 fake OpenAI-compatible model server 和本地 HTTPS Skill backend，覆盖用户 HTTP Skill 创建、Eino tool calling、Runtime HTTPS 调用、tool events 和最终 assistant 回复。后续再补浏览器级真实断线恢复和更大样本测试。
 
 ## 技术方案
 
@@ -126,7 +126,7 @@ E2E 当前分三层：`frontend/e2e/smoke.spec.ts` 通过 fake backend 或网络
 2. Skill 表单：客户端校验、字段级错误、服务端错误和保存状态。
 3. SSE replay 体验：last seq、断线提示、去重和恢复状态。
 4. Playwright smoke：本地 mock + CI Chromium。
-5. 集成 E2E：`make smoke-three-services-ui` 已能构建前端、启动三服务，并由 Control Plane 托管静态产物，覆盖真实 `/cli echo hello`、artifact list API 和刷新恢复；`make smoke-sse-replay` 已覆盖真实服务 SSE 中途断开、按 seq replay 和去重的最小冒烟；后续继续补 HTTP Skill 真实后端流和浏览器级真实断线恢复。
+5. 集成 E2E：`make smoke-three-services-ui` 已能构建前端、启动三服务，并由 Control Plane 托管静态产物，覆盖真实 `/cli echo hello`、artifact list API 和刷新恢复；`make smoke-sse-replay` 已覆盖真实服务 SSE 中途断开、按 seq replay 和去重的最小冒烟；`make smoke-http-skill-backend` 已覆盖真实三服务下的 HTTP Skill 后端流；后续继续补浏览器级真实断线恢复。
 
 ## 风险与验收
 
@@ -143,7 +143,7 @@ E2E 当前分三层：`frontend/e2e/smoke.spec.ts` 通过 fake backend 或网络
 - 用户不看原始事件，也能理解 agent 在排队、生成、调用 skill、生成 artifact、失败或取消。
 - HTTP Skill 空名称、非法 URL、Bearer 未填、后端 4xx/5xx 都有中文错误且不丢输入。
 - 刷新页面后恢复最近 run 状态和 artifact 元数据。
-- Playwright mock smoke 覆盖会话、普通消息、CLI 状态、artifact、HTTP Skill 添加/启停、失败恢复；三服务 UI smoke 覆盖真实 `/cli echo`、artifact list API 和刷新恢复。
+- Playwright mock smoke 覆盖会话、普通消息、CLI 状态、artifact、HTTP Skill 添加/启停、失败恢复；三服务 UI smoke 覆盖真实 `/cli echo`、artifact list API 和刷新恢复；HTTP Skill backend smoke 覆盖 fake model tool calling 到真实 HTTPS Skill backend 的后端链路。
 - `make check-js`、Rspack build、Playwright smoke 在本地和 CI 通过。
 
 ## 参考资料
