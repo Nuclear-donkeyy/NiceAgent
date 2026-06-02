@@ -142,7 +142,7 @@ curl -X DELETE http://control-plane:8080/api/organizations/$ORG_ID/invitation-em
 INVITATION_EMAIL_WEBHOOK_SECRET=<random-secret>
 ```
 
-调用方需要设置 `X-NiceAgent-Webhook-Signature: sha256=<hex>`，其中 `<hex>` 是 `hmac_sha256(secret, raw_body)`。未配置 secret 时 webhook 入口返回 404，签名错误返回 401。当前入口仍要求服务商回调先被转换成 NiceAgent 的 provider-neutral 事件格式；服务商原生签名校验、字段映射和管理后台重发按钮仍可在后续 adapter/UI 层继续补齐。
+调用方需要设置 `X-NiceAgent-Webhook-Signature: sha256=<hex>`，其中 `<hex>` 是 `hmac_sha256(secret, raw_body)`。未配置 secret 时 webhook 入口返回 404，签名错误返回 401。当前入口兼容 NiceAgent provider-neutral 事件格式，并支持 SendGrid Event Webhook、Amazon SES SNS notification 和 Mailgun webhook 的最小原生字段映射。生产接入时需要在邮件发送侧把 `invitation_id` / `delivery_id` 写入服务商 metadata/custom args/tags，否则 webhook 无法把服务商事件关联回 NiceAgent invitation。服务商原生签名校验和管理后台重发按钮仍可在后续 adapter/UI 层继续补齐。
 
 run 配额是最小治理边界，默认关闭。env 配置是 fallback：
 

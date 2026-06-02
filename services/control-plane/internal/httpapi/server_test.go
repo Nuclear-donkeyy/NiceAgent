@@ -643,6 +643,136 @@ func TestServerRecordsSignedInvitationEmailWebhook(t *testing.T) {
 	}
 }
 
+func TestServerMapsSendGridInvitationEmailWebhookBatch(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{
+		InvitationWebhookSecret: "test-webhook-secret",
+	})
+	deliveredInvitation, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email: "sendgrid-delivered@example.test",
+		Role:  "viewer",
+	})
+	if err != nil {
+		t.Fatalf("create delivered invitation: %v", err)
+	}
+	deliveredDelivery, err := store.EnqueueInvitationEmail(deliveredInvitation, 1)
+	if err != nil {
+		t.Fatalf("enqueue delivered invitation email: %v", err)
+	}
+	bouncedInvitation, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email: "sendgrid-bounced@example.test",
+		Role:  "viewer",
+	})
+	if err != nil {
+		t.Fatalf("create bounced invitation: %v", err)
+	}
+	bouncedDelivery, err := store.EnqueueInvitationEmail(bouncedInvitation, 1)
+	if err != nil {
+		t.Fatalf("enqueue bounced invitation email: %v", err)
+	}
+	body := []byte(`[
+		{
+			"email":"sendgrid-delivered@example.test",
+			"event":"delivered",
+			"sg_message_id":"sg-message-delivered",
+			"timestamp":1717238400,
+			"custom_args":{"invitation_id":"` + deliveredInvitation.ID + `","delivery_id":"` + deliveredDelivery.ID + `"}
+		},
+		{
+			"email":"sendgrid-bounced@example.test",
+			"event":"bounce",
+			"sg_message_id":"sg-message-bounced",
+			"reason":"mailbox unavailable",
+			"timestamp":1717238401,
+			"custom_args":{"invitation_id":"` + bouncedInvitation.ID + `","delivery_id":"` + bouncedDelivery.ID + `"}
+		}
+	]`)
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/invitation-email-events", bytes.NewReader(body))
+	request.Header.Set("X-NiceAgent-Webhook-Signature", signedWebhookBody("test-webhook-secret", body))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("sendgrid webhook status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var output protocol.InvitationEmailEventsResponse
+	decodeJSON(t, response.Body, &output)
+	if len(output.Events) != 2 {
+		t.Fatalf("sendgrid webhook events = %#v, want two events", output.Events)
+	}
+	if output.Events[0].Type != protocol.InvitationEmailEventDelivered || output.Events[0].Provider != "sendgrid" || output.Events[0].ProviderMessageID != "sg-message-delivered" {
+		t.Fatalf("sendgrid delivered event = %#v", output.Events[0])
+	}
+	if output.Events[1].Type != protocol.InvitationEmailEventBounced || output.Events[1].Reason != "mailbox unavailable" {
+		t.Fatalf("sendgrid bounced event = %#v", output.Events[1])
+	}
+	if !store.IsInvitationEmailSuppressed(app.DemoOrgID, bouncedInvitation.Email) {
+		t.Fatal("sendgrid bounced invitation email was not suppressed")
+	}
+	if store.IsInvitationEmailSuppressed(app.DemoOrgID, deliveredInvitation.Email) {
+		t.Fatal("sendgrid delivered invitation email should not be suppressed")
+	}
+}
+
+func TestServerMapsSESInvitationEmailSNSWebhook(t *testing.T) {
+	store, handler := newTestHandlerWithOptions(ServerOptions{
+		InvitationWebhookSecret: "test-webhook-secret",
+	})
+	invitation, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email: "ses-complaint@example.test",
+		Role:  "viewer",
+	})
+	if err != nil {
+		t.Fatalf("create invitation: %v", err)
+	}
+	delivery, err := store.EnqueueInvitationEmail(invitation, 1)
+	if err != nil {
+		t.Fatalf("enqueue invitation email: %v", err)
+	}
+	message := strings.ReplaceAll(`{
+		"notificationType":"Complaint",
+		"mail":{
+			"timestamp":"2026-06-02T03:00:00Z",
+			"messageId":"ses-message-a",
+			"tags":{
+				"niceagent_invitation_id":["INVITATION_ID"],
+				"niceagent_delivery_id":["DELIVERY_ID"]
+			}
+		},
+		"complaint":{
+			"complainedRecipients":[{"emailAddress":"ses-complaint@example.test"}],
+			"complaintFeedbackType":"abuse",
+			"timestamp":"2026-06-02T03:01:00Z"
+		}
+	}`, "\n", "")
+	message = strings.ReplaceAll(message, "INVITATION_ID", invitation.ID)
+	message = strings.ReplaceAll(message, "DELIVERY_ID", delivery.ID)
+	envelope, err := json.Marshal(map[string]any{
+		"Type":      "Notification",
+		"MessageId": "sns-message-a",
+		"Message":   message,
+	})
+	if err != nil {
+		t.Fatalf("marshal sns envelope: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/invitation-email-events", bytes.NewReader(envelope))
+	request.Header.Set("X-NiceAgent-Webhook-Signature", signedWebhookBody("test-webhook-secret", envelope))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("ses webhook status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var output protocol.InvitationEmailEventResponse
+	decodeJSON(t, response.Body, &output)
+	if output.Event.Type != protocol.InvitationEmailEventComplaint || output.Event.Provider != "ses" || output.Event.ProviderMessageID != "ses-message-a" {
+		t.Fatalf("ses webhook event = %#v", output.Event)
+	}
+	if output.Event.Reason != "abuse" {
+		t.Fatalf("ses event reason = %q, want abuse", output.Event.Reason)
+	}
+	if !store.IsInvitationEmailSuppressed(app.DemoOrgID, invitation.Email) {
+		t.Fatal("ses complained invitation email was not suppressed")
+	}
+}
+
 func TestServerRejectsUnsignedInvitationEmailWebhook(t *testing.T) {
 	_, handler := newTestHandlerWithOptions(ServerOptions{
 		InvitationWebhookSecret: "test-webhook-secret",
