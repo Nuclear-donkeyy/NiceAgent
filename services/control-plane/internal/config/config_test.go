@@ -155,6 +155,8 @@ func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	t.Setenv("INVITATION_EMAIL_WEBHOOK_SECRET", "webhook-secret")
 	t.Setenv("INVITATION_EMAIL_SENDGRID_PUBLIC_KEY", "sendgrid-public-key")
 	t.Setenv("INVITATION_EMAIL_MAILGUN_SIGNING_KEY", "mailgun-signing-key")
+	t.Setenv("INVITATION_EMAIL_SNS_SIGNATURE_VERIFICATION", "true")
+	t.Setenv("INVITATION_EMAIL_SNS_TOPIC_ARN", "arn:aws:sns:us-east-1:123456789012:niceagent-email-events")
 
 	cfg := FromEnv()
 
@@ -175,6 +177,9 @@ func TestFromEnvReadsInvitationEmailConfig(t *testing.T) {
 	}
 	if cfg.InvitationEmailSendGridPublicKey != "sendgrid-public-key" || cfg.InvitationEmailMailgunSigningKey != "mailgun-signing-key" {
 		t.Fatalf("invitation webhook provider keys = sendgrid:%q mailgun:%q", cfg.InvitationEmailSendGridPublicKey, cfg.InvitationEmailMailgunSigningKey)
+	}
+	if !cfg.InvitationEmailSNSSignatureVerification || cfg.InvitationEmailSNSTopicARN != "arn:aws:sns:us-east-1:123456789012:niceagent-email-events" {
+		t.Fatalf("invitation sns verification = enabled:%t topic:%q", cfg.InvitationEmailSNSSignatureVerification, cfg.InvitationEmailSNSTopicARN)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected smtp config to validate: %v", err)

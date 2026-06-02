@@ -47,9 +47,11 @@ func main() {
 		ControlPlanePublicURL: cfg.ControlPlanePublicURL,
 		InternalAPIToken:      cfg.InternalAPIToken,
 		InvitationWebhookVerification: httpapi.InvitationWebhookVerification{
-			SharedSecret:      cfg.InvitationEmailWebhookSecret,
-			SendGridPublicKey: cfg.InvitationEmailSendGridPublicKey,
-			MailgunSigningKey: cfg.InvitationEmailMailgunSigningKey,
+			SharedSecret:             cfg.InvitationEmailWebhookSecret,
+			SendGridPublicKey:        cfg.InvitationEmailSendGridPublicKey,
+			MailgunSigningKey:        cfg.InvitationEmailMailgunSigningKey,
+			SNSSignatureVerification: cfg.InvitationEmailSNSSignatureVerification,
+			SNSTopicARN:              cfg.InvitationEmailSNSTopicARN,
 		},
 		InvitationMailer: invitationMailer,
 		RunQuota: httpapi.RunQuota{

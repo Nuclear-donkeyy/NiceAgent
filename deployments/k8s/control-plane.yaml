@@ -214,6 +214,16 @@ spec:
                   name: niceagent-smtp
                   key: mailgun-signing-key
                   optional: true
+            - name: INVITATION_EMAIL_SNS_SIGNATURE_VERIFICATION
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INVITATION_EMAIL_SNS_SIGNATURE_VERIFICATION
+            - name: INVITATION_EMAIL_SNS_TOPIC_ARN
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: INVITATION_EMAIL_SNS_TOPIC_ARN
             - name: SMTP_HOST
               valueFrom:
                 configMapKeyRef:

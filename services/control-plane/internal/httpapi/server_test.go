@@ -3,18 +3,23 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -778,6 +783,101 @@ func TestServerMapsSESInvitationEmailSNSWebhook(t *testing.T) {
 	}
 }
 
+func TestServerMapsSESSNSInvitationEmailWebhookWithNativeSignature(t *testing.T) {
+	topicARN := "arn:aws:sns:us-east-1:123456789012:niceagent-email-events"
+	certPEM, privateKey := testSNSCertificate(t)
+	store, handler := newTestHandlerWithOptions(ServerOptions{
+		InvitationWebhookVerification: InvitationWebhookVerification{
+			SNSSignatureVerification: true,
+			SNSTopicARN:              topicARN,
+			SNSCertificateProvider: func(context.Context, string) ([]byte, error) {
+				return certPEM, nil
+			},
+		},
+	})
+	invitation, err := store.CreateInvitation(app.DemoOrgID, app.DemoUserID, protocol.InvitationInput{
+		Email: "ses-native-complaint@example.test",
+		Role:  "viewer",
+	})
+	if err != nil {
+		t.Fatalf("create invitation: %v", err)
+	}
+	delivery, err := store.EnqueueInvitationEmail(invitation, 1)
+	if err != nil {
+		t.Fatalf("enqueue invitation email: %v", err)
+	}
+	message := strings.ReplaceAll(`{
+		"notificationType":"Complaint",
+		"mail":{
+			"timestamp":"2026-06-02T03:00:00Z",
+			"messageId":"ses-native-message-a",
+			"tags":{
+				"niceagent_invitation_id":["INVITATION_ID"],
+				"niceagent_delivery_id":["DELIVERY_ID"]
+			}
+		},
+		"complaint":{
+			"complainedRecipients":[{"emailAddress":"ses-native-complaint@example.test"}],
+			"complaintFeedbackType":"abuse",
+			"timestamp":"2026-06-02T03:01:00Z"
+		}
+	}`, "\n", "")
+	message = strings.ReplaceAll(message, "INVITATION_ID", invitation.ID)
+	message = strings.ReplaceAll(message, "DELIVERY_ID", delivery.ID)
+	envelope := signedSNSEnvelope(t, privateKey, snsWebhookEnvelope{
+		Type:             "Notification",
+		MessageID:        "sns-native-message-a",
+		TopicARN:         topicARN,
+		Message:          message,
+		Timestamp:        "2026-06-02T03:02:00Z",
+		SignatureVersion: "2",
+		SigningCertURL:   "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-test.pem",
+	})
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/invitation-email-events", bytes.NewReader(envelope))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("ses sns webhook status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var output protocol.InvitationEmailEventResponse
+	decodeJSON(t, response.Body, &output)
+	if output.Event.Type != protocol.InvitationEmailEventComplaint || output.Event.Provider != "ses" || output.Event.ProviderMessageID != "ses-native-message-a" {
+		t.Fatalf("ses sns webhook event = %#v", output.Event)
+	}
+	if !store.IsInvitationEmailSuppressed(app.DemoOrgID, invitation.Email) {
+		t.Fatal("ses native complained invitation email was not suppressed")
+	}
+}
+
+func TestServerRejectsInvalidSESSNSSignature(t *testing.T) {
+	topicARN := "arn:aws:sns:us-east-1:123456789012:niceagent-email-events"
+	certPEM, privateKey := testSNSCertificate(t)
+	_, handler := newTestHandlerWithOptions(ServerOptions{
+		InvitationWebhookVerification: InvitationWebhookVerification{
+			SNSSignatureVerification: true,
+			SNSTopicARN:              topicARN,
+			SNSCertificateProvider: func(context.Context, string) ([]byte, error) {
+				return certPEM, nil
+			},
+		},
+	})
+	envelope := signedSNSEnvelope(t, privateKey, snsWebhookEnvelope{
+		Type:             "Notification",
+		MessageID:        "sns-bad-topic-message-a",
+		TopicARN:         "arn:aws:sns:us-east-1:123456789012:other-topic",
+		Message:          `{"notificationType":"Delivery"}`,
+		Timestamp:        "2026-06-02T03:02:00Z",
+		SignatureVersion: "2",
+		SigningCertURL:   "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-test.pem",
+	})
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/invitation-email-events", bytes.NewReader(envelope))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid ses sns webhook status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestServerRecordsMailgunSignedInvitationEmailWebhook(t *testing.T) {
 	store, handler := newTestHandlerWithOptions(ServerOptions{
 		InvitationWebhookVerification: InvitationWebhookVerification{
@@ -862,6 +962,45 @@ func TestVerifySendGridWebhookSignature(t *testing.T) {
 	if verifySendGridWebhookSignature(publicKey, append(body, 'x'), timestamp, encodedSignature) {
 		t.Fatal("tampered sendgrid body was accepted")
 	}
+}
+
+func testSNSCertificate(t *testing.T) ([]byte, *rsa.PrivateKey) {
+	t.Helper()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	now := time.Now().UTC()
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "sns.us-east-1.amazonaws.com",
+		},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), privateKey
+}
+
+func signedSNSEnvelope(t *testing.T, privateKey *rsa.PrivateKey, envelope snsWebhookEnvelope) []byte {
+	t.Helper()
+	digest := sha256.Sum256([]byte(snsMessageStringToSign(envelope)))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, digest[:])
+	if err != nil {
+		t.Fatalf("sign sns envelope: %v", err)
+	}
+	envelope.Signature = base64.StdEncoding.EncodeToString(signature)
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("marshal sns envelope: %v", err)
+	}
+	return body
 }
 
 func TestServerRejectsUnsignedInvitationEmailWebhook(t *testing.T) {

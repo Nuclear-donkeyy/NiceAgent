@@ -2,8 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/hmac"
+	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -69,15 +72,19 @@ type ServerOptions struct {
 }
 
 type InvitationWebhookVerification struct {
-	SharedSecret      string
-	SendGridPublicKey string
-	MailgunSigningKey string
+	SharedSecret             string
+	SendGridPublicKey        string
+	MailgunSigningKey        string
+	SNSSignatureVerification bool
+	SNSTopicARN              string
+	SNSCertificateProvider   func(context.Context, string) ([]byte, error)
 }
 
 func normalizeInvitationWebhookVerification(input InvitationWebhookVerification, legacySecret string) InvitationWebhookVerification {
 	input.SharedSecret = strings.TrimSpace(firstNonEmptyHTTPAPI(input.SharedSecret, legacySecret))
 	input.SendGridPublicKey = strings.TrimSpace(input.SendGridPublicKey)
 	input.MailgunSigningKey = strings.TrimSpace(input.MailgunSigningKey)
+	input.SNSTopicARN = strings.TrimSpace(input.SNSTopicARN)
 	return input
 }
 
@@ -1142,7 +1149,8 @@ func (s *Server) invitationEmailWebhook(w http.ResponseWriter, r *http.Request) 
 func (v InvitationWebhookVerification) configured() bool {
 	return strings.TrimSpace(v.SharedSecret) != "" ||
 		strings.TrimSpace(v.SendGridPublicKey) != "" ||
-		strings.TrimSpace(v.MailgunSigningKey) != ""
+		strings.TrimSpace(v.MailgunSigningKey) != "" ||
+		v.SNSSignatureVerification
 }
 
 func verifyInvitationWebhookRequest(config InvitationWebhookVerification, body []byte, header http.Header) (string, bool) {
@@ -1154,6 +1162,9 @@ func verifyInvitationWebhookRequest(config InvitationWebhookVerification, body [
 	}
 	if verifyMailgunWebhookSignature(config.MailgunSigningKey, body) {
 		return "mailgun", true
+	}
+	if verifySNSSignature(context.Background(), config, body) {
+		return "sns", true
 	}
 	return "", false
 }
@@ -1243,6 +1254,160 @@ func mailgunSignatureFields(body []byte) (string, string, string) {
 	return strings.TrimSpace(stringFromPath(signaturePayload, "timestamp")),
 		strings.TrimSpace(stringFromPath(signaturePayload, "token")),
 		strings.TrimSpace(stringFromPath(signaturePayload, "signature"))
+}
+
+type snsWebhookEnvelope struct {
+	Type             string `json:"Type"`
+	MessageID        string `json:"MessageId"`
+	Token            string `json:"Token"`
+	TopicARN         string `json:"TopicArn"`
+	Message          string `json:"Message"`
+	SubscribeURL     string `json:"SubscribeURL"`
+	Subject          string `json:"Subject"`
+	Timestamp        string `json:"Timestamp"`
+	SignatureVersion string `json:"SignatureVersion"`
+	Signature        string `json:"Signature"`
+	SigningCertURL   string `json:"SigningCertURL"`
+}
+
+func verifySNSSignature(ctx context.Context, config InvitationWebhookVerification, body []byte) bool {
+	if !config.SNSSignatureVerification {
+		return false
+	}
+	var envelope snsWebhookEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return false
+	}
+	if config.SNSTopicARN != "" && strings.TrimSpace(envelope.TopicARN) != config.SNSTopicARN {
+		return false
+	}
+	certURL := strings.TrimSpace(envelope.SigningCertURL)
+	if !isTrustedSNSSigningCertURL(certURL) {
+		return false
+	}
+	provider := config.SNSCertificateProvider
+	if provider == nil {
+		provider = fetchVerifiedSNSCertificate
+	}
+	certPEM, err := provider(ctx, certURL)
+	if err != nil {
+		return false
+	}
+	return verifySNSMessageSignature(envelope, certPEM)
+}
+
+func verifySNSMessageSignature(envelope snsWebhookEnvelope, certPEM []byte) bool {
+	stringToSign := snsMessageStringToSign(envelope)
+	if stringToSign == "" {
+		return false
+	}
+	signature, err := base64.StdEncoding.DecodeString(strings.TrimSpace(envelope.Signature))
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	publicKey, ok := cert.PublicKey.(*rsa.PublicKey)
+	if !ok {
+		return false
+	}
+	switch strings.TrimSpace(envelope.SignatureVersion) {
+	case "1":
+		digest := sha1.Sum([]byte(stringToSign))
+		return rsa.VerifyPKCS1v15(publicKey, crypto.SHA1, digest[:], signature) == nil
+	case "2":
+		digest := sha256.Sum256([]byte(stringToSign))
+		return rsa.VerifyPKCS1v15(publicKey, crypto.SHA256, digest[:], signature) == nil
+	default:
+		return false
+	}
+}
+
+func snsMessageStringToSign(envelope snsWebhookEnvelope) string {
+	switch strings.TrimSpace(envelope.Type) {
+	case "Notification":
+		var builder strings.Builder
+		writeSNSField(&builder, "Message", envelope.Message)
+		writeSNSField(&builder, "MessageId", envelope.MessageID)
+		if strings.TrimSpace(envelope.Subject) != "" {
+			writeSNSField(&builder, "Subject", envelope.Subject)
+		}
+		writeSNSField(&builder, "Timestamp", envelope.Timestamp)
+		writeSNSField(&builder, "TopicArn", envelope.TopicARN)
+		writeSNSField(&builder, "Type", envelope.Type)
+		return builder.String()
+	case "SubscriptionConfirmation", "UnsubscribeConfirmation":
+		var builder strings.Builder
+		writeSNSField(&builder, "Message", envelope.Message)
+		writeSNSField(&builder, "MessageId", envelope.MessageID)
+		writeSNSField(&builder, "SubscribeURL", envelope.SubscribeURL)
+		writeSNSField(&builder, "Timestamp", envelope.Timestamp)
+		writeSNSField(&builder, "Token", envelope.Token)
+		writeSNSField(&builder, "TopicArn", envelope.TopicARN)
+		writeSNSField(&builder, "Type", envelope.Type)
+		return builder.String()
+	default:
+		return ""
+	}
+}
+
+func writeSNSField(builder *strings.Builder, key, value string) {
+	builder.WriteString(key)
+	builder.WriteByte('\n')
+	builder.WriteString(value)
+	builder.WriteByte('\n')
+}
+
+func isTrustedSNSSigningCertURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if !strings.HasPrefix(host, "sns.") || (!strings.HasSuffix(host, ".amazonaws.com") && !strings.HasSuffix(host, ".amazonaws.com.cn")) {
+		return false
+	}
+	path := parsed.EscapedPath()
+	return strings.HasPrefix(path, "/SimpleNotificationService-") && strings.HasSuffix(path, ".pem")
+}
+
+func fetchVerifiedSNSCertificate(ctx context.Context, certURL string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, certURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		return nil, fmt.Errorf("sns certificate fetch returned status %d", response.StatusCode)
+	}
+	certPEM, err := io.ReadAll(io.LimitReader(response.Body, 128*1024))
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, errors.New("sns certificate is not pem encoded")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := cert.Verify(x509.VerifyOptions{KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
+		return nil, err
+	}
+	return certPEM, nil
 }
 
 func invitationBelongsToOrg(repo app.Repository, orgID, invitationID string) bool {
