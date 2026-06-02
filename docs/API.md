@@ -470,12 +470,12 @@ MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。
 
 `POST /webhooks/invitation-email-events`
 
-邮件服务商 webhook 入口。该接口不使用用户登录态，而是要求至少配置一种 webhook 验证方式：`INVITATION_EMAIL_WEBHOOK_SECRET`、`INVITATION_EMAIL_SENDGRID_PUBLIC_KEY` 或 `INVITATION_EMAIL_MAILGUN_SIGNING_KEY`。NiceAgent 兼容签名算法为 `X-NiceAgent-Webhook-Signature: sha256=<hex(hmac_sha256(secret, raw_body))>`；SendGrid 原生签名使用 `X-Twilio-Email-Event-Webhook-Timestamp` 和 `X-Twilio-Email-Event-Webhook-Signature`；Mailgun 原生签名使用 payload 中的 `signature.timestamp`、`signature.token` 和 `signature.signature`。未配置任何验证方式时接口返回 404，签名错误返回 401。
+邮件服务商 webhook 入口。该接口不使用用户登录态，而是要求至少配置一种 webhook 验证方式：`INVITATION_EMAIL_WEBHOOK_SECRET`、`INVITATION_EMAIL_SENDGRID_PUBLIC_KEY`、`INVITATION_EMAIL_MAILGUN_SIGNING_KEY` 或 `INVITATION_EMAIL_SNS_SIGNATURE_VERIFICATION=true`。NiceAgent 兼容签名算法为 `X-NiceAgent-Webhook-Signature: sha256=<hex(hmac_sha256(secret, raw_body))>`；SendGrid 原生签名使用 `X-Twilio-Email-Event-Webhook-Timestamp` 和 `X-Twilio-Email-Event-Webhook-Signature`；Mailgun 原生签名使用 payload 中的 `signature.timestamp`、`signature.token` 和 `signature.signature`；Amazon SES SNS notification 会校验 SNS envelope 中的 `SigningCertURL`、`SignatureVersion` 和 `Signature`，并可通过 `INVITATION_EMAIL_SNS_TOPIC_ARN` 限制来源 topic。未配置任何验证方式时接口返回 404，签名错误返回 401。
 
 请求体继续兼容上面的 provider-neutral `InvitationEmailEventInput`。此外，webhook adapter 已支持最小服务商原生字段映射：
 
 - SendGrid Event Webhook：支持单条或数组 payload，读取 `event`、`sg_message_id`、`reason`、`timestamp`，并从 `custom_args` / `unique_args` / `metadata` 等字段读取 `invitation_id` 和 `delivery_id`。
-- Amazon SES SNS notification：支持 SNS envelope 中的 JSON 字符串 `Message`，读取 `notificationType`、`mail.messageId`、`mail.tags`、`bounce`、`complaint` 和 `delivery` 字段。
+- Amazon SES SNS notification：支持 SNS envelope 中的 JSON 字符串 `Message`，读取 `notificationType`、`mail.messageId`、`mail.tags`、`bounce`、`complaint` 和 `delivery` 字段；开启 `INVITATION_EMAIL_SNS_SIGNATURE_VERIFICATION=true` 后会按 SNS 证书签名校验 envelope。
 - Mailgun webhook：支持 `event-data.event`、`event-data.message.headers.message-id`、`event-data.user-variables`、`reason` 和 `delivery-status.message`。
 
 原生 payload 仍必须携带可映射到 NiceAgent 的 `invitation_id` 或 `delivery_id`；通常应在发送邀请邮件时把这些值作为服务商 metadata/custom args/tags 注入。单条事件响应为 `InvitationEmailEventResponse`，批量事件响应为 `InvitationEmailEventsResponse`。

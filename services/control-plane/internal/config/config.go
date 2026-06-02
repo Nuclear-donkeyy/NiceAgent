@@ -12,142 +12,146 @@ import (
 )
 
 type Config struct {
-	Addr                             string
-	Environment                      string
-	AuthMode                         string
-	OIDCIssuerURL                    string
-	OIDCAudience                     string
-	OIDCJWKSURL                      string
-	OIDCDefaultProjectID             string
-	OIDCDefaultOrgID                 string
-	OIDCUserIDClaim                  string
-	OIDCProjectIDClaim               string
-	OIDCOrgIDClaim                   string
-	OIDCRolesClaim                   string
-	OIDCEmailClaim                   string
-	OIDCNameClaim                    string
-	OIDCClientID                     string
-	OIDCClientSecret                 string
-	OIDCAuthURL                      string
-	OIDCTokenURL                     string
-	OIDCRedirectURL                  string
-	OIDCSessionSecret                string
-	OIDCSessionTTLSeconds            int
-	StoreDriver                      string
-	DatabaseURL                      string
-	DispatchMode                     string
-	EventFanoutMode                  string
-	EventFanoutPrefix                string
-	RedisAddr                        string
-	RunQueueStream                   string
-	RunQueueGroup                    string
-	RunQueueConsumer                 string
-	RunQueueMaxLen                   int64
-	AgentRuntimeURL                  string
-	ControlPlanePublicURL            string
-	InvitationEmailMode              string
-	InvitationPublicBaseURL          string
-	SMTPHost                         string
-	SMTPPort                         int
-	SMTPUsername                     string
-	SMTPPassword                     string
-	SMTPFrom                         string
-	InvitationEmailSubjectTemplate   string
-	InvitationEmailBodyTemplate      string
-	InvitationEmailQueueMode         string
-	InvitationEmailQueueSize         int
-	InvitationEmailQueueWorkers      int
-	InvitationEmailRetryAttempts     int
-	InvitationEmailRetryInitialDelay int
-	InvitationEmailWebhookSecret     string
-	InvitationEmailSendGridPublicKey string
-	InvitationEmailMailgunSigningKey string
-	InternalAPIToken                 string
-	InternalTokenRequired            bool
-	MaxConcurrentRuns                int
-	MaxRunsPerHour                   int
-	MaxModelTokensPerDay             int
-	MaxToolCallsPerDay               int
-	MaxSandboxSecondsPerDay          int
-	QuotaCounterMode                 string
-	QuotaCounterPrefix               string
-	QuotaModelTokenReservationPerRun int
-	QuotaModelTokenReservationMode   string
-	QuotaModelTokenOutputBuffer      int
-	QuotaModelTokenEstimatorModel    string
-	ArtifactRetentionDays            int
-	ArtifactCleanupDeleteFiles       bool
+	Addr                                    string
+	Environment                             string
+	AuthMode                                string
+	OIDCIssuerURL                           string
+	OIDCAudience                            string
+	OIDCJWKSURL                             string
+	OIDCDefaultProjectID                    string
+	OIDCDefaultOrgID                        string
+	OIDCUserIDClaim                         string
+	OIDCProjectIDClaim                      string
+	OIDCOrgIDClaim                          string
+	OIDCRolesClaim                          string
+	OIDCEmailClaim                          string
+	OIDCNameClaim                           string
+	OIDCClientID                            string
+	OIDCClientSecret                        string
+	OIDCAuthURL                             string
+	OIDCTokenURL                            string
+	OIDCRedirectURL                         string
+	OIDCSessionSecret                       string
+	OIDCSessionTTLSeconds                   int
+	StoreDriver                             string
+	DatabaseURL                             string
+	DispatchMode                            string
+	EventFanoutMode                         string
+	EventFanoutPrefix                       string
+	RedisAddr                               string
+	RunQueueStream                          string
+	RunQueueGroup                           string
+	RunQueueConsumer                        string
+	RunQueueMaxLen                          int64
+	AgentRuntimeURL                         string
+	ControlPlanePublicURL                   string
+	InvitationEmailMode                     string
+	InvitationPublicBaseURL                 string
+	SMTPHost                                string
+	SMTPPort                                int
+	SMTPUsername                            string
+	SMTPPassword                            string
+	SMTPFrom                                string
+	InvitationEmailSubjectTemplate          string
+	InvitationEmailBodyTemplate             string
+	InvitationEmailQueueMode                string
+	InvitationEmailQueueSize                int
+	InvitationEmailQueueWorkers             int
+	InvitationEmailRetryAttempts            int
+	InvitationEmailRetryInitialDelay        int
+	InvitationEmailWebhookSecret            string
+	InvitationEmailSendGridPublicKey        string
+	InvitationEmailMailgunSigningKey        string
+	InvitationEmailSNSSignatureVerification bool
+	InvitationEmailSNSTopicARN              string
+	InternalAPIToken                        string
+	InternalTokenRequired                   bool
+	MaxConcurrentRuns                       int
+	MaxRunsPerHour                          int
+	MaxModelTokensPerDay                    int
+	MaxToolCallsPerDay                      int
+	MaxSandboxSecondsPerDay                 int
+	QuotaCounterMode                        string
+	QuotaCounterPrefix                      string
+	QuotaModelTokenReservationPerRun        int
+	QuotaModelTokenReservationMode          string
+	QuotaModelTokenOutputBuffer             int
+	QuotaModelTokenEstimatorModel           string
+	ArtifactRetentionDays                   int
+	ArtifactCleanupDeleteFiles              bool
 }
 
 func FromEnv() Config {
 	environment := strings.TrimSpace(env("NICEAGENT_ENV", "local"))
 	controlPlanePublicURL := env("CONTROL_PLANE_PUBLIC_URL", "http://127.0.0.1:8080")
 	return Config{
-		Addr:                             env("CONTROL_PLANE_ADDR", ":8080"),
-		Environment:                      environment,
-		AuthMode:                         env("AUTH_MODE", "demo"),
-		OIDCIssuerURL:                    strings.TrimSpace(os.Getenv("OIDC_ISSUER_URL")),
-		OIDCAudience:                     strings.TrimSpace(os.Getenv("OIDC_AUDIENCE")),
-		OIDCJWKSURL:                      strings.TrimSpace(os.Getenv("OIDC_JWKS_URL")),
-		OIDCDefaultProjectID:             strings.TrimSpace(os.Getenv("OIDC_DEFAULT_PROJECT_ID")),
-		OIDCDefaultOrgID:                 strings.TrimSpace(os.Getenv("OIDC_DEFAULT_ORG_ID")),
-		OIDCUserIDClaim:                  strings.TrimSpace(env("OIDC_USER_ID_CLAIM", "sub")),
-		OIDCProjectIDClaim:               strings.TrimSpace(env("OIDC_PROJECT_ID_CLAIM", "niceagent_project_id")),
-		OIDCOrgIDClaim:                   strings.TrimSpace(env("OIDC_ORG_ID_CLAIM", "niceagent_org_id")),
-		OIDCRolesClaim:                   strings.TrimSpace(env("OIDC_ROLES_CLAIM", "niceagent_roles")),
-		OIDCEmailClaim:                   strings.TrimSpace(env("OIDC_EMAIL_CLAIM", "email")),
-		OIDCNameClaim:                    strings.TrimSpace(env("OIDC_NAME_CLAIM", "name")),
-		OIDCClientID:                     strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID")),
-		OIDCClientSecret:                 os.Getenv("OIDC_CLIENT_SECRET"),
-		OIDCAuthURL:                      strings.TrimSpace(os.Getenv("OIDC_AUTH_URL")),
-		OIDCTokenURL:                     strings.TrimSpace(os.Getenv("OIDC_TOKEN_URL")),
-		OIDCRedirectURL:                  strings.TrimSpace(os.Getenv("OIDC_REDIRECT_URL")),
-		OIDCSessionSecret:                os.Getenv("OIDC_SESSION_SECRET"),
-		OIDCSessionTTLSeconds:            intEnv("OIDC_SESSION_TTL_SECONDS", 12*60*60),
-		StoreDriver:                      env("STORE_DRIVER", "memory"),
-		DatabaseURL:                      os.Getenv("DATABASE_URL"),
-		DispatchMode:                     env("DISPATCH_MODE", "http"),
-		EventFanoutMode:                  env("EVENT_FANOUT_MODE", "local"),
-		EventFanoutPrefix:                env("EVENT_FANOUT_PREFIX", "niceagent:run-events"),
-		RedisAddr:                        os.Getenv("REDIS_ADDR"),
-		RunQueueStream:                   env("RUN_QUEUE_STREAM", "niceagent:runs"),
-		RunQueueGroup:                    env("RUN_QUEUE_GROUP", "agent-runtimes"),
-		RunQueueConsumer:                 env("RUN_QUEUE_CONSUMER", "control-plane"),
-		RunQueueMaxLen:                   int64Env("RUN_QUEUE_MAX_LEN", 0),
-		AgentRuntimeURL:                  os.Getenv("AGENT_RUNTIME_URL"),
-		ControlPlanePublicURL:            controlPlanePublicURL,
-		InvitationEmailMode:              env("INVITATION_EMAIL_MODE", "disabled"),
-		InvitationPublicBaseURL:          env("INVITATION_PUBLIC_BASE_URL", controlPlanePublicURL),
-		SMTPHost:                         strings.TrimSpace(os.Getenv("SMTP_HOST")),
-		SMTPPort:                         intEnv("SMTP_PORT", 587),
-		SMTPUsername:                     strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
-		SMTPPassword:                     os.Getenv("SMTP_PASSWORD"),
-		SMTPFrom:                         strings.TrimSpace(os.Getenv("SMTP_FROM")),
-		InvitationEmailSubjectTemplate:   strings.TrimSpace(os.Getenv("INVITATION_EMAIL_SUBJECT_TEMPLATE")),
-		InvitationEmailBodyTemplate:      os.Getenv("INVITATION_EMAIL_BODY_TEMPLATE"),
-		InvitationEmailQueueMode:         env("INVITATION_EMAIL_QUEUE_MODE", "inline"),
-		InvitationEmailQueueSize:         intEnv("INVITATION_EMAIL_QUEUE_SIZE", 100),
-		InvitationEmailQueueWorkers:      intEnv("INVITATION_EMAIL_QUEUE_WORKERS", 1),
-		InvitationEmailRetryAttempts:     intEnv("INVITATION_EMAIL_RETRY_ATTEMPTS", 1),
-		InvitationEmailRetryInitialDelay: intEnv("INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS", 250),
-		InvitationEmailWebhookSecret:     os.Getenv("INVITATION_EMAIL_WEBHOOK_SECRET"),
-		InvitationEmailSendGridPublicKey: strings.TrimSpace(os.Getenv("INVITATION_EMAIL_SENDGRID_PUBLIC_KEY")),
-		InvitationEmailMailgunSigningKey: os.Getenv("INVITATION_EMAIL_MAILGUN_SIGNING_KEY"),
-		InternalAPIToken:                 strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN")),
-		InternalTokenRequired:            boolEnv("INTERNAL_API_TOKEN_REQUIRED", isNonLocalEnvironment(environment)),
-		MaxConcurrentRuns:                intEnv("QUOTA_MAX_CONCURRENT_RUNS", 0),
-		MaxRunsPerHour:                   intEnv("QUOTA_RUNS_PER_HOUR", 0),
-		MaxModelTokensPerDay:             intEnv("QUOTA_MODEL_TOKENS_PER_DAY", 0),
-		MaxToolCallsPerDay:               intEnv("QUOTA_TOOL_CALLS_PER_DAY", 0),
-		MaxSandboxSecondsPerDay:          intEnv("QUOTA_SANDBOX_SECONDS_PER_DAY", 0),
-		QuotaCounterMode:                 env("QUOTA_COUNTER_MODE", "repository"),
-		QuotaCounterPrefix:               env("QUOTA_COUNTER_PREFIX", "niceagent:quota"),
-		QuotaModelTokenReservationPerRun: intEnv("QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN", 0),
-		QuotaModelTokenReservationMode:   env("QUOTA_MODEL_TOKEN_RESERVATION_MODE", "fixed"),
-		QuotaModelTokenOutputBuffer:      intEnv("QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER", 0),
-		QuotaModelTokenEstimatorModel:    strings.TrimSpace(os.Getenv("QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL")),
-		ArtifactRetentionDays:            intEnv("ARTIFACT_RETENTION_DAYS", 0),
-		ArtifactCleanupDeleteFiles:       boolEnv("ARTIFACT_CLEANUP_DELETE_FILES", false),
+		Addr:                                    env("CONTROL_PLANE_ADDR", ":8080"),
+		Environment:                             environment,
+		AuthMode:                                env("AUTH_MODE", "demo"),
+		OIDCIssuerURL:                           strings.TrimSpace(os.Getenv("OIDC_ISSUER_URL")),
+		OIDCAudience:                            strings.TrimSpace(os.Getenv("OIDC_AUDIENCE")),
+		OIDCJWKSURL:                             strings.TrimSpace(os.Getenv("OIDC_JWKS_URL")),
+		OIDCDefaultProjectID:                    strings.TrimSpace(os.Getenv("OIDC_DEFAULT_PROJECT_ID")),
+		OIDCDefaultOrgID:                        strings.TrimSpace(os.Getenv("OIDC_DEFAULT_ORG_ID")),
+		OIDCUserIDClaim:                         strings.TrimSpace(env("OIDC_USER_ID_CLAIM", "sub")),
+		OIDCProjectIDClaim:                      strings.TrimSpace(env("OIDC_PROJECT_ID_CLAIM", "niceagent_project_id")),
+		OIDCOrgIDClaim:                          strings.TrimSpace(env("OIDC_ORG_ID_CLAIM", "niceagent_org_id")),
+		OIDCRolesClaim:                          strings.TrimSpace(env("OIDC_ROLES_CLAIM", "niceagent_roles")),
+		OIDCEmailClaim:                          strings.TrimSpace(env("OIDC_EMAIL_CLAIM", "email")),
+		OIDCNameClaim:                           strings.TrimSpace(env("OIDC_NAME_CLAIM", "name")),
+		OIDCClientID:                            strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID")),
+		OIDCClientSecret:                        os.Getenv("OIDC_CLIENT_SECRET"),
+		OIDCAuthURL:                             strings.TrimSpace(os.Getenv("OIDC_AUTH_URL")),
+		OIDCTokenURL:                            strings.TrimSpace(os.Getenv("OIDC_TOKEN_URL")),
+		OIDCRedirectURL:                         strings.TrimSpace(os.Getenv("OIDC_REDIRECT_URL")),
+		OIDCSessionSecret:                       os.Getenv("OIDC_SESSION_SECRET"),
+		OIDCSessionTTLSeconds:                   intEnv("OIDC_SESSION_TTL_SECONDS", 12*60*60),
+		StoreDriver:                             env("STORE_DRIVER", "memory"),
+		DatabaseURL:                             os.Getenv("DATABASE_URL"),
+		DispatchMode:                            env("DISPATCH_MODE", "http"),
+		EventFanoutMode:                         env("EVENT_FANOUT_MODE", "local"),
+		EventFanoutPrefix:                       env("EVENT_FANOUT_PREFIX", "niceagent:run-events"),
+		RedisAddr:                               os.Getenv("REDIS_ADDR"),
+		RunQueueStream:                          env("RUN_QUEUE_STREAM", "niceagent:runs"),
+		RunQueueGroup:                           env("RUN_QUEUE_GROUP", "agent-runtimes"),
+		RunQueueConsumer:                        env("RUN_QUEUE_CONSUMER", "control-plane"),
+		RunQueueMaxLen:                          int64Env("RUN_QUEUE_MAX_LEN", 0),
+		AgentRuntimeURL:                         os.Getenv("AGENT_RUNTIME_URL"),
+		ControlPlanePublicURL:                   controlPlanePublicURL,
+		InvitationEmailMode:                     env("INVITATION_EMAIL_MODE", "disabled"),
+		InvitationPublicBaseURL:                 env("INVITATION_PUBLIC_BASE_URL", controlPlanePublicURL),
+		SMTPHost:                                strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPPort:                                intEnv("SMTP_PORT", 587),
+		SMTPUsername:                            strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		SMTPPassword:                            os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:                                strings.TrimSpace(os.Getenv("SMTP_FROM")),
+		InvitationEmailSubjectTemplate:          strings.TrimSpace(os.Getenv("INVITATION_EMAIL_SUBJECT_TEMPLATE")),
+		InvitationEmailBodyTemplate:             os.Getenv("INVITATION_EMAIL_BODY_TEMPLATE"),
+		InvitationEmailQueueMode:                env("INVITATION_EMAIL_QUEUE_MODE", "inline"),
+		InvitationEmailQueueSize:                intEnv("INVITATION_EMAIL_QUEUE_SIZE", 100),
+		InvitationEmailQueueWorkers:             intEnv("INVITATION_EMAIL_QUEUE_WORKERS", 1),
+		InvitationEmailRetryAttempts:            intEnv("INVITATION_EMAIL_RETRY_ATTEMPTS", 1),
+		InvitationEmailRetryInitialDelay:        intEnv("INVITATION_EMAIL_RETRY_INITIAL_DELAY_MS", 250),
+		InvitationEmailWebhookSecret:            os.Getenv("INVITATION_EMAIL_WEBHOOK_SECRET"),
+		InvitationEmailSendGridPublicKey:        strings.TrimSpace(os.Getenv("INVITATION_EMAIL_SENDGRID_PUBLIC_KEY")),
+		InvitationEmailMailgunSigningKey:        os.Getenv("INVITATION_EMAIL_MAILGUN_SIGNING_KEY"),
+		InvitationEmailSNSSignatureVerification: boolEnv("INVITATION_EMAIL_SNS_SIGNATURE_VERIFICATION", false),
+		InvitationEmailSNSTopicARN:              strings.TrimSpace(os.Getenv("INVITATION_EMAIL_SNS_TOPIC_ARN")),
+		InternalAPIToken:                        strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN")),
+		InternalTokenRequired:                   boolEnv("INTERNAL_API_TOKEN_REQUIRED", isNonLocalEnvironment(environment)),
+		MaxConcurrentRuns:                       intEnv("QUOTA_MAX_CONCURRENT_RUNS", 0),
+		MaxRunsPerHour:                          intEnv("QUOTA_RUNS_PER_HOUR", 0),
+		MaxModelTokensPerDay:                    intEnv("QUOTA_MODEL_TOKENS_PER_DAY", 0),
+		MaxToolCallsPerDay:                      intEnv("QUOTA_TOOL_CALLS_PER_DAY", 0),
+		MaxSandboxSecondsPerDay:                 intEnv("QUOTA_SANDBOX_SECONDS_PER_DAY", 0),
+		QuotaCounterMode:                        env("QUOTA_COUNTER_MODE", "repository"),
+		QuotaCounterPrefix:                      env("QUOTA_COUNTER_PREFIX", "niceagent:quota"),
+		QuotaModelTokenReservationPerRun:        intEnv("QUOTA_MODEL_TOKEN_RESERVATION_PER_RUN", 0),
+		QuotaModelTokenReservationMode:          env("QUOTA_MODEL_TOKEN_RESERVATION_MODE", "fixed"),
+		QuotaModelTokenOutputBuffer:             intEnv("QUOTA_MODEL_TOKEN_DYNAMIC_OUTPUT_BUFFER", 0),
+		QuotaModelTokenEstimatorModel:           strings.TrimSpace(os.Getenv("QUOTA_MODEL_TOKEN_ESTIMATOR_MODEL")),
+		ArtifactRetentionDays:                   intEnv("ARTIFACT_RETENTION_DAYS", 0),
+		ArtifactCleanupDeleteFiles:              boolEnv("ARTIFACT_CLEANUP_DELETE_FILES", false),
 	}
 }
 
