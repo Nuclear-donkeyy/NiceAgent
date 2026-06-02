@@ -24,6 +24,16 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SENSITIVE_KEY_MARKERS = (
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer",
+    "token",
+    "secret",
+    "password",
+    "cookie",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,6 +60,29 @@ def redacted(text: str, secrets: list[str]) -> str:
         if secret:
             value = value.replace(secret, "[REDACTED]")
     return value
+
+
+def scrub_value(value: Any, secrets: list[str]) -> Any:
+    if isinstance(value, dict):
+        cleaned: dict[str, Any] = {}
+        for key, child in value.items():
+            if is_sensitive_key(key):
+                cleaned[key] = "[REDACTED]"
+            else:
+                cleaned[key] = scrub_value(child, secrets)
+        return cleaned
+    if isinstance(value, list):
+        return [scrub_value(item, secrets) for item in value]
+    if isinstance(value, str):
+        return redacted(value, secrets)
+    return value
+
+
+def is_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    if lowered in {"api_key_redacted", "api_key_configured"}:
+        return False
+    return any(marker in lowered for marker in SENSITIVE_KEY_MARKERS)
 
 
 def get_json(url: str) -> dict[str, Any]:
@@ -86,12 +119,73 @@ def wait_for_health(url: str, timeout: float) -> dict[str, Any]:
     raise TimeoutError(f"timed out waiting for model health probe; last_error={last_error}")
 
 
+def build_probe_report(model_health: dict[str, Any], model_name: str, secrets: list[str]) -> dict[str, Any]:
+    checks = {
+        "provider_is_deepseek": model_health.get("provider") == "deepseek",
+        "status_is_healthy": model_health.get("status") == "healthy",
+        "probe_status_is_healthy": model_health.get("probe_status") == "healthy",
+        "probe_succeeded": int(model_health.get("probe_success") or 0) >= 1,
+        "api_key_redacted": True,
+    }
+    result = "passed" if all(checks.values()) else "failed"
+    summary = {
+        "schema_version": 1,
+        "kind": "deepseek_runtime_smoke",
+        "result": result,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "provider": model_health.get("provider"),
+        "model": model_health.get("model") or model_name,
+        "status": model_health.get("status"),
+        "probe_status": model_health.get("probe_status"),
+        "probe_count": model_health.get("probe_count"),
+        "probe_success": model_health.get("probe_success"),
+        "probe_error": model_health.get("probe_error"),
+        "last_error_class": model_health.get("last_error_class"),
+        "last_latency_ms": model_health.get("last_latency_ms"),
+        "checks": checks,
+    }
+    return scrub_value(summary, secrets)
+
+
+def build_failure_report(exc: Exception, logs: str, secrets: list[str]) -> dict[str, Any]:
+    summary = {
+        "schema_version": 1,
+        "kind": "deepseek_runtime_smoke",
+        "result": "failed",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "error": str(exc),
+        "runtime_log_tail": "\n".join(logs.splitlines()[-80:]) if logs else "",
+        "checks": {
+            "api_key_redacted": True,
+            "probe_completed": False,
+        },
+    }
+    return scrub_value(summary, secrets)
+
+
+def build_skip_report(reason: str, model_name: str | None) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "kind": "deepseek_runtime_smoke",
+        "result": "skipped",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "reason": reason,
+        "model": model_name or "",
+        "checks": {
+            "api_key_configured": False,
+            "model_name_configured": bool(model_name),
+        },
+    }
+
+
 def main() -> int:
     args = parse_args()
     api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("MODEL_API_KEY")
     model_name = os.getenv("DEEPSEEK_MODEL") or os.getenv("MODEL_NAME")
     if not api_key or not model_name:
         message = "SKIP deepseek smoke: set DEEPSEEK_API_KEY and DEEPSEEK_MODEL to run a real provider probe"
+        if args.report:
+            write_report(report_path(args.report), build_skip_report(message, model_name))
         print(message)
         return 2 if args.require_key else 0
 
@@ -133,21 +227,10 @@ def main() -> int:
     try:
         health = wait_for_health(f"http://127.0.0.1:{port}/healthz", args.timeout)
         model_health = health.get("model_provider") or {}
-        summary = {
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-            "provider": model_health.get("provider"),
-            "model": model_health.get("model") or model_name,
-            "status": model_health.get("status"),
-            "probe_status": model_health.get("probe_status"),
-            "probe_count": model_health.get("probe_count"),
-            "probe_success": model_health.get("probe_success"),
-            "probe_error": model_health.get("probe_error"),
-            "last_error_class": model_health.get("last_error_class"),
-            "last_latency_ms": model_health.get("last_latency_ms"),
-        }
+        summary = build_probe_report(model_health, model_name, [api_key])
         write_report(report_path(args.report), summary)
         print(json.dumps(summary, ensure_ascii=False, indent=2))
-        if summary["status"] != "healthy" or summary["probe_status"] != "healthy":
+        if summary["result"] != "passed":
             exit_code = 1
         else:
             exit_code = 0
@@ -162,6 +245,8 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             process.kill()
             stdout, _ = process.communicate(timeout=5)
+        if failure:
+            write_report(report_path(args.report), build_failure_report(failure, stdout or "", [api_key]))
         if failure and stdout:
             print(redacted("\n".join(stdout.splitlines()[-80:]), [api_key]), file=sys.stderr)
     return exit_code

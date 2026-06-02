@@ -157,6 +157,8 @@ make smoke-deepseek-runtime
 
 未设置 key 或模型名时该目标会输出 `SKIP` 并返回成功，不会产生真实模型调用；需要强制要求 key 时运行 `python3 scripts/smoke_deepseek_runtime.py --require-key`。详细记录模板见 `docs/runbooks/deepseek-runtime-smoke.md`。
 
+真实 key 冒烟会写入机器可读 JSON 报告，字段包含 `result=passed|failed|skipped`、provider/model、probe 状态、错误分类、延迟和 `checks`。失败时也会写入脱敏后的报告，方便作为发布验收或排障证据；报告默认在 `.local/deepseek-smoke/`，不会提交到仓库。脚本自身的报告构造和脱敏逻辑由 `make check-scripts` 覆盖。
+
 如需本地验证 fallback，可先让主 provider 指向 fake/failing OpenAI-compatible 服务，再配置：
 
 ```bash

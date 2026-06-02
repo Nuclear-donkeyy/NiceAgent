@@ -65,7 +65,20 @@ python3 scripts/smoke_deepseek_runtime.py --require-key
 .local/deepseek-smoke/<timestamp>.json
 ```
 
-`.local/` 已被 `.gitignore` 忽略。报告只包含 provider、model、健康状态、probe 次数、错误分类和延迟，不包含 API key、Authorization header、prompt 或 completion。
+`.local/` 已被 `.gitignore` 忽略。报告只包含 provider、model、健康状态、probe 次数、错误分类、延迟和机器可读验收字段，不包含 API key、Authorization header、prompt 或 completion。
+
+报告核心字段：
+
+- `schema_version`：当前为 `1`。
+- `kind`：固定为 `deepseek_runtime_smoke`。
+- `result`：`passed`、`failed` 或 `skipped`。
+- `checks.provider_is_deepseek`：确认 Runtime 使用 DeepSeek profile。
+- `checks.status_is_healthy`：确认 `/healthz model_provider.status=healthy`。
+- `checks.probe_status_is_healthy`：确认主动探针健康。
+- `checks.probe_succeeded`：确认至少一次探针成功。
+- `checks.api_key_redacted`：脚本已对报告和失败日志尾部做密钥脱敏。
+
+当 Runtime 已启动但探针返回非健康状态时，脚本会写入 `result=failed` 报告。当 Runtime 无法启动、超时或其他异常发生时，脚本也会写入失败报告，并只保留脱敏后的日志尾部。未设置 key 或模型名时默认只输出 `SKIP`；如果显式传入 `--report`，会写入 `result=skipped` 报告。
 
 可以显式指定报告路径：
 

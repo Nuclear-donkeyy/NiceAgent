@@ -77,7 +77,7 @@ artifact 已经能创建、列表、下载，Runtime 会在 sandbox tool 调用�
 
 ### 7. 模型运营还有“骨架已落、生产未闭环”的差距
 
-当前 provider 已有 retry、错误分类、usage、redaction、Runtime 进程内模型请求限流和并发保护、单一后备 provider fallback、配置化 pricing/cost、`/healthz` 模型健康快照、`/metrics` 模型运行指标，以及可选主动 provider 探针。探针默认关闭，打开后会发起真实模型调用，并通过 `model_provider.probe_*` 字段和 `niceagent_model_health_probe_*` 指标暴露结果。provider 缺失 usage 或 mock provider 会回退到共享估算器，并在 `RunUsage` 中持久化 `estimated=true` 与 `token_estimator`，可为 `tiktoken_o200k_base`、`tiktoken_cl100k_base` 或 `heuristic_rune_div4`，方便后续扩展到更多 provider 原生 tokenizer。DeepSeek 已有 `MODEL_PROVIDER_PROFILE=deepseek` 配置预设：复用 OpenAI-compatible provider，默认补齐官方 base URL，并把 usage provider 标记为 `deepseek`；模型名仍要求显式配置并以官方文档为准。fake DeepSeek/OpenAI-compatible server 已覆盖 tool calling 响应解析、usage 采集和 401/402/429/503 错误分类。还没有真实 DeepSeek 冒烟记录、跨 Runtime/provider 账号级容量协调、复杂多 provider 路由和真实值班系统接入。
+当前 provider 已有 retry、错误分类、usage、redaction、Runtime 进程内模型请求限流和并发保护、单一后备 provider fallback、配置化 pricing/cost、`/healthz` 模型健康快照、`/metrics` 模型运行指标，以及可选主动 provider 探针。探针默认关闭，打开后会发起真实模型调用，并通过 `model_provider.probe_*` 字段和 `niceagent_model_health_probe_*` 指标暴露结果。provider 缺失 usage 或 mock provider 会回退到共享估算器，并在 `RunUsage` 中持久化 `estimated=true` 与 `token_estimator`，可为 `tiktoken_o200k_base`、`tiktoken_cl100k_base` 或 `heuristic_rune_div4`，方便后续扩展到更多 provider 原生 tokenizer。DeepSeek 已有 `MODEL_PROVIDER_PROFILE=deepseek` 配置预设：复用 OpenAI-compatible provider，默认补齐官方 base URL，并把 usage provider 标记为 `deepseek`；模型名仍要求显式配置并以官方文档为准。fake DeepSeek/OpenAI-compatible server 已覆盖 tool calling 响应解析、usage 采集和 401/402/429/503 错误分类；真实 key smoke 脚本已能写出 `passed|failed|skipped` 机器可读脱敏报告。还没有真实 DeepSeek 冒烟记录、跨 Runtime/provider 账号级容量协调、复杂多 provider 路由和真实值班系统接入。
 
 ## 修复 PR 顺序
 
@@ -196,7 +196,7 @@ artifact 已经能创建、列表、下载，Runtime 会在 sandbox tool 调用�
 
 PR 1 的文档状态收口后，近期更适合继续推进这些真实生产化缺口：
 
-1. DeepSeek 真实 API key 冒烟和模型运营记录：可选 smoke 脚本与 runbook 已落地，下一步是在本地或运维环境用真实 key 执行并保留脱敏结果。
+1. DeepSeek 真实 API key 冒烟和模型运营记录：可选 smoke 脚本、机器可读脱敏报告与 runbook 已落地，下一步是在本地或运维环境用真实 key 执行并保留脱敏结果。
 2. NiceAgent 内置 OIDC login/session/refresh token，补齐从 API resource server 到浏览器登录产品链路的缺口。
 3. 邀请邮件 subject/body 模板、进程内内存队列、durable outbox 和 provider-neutral 退信事件记录已落地；下一步补服务商原生字段映射、重发管理和停发策略，让邀请流程从最小闭环走向可运营。
 4. 更多 provider 原生 tokenizer 覆盖、强一致账单级 quota、真实值班系统接入和容量看板。
