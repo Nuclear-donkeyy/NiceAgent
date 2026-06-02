@@ -3,7 +3,7 @@ IMAGE_TAG ?= local
 KIND_CLUSTER ?= niceagent
 K8S_NAMESPACE ?= niceagent
 
-.PHONY: run-control run-runtime run-sandbox run-web build-web test smoke-three-services smoke-three-services-ui smoke-three-services-redis smoke-control-plane-fanout smoke-deepseek-runtime compose-up compose-down compose-config check-js check-scripts check-alerts check-k8s-sandbox docker-build docker-build-control docker-build-runtime docker-build-sandbox kind-create kind-delete kind-load k8s-apply k8s-status k8s-port-forward kind-deploy
+.PHONY: run-control run-runtime run-sandbox run-web build-web test smoke-three-services smoke-three-services-ui smoke-three-services-redis smoke-control-plane-fanout smoke-sandbox-container smoke-deepseek-runtime compose-up compose-down compose-config check-js check-scripts check-alerts check-k8s-sandbox docker-build docker-build-control docker-build-runtime docker-build-sandbox kind-create kind-delete kind-load k8s-apply k8s-status k8s-port-forward kind-deploy
 
 run-control:
 	cd services/control-plane && go run ./cmd
@@ -34,6 +34,9 @@ smoke-three-services-redis:
 
 smoke-control-plane-fanout:
 	python3 scripts/smoke_multi_control_plane_fanout.py
+
+smoke-sandbox-container:
+	python3 scripts/smoke_sandbox_container.py
 
 smoke-deepseek-runtime:
 	python3 scripts/smoke_deepseek_runtime.py
