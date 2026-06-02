@@ -1320,6 +1320,54 @@ func (s *PostgresStore) IsInvitationEmailSuppressed(orgID, email string) bool {
 	return suppressed
 }
 
+func (s *PostgresStore) ListInvitationEmailSuppressions(orgID string, limit int) []protocol.InvitationEmailSuppression {
+	orgID = strings.TrimSpace(orgID)
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.query(`
+		SELECT id, organization_id, email, reason, COALESCE(source_event_id, ''),
+		       COALESCE(provider, ''), COALESCE(provider_message_id, ''), created_at, updated_at
+		FROM invitation_email_suppressions
+		WHERE organization_id = $1
+		ORDER BY updated_at DESC, created_at DESC
+		LIMIT $2`, orgID, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	suppressions := []protocol.InvitationEmailSuppression{}
+	for rows.Next() {
+		suppression, err := scanInvitationEmailSuppression(rows)
+		if err == nil {
+			suppressions = append(suppressions, suppression)
+		}
+	}
+	return suppressions
+}
+
+func (s *PostgresStore) DeleteInvitationEmailSuppression(orgID, suppressionID string) (protocol.InvitationEmailSuppression, error) {
+	orgID = strings.TrimSpace(orgID)
+	suppressionID = strings.TrimSpace(suppressionID)
+	if orgID == "" || suppressionID == "" {
+		return protocol.InvitationEmailSuppression{}, app.ErrInvalidInput
+	}
+	row := s.queryRow(`
+		DELETE FROM invitation_email_suppressions
+		WHERE organization_id = $1 AND id = $2
+		RETURNING id, organization_id, email, reason, COALESCE(source_event_id, ''),
+		          COALESCE(provider, ''), COALESCE(provider_message_id, ''), created_at, updated_at`,
+		orgID, suppressionID)
+	suppression, err := scanInvitationEmailSuppression(row)
+	if err == sql.ErrNoRows {
+		return protocol.InvitationEmailSuppression{}, app.ErrNotFound
+	}
+	if err != nil {
+		return protocol.InvitationEmailSuppression{}, err
+	}
+	return suppression, nil
+}
+
 func (s *PostgresStore) ListInvitationEmailEvents(orgID string, opts app.InvitationEmailEventListOptions) []protocol.InvitationEmailEvent {
 	orgID = strings.TrimSpace(orgID)
 	opts.InvitationID = strings.TrimSpace(opts.InvitationID)
@@ -1382,6 +1430,24 @@ func scanInvitationEmailEvent(row rowScanner) (protocol.InvitationEmailEvent, er
 		}
 	}
 	return event, nil
+}
+
+func scanInvitationEmailSuppression(row rowScanner) (protocol.InvitationEmailSuppression, error) {
+	var suppression protocol.InvitationEmailSuppression
+	if err := row.Scan(
+		&suppression.ID,
+		&suppression.OrganizationID,
+		&suppression.Email,
+		&suppression.Reason,
+		&suppression.SourceEventID,
+		&suppression.Provider,
+		&suppression.ProviderMessageID,
+		&suppression.CreatedAt,
+		&suppression.UpdatedAt,
+	); err != nil {
+		return protocol.InvitationEmailSuppression{}, err
+	}
+	return suppression, nil
 }
 
 func scanInvitationEmailDelivery(row rowScanner, delivery *protocol.InvitationEmailDelivery) error {

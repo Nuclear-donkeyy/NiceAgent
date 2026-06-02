@@ -580,6 +580,10 @@ func TestStoreManagesInvitations(t *testing.T) {
 	if !store.IsInvitationEmailSuppressed(app.DemoOrgID, orgInvitation.Email) {
 		t.Fatalf("invitation email should be suppressed after bounce")
 	}
+	suppressions := store.ListInvitationEmailSuppressions(app.DemoOrgID, 10)
+	if len(suppressions) != 1 || suppressions[0].Email != orgInvitation.Email || suppressions[0].Reason != "mailbox unavailable" {
+		t.Fatalf("suppressions = %#v, want bounced invitation suppression", suppressions)
+	}
 	if _, err := store.RequeueInvitationEmail(app.DemoOrgID, orgInvitation.ID, 3); err != app.ErrInvalidInput {
 		t.Fatalf("requeue suppressed invitation email err = %v, want ErrInvalidInput", err)
 	}
@@ -589,6 +593,20 @@ func TestStoreManagesInvitations(t *testing.T) {
 	claimed = store.ClaimDueInvitationEmails(1, "worker-resend", time.Now().UTC().Add(time.Minute))
 	if len(claimed) != 0 {
 		t.Fatalf("suppressed delivery was claimed again: %#v", claimed)
+	}
+	deletedSuppression, err := store.DeleteInvitationEmailSuppression(app.DemoOrgID, suppressions[0].ID)
+	if err != nil {
+		t.Fatalf("delete invitation email suppression: %v", err)
+	}
+	if deletedSuppression.Email != orgInvitation.Email || store.IsInvitationEmailSuppressed(app.DemoOrgID, orgInvitation.Email) {
+		t.Fatalf("deleted suppression = %#v, suppressed = %v", deletedSuppression, store.IsInvitationEmailSuppressed(app.DemoOrgID, orgInvitation.Email))
+	}
+	requeued, err := store.RequeueInvitationEmail(app.DemoOrgID, orgInvitation.ID, 3)
+	if err != nil {
+		t.Fatalf("requeue unsuppressed invitation email: %v", err)
+	}
+	if requeued.ID != delivery.ID || requeued.Status != protocol.InvitationEmailPending || requeued.Attempts != 0 || requeued.MaxAttempts != 3 || requeued.LastError != "" || requeued.Invitation.Token != orgInvitation.Token {
+		t.Fatalf("requeued delivery = %#v", requeued)
 	}
 	invitations := store.ListInvitations(app.DemoOrgID)
 	if len(invitations) != 1 || invitations[0].Token != "" {

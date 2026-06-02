@@ -692,6 +692,23 @@ func (s *Server) organizationSubroutes(w http.ResponseWriter, r *http.Request) {
 		platform.WriteError(w, http.StatusNotFound, "organization route not found")
 		return
 	}
+	if parts[1] == "invitation-email-suppressions" {
+		if len(parts) == 2 && r.Method == http.MethodGet {
+			s.listInvitationEmailSuppressions(w, r, orgID)
+			return
+		}
+		if len(parts) == 3 && r.Method == http.MethodDelete {
+			suppressionID, err := pathSegment(parts[2])
+			if err != nil || suppressionID == "" {
+				platform.WriteError(w, http.StatusBadRequest, "invalid suppression id")
+				return
+			}
+			s.deleteInvitationEmailSuppression(w, r, orgID, suppressionID)
+			return
+		}
+		platform.WriteError(w, http.StatusNotFound, "organization route not found")
+		return
+	}
 	if parts[1] != "members" {
 		platform.WriteError(w, http.StatusNotFound, "organization route not found")
 		return
@@ -989,6 +1006,32 @@ func (s *Server) listInvitationEmailEvents(w http.ResponseWriter, r *http.Reques
 	platform.WriteJSON(w, http.StatusOK, protocol.InvitationEmailEventsResponse{
 		Events: s.repo.ListInvitationEmailEvents(orgID, opts),
 	})
+}
+
+func (s *Server) listInvitationEmailSuppressions(w http.ResponseWriter, r *http.Request, orgID string) {
+	if !s.requireOrganizationAdminRole(w, r, "invitation.email_suppression.list", "organization", orgID, "") {
+		return
+	}
+	platform.WriteJSON(w, http.StatusOK, protocol.InvitationEmailSuppressionsResponse{
+		Suppressions: s.repo.ListInvitationEmailSuppressions(orgID, parseLimit(r.URL.Query().Get("limit"), 100)),
+	})
+}
+
+func (s *Server) deleteInvitationEmailSuppression(w http.ResponseWriter, r *http.Request, orgID, suppressionID string) {
+	if !s.requireOrganizationAdminRole(w, r, "invitation.email_suppression.delete", "organization", orgID, "") {
+		return
+	}
+	suppression, err := s.repo.DeleteInvitationEmailSuppression(orgID, suppressionID)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	s.auditAllow(r, "invitation.email_suppression.delete", "invitation_email_suppression", suppression.ID, "", map[string]any{
+		"organization_id": suppression.OrganizationID,
+		"email":           suppression.Email,
+		"reason":          suppression.Reason,
+	})
+	platform.WriteJSON(w, http.StatusOK, protocol.InvitationEmailSuppressionResponse{Suppression: suppression})
 }
 
 func (s *Server) recordInvitationEmailEvent(w http.ResponseWriter, r *http.Request, orgID string) {

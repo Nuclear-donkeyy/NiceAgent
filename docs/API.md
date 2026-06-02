@@ -467,6 +467,43 @@ MCP annotations 只作为模型提示和 UI 提示，不作为安全边界。
 X-NiceAgent-Webhook-Signature: sha256=...
 ```
 
+`GET /api/organizations/{organization_id}/invitation-email-suppressions`
+
+查询当前组织内被自动停发的邀请邮箱，只允许 `owner/admin`。支持 `limit` 查询参数，默认最多返回 100 条，按 `updated_at` 倒序。
+
+```json
+{
+  "suppressions": [
+    {
+      "id": "invmailsup_xxx",
+      "organization_id": "demo-org",
+      "email": "user@example.com",
+      "reason": "mailbox unavailable",
+      "source_event_id": "invmailevt_xxx",
+      "provider": "smtp-provider",
+      "provider_message_id": "message-123",
+      "created_at": "2026-06-01T00:00:01Z",
+      "updated_at": "2026-06-01T00:00:01Z"
+    }
+  ]
+}
+```
+
+`DELETE /api/organizations/{organization_id}/invitation-email-suppressions/{suppression_id}`
+
+解除当前组织内某个邮箱的自动停发状态，只允许 `owner/admin`。该接口不会删除历史 `invitation_email_events`，只删除 suppression 记录；删除后，仍处于 `pending` 且未过期的邀请可以再次通过 resend API 重新投递。
+
+```json
+{
+  "suppression": {
+    "id": "invmailsup_xxx",
+    "organization_id": "demo-org",
+    "email": "user@example.com",
+    "reason": "mailbox unavailable"
+  }
+}
+```
+
 `GET /api/projects/{project_id}/members`
 
 列出当前项目成员。`project_id` 必须等于当前 actor 所在项目；否则返回 404。响应体：

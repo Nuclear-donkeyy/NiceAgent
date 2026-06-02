@@ -93,6 +93,8 @@ type Repository interface {
 	RecordInvitationEmailEvent(input protocol.InvitationEmailEventInput) (protocol.InvitationEmailEvent, error)
 	ListInvitationEmailEvents(orgID string, opts InvitationEmailEventListOptions) []protocol.InvitationEmailEvent
 	IsInvitationEmailSuppressed(orgID, email string) bool
+	ListInvitationEmailSuppressions(orgID string, limit int) []protocol.InvitationEmailSuppression
+	DeleteInvitationEmailSuppression(orgID, suppressionID string) (protocol.InvitationEmailSuppression, error)
 	ListProjectMembers(projectID string) []protocol.ProjectMember
 	UpsertProjectMember(projectID string, input protocol.ProjectMemberInput) (protocol.ProjectMember, error)
 	RemoveProjectMember(projectID, userID string) (protocol.ProjectMember, error)

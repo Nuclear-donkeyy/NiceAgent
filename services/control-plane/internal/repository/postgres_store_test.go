@@ -243,6 +243,10 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	if !reloaded.IsInvitationEmailSuppressed(app.DemoOrgID, orgInvitation.Email) {
 		t.Fatalf("invitation email should be suppressed after complaint")
 	}
+	suppressions := reloaded.ListInvitationEmailSuppressions(app.DemoOrgID, 10)
+	if len(suppressions) != 1 || suppressions[0].Email != orgInvitation.Email || suppressions[0].Reason != "recipient complained" {
+		t.Fatalf("suppressions = %#v, want complaint invitation suppression", suppressions)
+	}
 	if _, err := reloaded.RequeueInvitationEmail(app.DemoOrgID, orgInvitation.ID, 3); err != app.ErrInvalidInput {
 		t.Fatalf("requeue suppressed invitation email err = %v, want ErrInvalidInput", err)
 	}
@@ -252,6 +256,20 @@ func TestPostgresStorePersistsEventsAndKeepsTerminalStatusWhenConfigured(t *test
 	claimedDeliveries = reloaded.ClaimDueInvitationEmails(1, "postgres-worker-resend", time.Now().UTC().Add(time.Minute))
 	if len(claimedDeliveries) != 0 {
 		t.Fatalf("suppressed delivery was claimed again: %#v", claimedDeliveries)
+	}
+	deletedSuppression, err := reloaded.DeleteInvitationEmailSuppression(app.DemoOrgID, suppressions[0].ID)
+	if err != nil {
+		t.Fatalf("delete invitation email suppression: %v", err)
+	}
+	if deletedSuppression.Email != orgInvitation.Email || reloaded.IsInvitationEmailSuppressed(app.DemoOrgID, orgInvitation.Email) {
+		t.Fatalf("deleted suppression = %#v, suppressed = %v", deletedSuppression, reloaded.IsInvitationEmailSuppressed(app.DemoOrgID, orgInvitation.Email))
+	}
+	requeued, err := reloaded.RequeueInvitationEmail(app.DemoOrgID, orgInvitation.ID, 3)
+	if err != nil {
+		t.Fatalf("requeue unsuppressed invitation email: %v", err)
+	}
+	if requeued.ID != delivery.ID || requeued.Status != protocol.InvitationEmailPending || requeued.Attempts != 0 || requeued.MaxAttempts != 3 || requeued.LastError != "" || requeued.Invitation.Token != orgInvitation.Token {
+		t.Fatalf("requeued delivery = %#v", requeued)
 	}
 	invitations := reloaded.ListInvitations(app.DemoOrgID)
 	if len(invitations) == 0 || invitations[0].Token != "" {

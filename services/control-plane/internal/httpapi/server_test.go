@@ -910,9 +910,47 @@ func TestServerRejectsSuppressedInvitationEmailResend(t *testing.T) {
 	if len(fakeMailer.sent) != 0 {
 		t.Fatalf("sent suppressed invitations = %d, want none", len(fakeMailer.sent))
 	}
+	list := httptest.NewRequest(http.MethodGet, "/api/organizations/org-project-a/invitation-email-suppressions", nil)
+	setTrustedActorWithoutRoles(list, "org-owner", "project-a")
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("list suppressions status = %d, body = %s", listResponse.Code, listResponse.Body.String())
+	}
+	var listed protocol.InvitationEmailSuppressionsResponse
+	decodeJSON(t, listResponse.Body, &listed)
+	if len(listed.Suppressions) != 1 || listed.Suppressions[0].Email != invitation.Email || listed.Suppressions[0].Reason != "recipient complained" {
+		t.Fatalf("listed suppressions = %#v", listed.Suppressions)
+	}
+	deleteSuppression := httptest.NewRequest(http.MethodDelete, "/api/organizations/org-project-a/invitation-email-suppressions/"+listed.Suppressions[0].ID, nil)
+	setTrustedActorWithoutRoles(deleteSuppression, "org-owner", "project-a")
+	deleteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(deleteResponse, deleteSuppression)
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete suppression status = %d, body = %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	var deleted protocol.InvitationEmailSuppressionResponse
+	decodeJSON(t, deleteResponse.Body, &deleted)
+	if deleted.Suppression.Email != invitation.Email || store.IsInvitationEmailSuppressed("org-project-a", invitation.Email) {
+		t.Fatalf("deleted suppression = %#v, suppressed = %v", deleted.Suppression, store.IsInvitationEmailSuppressed("org-project-a", invitation.Email))
+	}
+	resendAgain := httptest.NewRequest(http.MethodPost, "/api/organizations/org-project-a/invitations/"+invitation.ID+"/resend", nil)
+	setTrustedActorWithoutRoles(resendAgain, "org-owner", "project-a")
+	resendAgainResponse := httptest.NewRecorder()
+	handler.ServeHTTP(resendAgainResponse, resendAgain)
+	if resendAgainResponse.Code != http.StatusOK {
+		t.Fatalf("unsuppressed resend status = %d, body = %s", resendAgainResponse.Code, resendAgainResponse.Body.String())
+	}
+	if len(fakeMailer.sent) != 1 {
+		t.Fatalf("sent unsuppressed invitations = %d, want one resend", len(fakeMailer.sent))
+	}
 	events := store.ListAuditEvents(app.ActorContext{UserID: "org-owner", ProjectID: "project-a", OrgID: "org-project-a", Roles: []string{"owner"}}, app.AuditEventListOptions{Action: "invitation.email.resend"})
-	if len(events) != 1 || events[0].Decision != protocol.AuditDecisionDeny || events[0].Reason != "invitation email suppressed" {
+	if len(events) != 2 || events[0].Decision != protocol.AuditDecisionAllow || events[1].Decision != protocol.AuditDecisionDeny || events[1].Reason != "invitation email suppressed" {
 		t.Fatalf("suppressed resend audit events = %#v", events)
+	}
+	deleteEvents := store.ListAuditEvents(app.ActorContext{UserID: "org-owner", ProjectID: "project-a", OrgID: "org-project-a", Roles: []string{"owner"}}, app.AuditEventListOptions{Action: "invitation.email_suppression.delete"})
+	if len(deleteEvents) != 1 || deleteEvents[0].Decision != protocol.AuditDecisionAllow {
+		t.Fatalf("delete suppression audit events = %#v", deleteEvents)
 	}
 }
 
