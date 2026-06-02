@@ -41,6 +41,35 @@ func TestStoreCreatesChatMessageRunAndEvents(t *testing.T) {
 	}
 }
 
+func TestStoreOIDCBrowserSessionRevocation(t *testing.T) {
+	store := NewStore()
+	now := time.Now().UTC()
+	session := app.OIDCBrowserSession{
+		ID:               "session-a",
+		UserID:           "demo-user",
+		ProjectID:        app.DemoProjectID,
+		RefreshTokenHash: "hash-a",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		ExpiresAt:        now.Add(time.Hour),
+	}
+	if err := store.UpsertOIDCBrowserSession(session); err != nil {
+		t.Fatalf("upsert oidc session: %v", err)
+	}
+	if !store.IsOIDCBrowserSessionActive("session-a", "demo-user", now) {
+		t.Fatal("session should be active")
+	}
+	if store.IsOIDCBrowserSessionActive("session-a", "other-user", now) {
+		t.Fatal("session should not be active for another user")
+	}
+	if err := store.RevokeOIDCBrowserSession("session-a", now.Add(time.Minute)); err != nil {
+		t.Fatalf("revoke oidc session: %v", err)
+	}
+	if store.IsOIDCBrowserSessionActive("session-a", "demo-user", now.Add(2*time.Minute)) {
+		t.Fatal("revoked session should not be active")
+	}
+}
+
 func TestStoreRegistersWorkspaceAndArtifactsForRun(t *testing.T) {
 	store := NewStore()
 	chat := mustCreateChat(t, store, "demo-user", "artifact store")

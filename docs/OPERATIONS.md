@@ -51,7 +51,7 @@ ARTIFACT_CLEANUP_DELETE_FILES=true
 
 - `AUTH_MODE=demo`：默认本地模式，所有请求映射到 `demo-user/demo-project`。
 - `AUTH_MODE=trusted-header`：生产网关模式，要求可信上游完成登录和 JWT/session 校验，再透传 `X-NiceAgent-User-ID`、`X-NiceAgent-Project-ID`、可选 `X-NiceAgent-Org-ID` 和 `X-NiceAgent-Roles`。
-- `AUTH_MODE=oidc`：Control Plane 直接校验 `Authorization: Bearer <jwt>`。当前支持 RS256 JWT、`iss`、`aud`、`exp`、`nbf` 校验和 JWKS 拉取，并把 claims 映射为 `ActorContext`；同时支持最小浏览器 OIDC authorization code flow，提供 login callback、HttpOnly session cookie、refresh token 刷新和 logout。
+- `AUTH_MODE=oidc`：Control Plane 直接校验 `Authorization: Bearer <jwt>`。当前支持 RS256 JWT、`iss`、`aud`、`exp`、`nbf` 校验和 JWKS 拉取，并把 claims 映射为 `ActorContext`；同时支持最小浏览器 OIDC authorization code flow，提供 login callback、HttpOnly session cookie、refresh token 刷新、服务端 session 撤销和 logout。
 
 OIDC JWT 模式需要配置：
 
@@ -72,7 +72,7 @@ OIDC 浏览器登录额外配置：
 - `OIDC_SESSION_SECRET`：签名 session cookie 的随机密钥，启用浏览器登录时必填。
 - `OIDC_SESSION_TTL_SECONDS`：session cookie 有效期，默认 43200 秒。
 
-浏览器入口为 `GET /auth/oidc/login`；callback 成功后写入 `niceagent_session` HttpOnly cookie 和 `niceagent_csrf` cookie，后续外部 API 在没有 bearer token 时会读取该 session。前端侧栏的“登录会话”面板会触发 OIDC 登录、`POST /auth/oidc/refresh` 刷新 session，以及 `POST /auth/logout` 清理 session；这两个 POST 会把 `niceagent_csrf` cookie 写入 `X-NiceAgent-CSRF` header，Control Plane 会校验 header、cookie 和签名 session 中的 token 三者一致。当前 session cookie 采用 HMAC 签名和 HttpOnly/SameSite=Lax，生产部署应使用 HTTPS、稳定域名、足够长的 `OIDC_SESSION_SECRET`，并结合 IdP 侧 refresh token 生命周期和撤销策略。
+浏览器入口为 `GET /auth/oidc/login`；callback 成功后写入 `niceagent_session` HttpOnly cookie 和 `niceagent_csrf` cookie，后续外部 API 在没有 bearer token 时会读取该 session。前端侧栏的“登录会话”面板会触发 OIDC 登录、`POST /auth/oidc/refresh` 刷新 session，以及 `POST /auth/logout` 清理 session；这两个 POST 会把 `niceagent_csrf` cookie 写入 `X-NiceAgent-CSRF` header，Control Plane 会校验 header、cookie 和签名 session 中的 token 三者一致。Control Plane 会把 browser session 写入 `oidc_browser_sessions`，refresh 成功会撤销旧 session 并签发新 session，logout 会撤销当前 session；旧 cookie 即使被重放也会被拒绝。当前 session cookie 采用 HMAC 签名和 HttpOnly/SameSite=Lax，生产部署应使用 HTTPS、稳定域名、足够长的 `OIDC_SESSION_SECRET`，并结合 IdP 侧 refresh token 生命周期和撤销策略。
 
 最小 RBAC 优先读取 trusted header 中的 `X-NiceAgent-Roles`：`viewer` 只允许读取，`owner/admin/member/editor/writer` 允许创建聊天、发送消息、取消 run 和管理 HTTP Skill；项目成员管理只允许 `owner/admin`。缺少 roles 时会从 `project_members` 持久角色绑定中读取；仍找不到成员关系时返回 `403`，并写入 `auth.authorize` deny audit event。当前 migration 会给 `demo-user/demo-project` 写入 `owner` 角色。
 

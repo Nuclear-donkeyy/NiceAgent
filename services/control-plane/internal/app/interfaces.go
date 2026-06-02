@@ -56,6 +56,17 @@ type SkillInvocationListOptions struct {
 	Status  string
 }
 
+type OIDCBrowserSession struct {
+	ID               string
+	UserID           string
+	ProjectID        string
+	RefreshTokenHash string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	ExpiresAt        time.Time
+	RevokedAt        *time.Time
+}
+
 type InvitationEmailEventListOptions struct {
 	InvitationID string
 	DeliveryID   string
@@ -77,6 +88,9 @@ type Repository interface {
 	ListRunUsageBucketsSince(projectID string, since time.Time) []protocol.RunUsageBucket
 	ProjectBelongsToOrganization(projectID, orgID string) bool
 	BindUserIdentity(identity protocol.UserIdentity) (protocol.UserIdentity, error)
+	UpsertOIDCBrowserSession(session OIDCBrowserSession) error
+	RevokeOIDCBrowserSession(sessionID string, revokedAt time.Time) error
+	IsOIDCBrowserSessionActive(sessionID, userID string, now time.Time) bool
 	ListOrganizationRoles(userID, orgID string) []string
 	ListProjectRoles(userID, projectID string) []string
 	ListOrganizationMembers(orgID string) []protocol.OrganizationMember
