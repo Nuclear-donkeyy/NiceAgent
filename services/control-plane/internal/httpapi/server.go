@@ -35,6 +35,7 @@ type Server struct {
 	metrics                 *platform.Metrics
 	authMode                string
 	oidcVerifier            *OIDCVerifier
+	oidcBrowser             OIDCBrowserConfig
 	controlPlaneURL         string
 	internalToken           string
 	invitationWebhookSecret string
@@ -59,6 +60,7 @@ type ServerOptions struct {
 	ArtifactRetention       time.Duration
 	ArtifactCleanupFiles    bool
 	OIDC                    OIDCConfig
+	OIDCBrowser             OIDCBrowserConfig
 }
 
 const defaultAttemptLeaseSeconds = 600
@@ -98,6 +100,7 @@ func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log
 		metrics:                 platform.NewMetrics("control_plane"),
 		authMode:                authMode,
 		oidcVerifier:            oidcVerifier,
+		oidcBrowser:             normalizeOIDCBrowserConfig(opts.OIDCBrowser),
 		controlPlaneURL:         strings.TrimRight(opts.ControlPlanePublicURL, "/"),
 		internalToken:           internalToken(opts.InternalAPIToken),
 		invitationWebhookSecret: opts.InvitationWebhookSecret,
@@ -113,6 +116,10 @@ func NewServerWithOptions(repo app.Repository, dispatcher app.RunDispatcher, log
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", platform.Method(http.MethodGet, s.health))
+	mux.HandleFunc("/auth/oidc/login", platform.Method(http.MethodGet, s.oidcLogin))
+	mux.HandleFunc("/auth/oidc/callback", platform.Method(http.MethodGet, s.oidcCallback))
+	mux.HandleFunc("/auth/oidc/refresh", platform.Method(http.MethodPost, s.oidcRefresh))
+	mux.HandleFunc("/auth/logout", platform.Method(http.MethodPost, s.authLogout))
 	mux.Handle("/metrics", s.metrics.Handler())
 	mux.HandleFunc("/api/chats", s.chats)
 	mux.HandleFunc("/api/chats/", s.chatSubroutes)
@@ -2514,10 +2521,14 @@ func (s *Server) actorFromOIDCRequest(r *http.Request) (app.ActorContext, error)
 		return app.ActorContext{}, errors.New("OIDC verifier is not configured")
 	}
 	token := bearerToken(r)
-	if token == "" {
-		return app.ActorContext{}, errors.New("missing bearer token")
+	if token != "" {
+		return s.oidcVerifier.ActorFromBearer(r.Context(), token)
 	}
-	return s.oidcVerifier.ActorFromBearer(r.Context(), token)
+	session, err := s.oidcSessionFromRequest(r)
+	if err != nil {
+		return app.ActorContext{}, errors.New("missing bearer token or OIDC session")
+	}
+	return session.Actor, nil
 }
 
 func (s *Server) loadPersistentActorRoles(actor app.ActorContext, path string) []string {

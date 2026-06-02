@@ -89,6 +89,43 @@ spec:
                 configMapKeyRef:
                   name: niceagent-config
                   key: OIDC_NAME_CLAIM
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_CLIENT_ID
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-oidc
+                  key: client-secret
+                  optional: true
+            - name: OIDC_AUTH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_AUTH_URL
+            - name: OIDC_TOKEN_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_TOKEN_URL
+            - name: OIDC_REDIRECT_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_REDIRECT_URL
+            - name: OIDC_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: niceagent-oidc
+                  key: session-secret
+                  optional: true
+            - name: OIDC_SESSION_TTL_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: niceagent-config
+                  key: OIDC_SESSION_TTL_SECONDS
             - name: DISPATCH_MODE
               valueFrom:
                 configMapKeyRef:

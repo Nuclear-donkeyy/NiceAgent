@@ -54,6 +54,48 @@ func TestValidateRequiresOIDCIssuerAndAudience(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsOIDCBrowserLoginConfig(t *testing.T) {
+	t.Setenv("AUTH_MODE", "oidc")
+	t.Setenv("OIDC_ISSUER_URL", "https://issuer.example.test")
+	t.Setenv("OIDC_AUDIENCE", "niceagent-web")
+	t.Setenv("OIDC_CLIENT_ID", "niceagent-web")
+	t.Setenv("OIDC_CLIENT_SECRET", "client-secret")
+	t.Setenv("OIDC_AUTH_URL", "https://issuer.example.test/authorize")
+	t.Setenv("OIDC_TOKEN_URL", "https://issuer.example.test/token")
+	t.Setenv("OIDC_REDIRECT_URL", "https://app.example.test/auth/oidc/callback")
+	t.Setenv("OIDC_SESSION_SECRET", "session-secret")
+	t.Setenv("OIDC_SESSION_TTL_SECONDS", "7200")
+
+	cfg := FromEnv()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected OIDC browser config to validate: %v", err)
+	}
+	if cfg.OIDCClientID != "niceagent-web" || cfg.OIDCClientSecret != "client-secret" {
+		t.Fatalf("OIDC client config = id:%q secret:%q", cfg.OIDCClientID, cfg.OIDCClientSecret)
+	}
+	if cfg.OIDCAuthURL != "https://issuer.example.test/authorize" || cfg.OIDCTokenURL != "https://issuer.example.test/token" || cfg.OIDCRedirectURL != "https://app.example.test/auth/oidc/callback" {
+		t.Fatalf("OIDC browser URLs = auth:%q token:%q redirect:%q", cfg.OIDCAuthURL, cfg.OIDCTokenURL, cfg.OIDCRedirectURL)
+	}
+	if cfg.OIDCSessionSecret != "session-secret" || cfg.OIDCSessionTTLSeconds != 7200 {
+		t.Fatalf("OIDC session config = secret:%q ttl:%d", cfg.OIDCSessionSecret, cfg.OIDCSessionTTLSeconds)
+	}
+}
+
+func TestValidateRequiresOIDCBrowserSessionSecret(t *testing.T) {
+	t.Setenv("AUTH_MODE", "oidc")
+	t.Setenv("OIDC_ISSUER_URL", "https://issuer.example.test")
+	t.Setenv("OIDC_AUDIENCE", "niceagent-web")
+	t.Setenv("OIDC_CLIENT_ID", "niceagent-web")
+	t.Setenv("OIDC_AUTH_URL", "https://issuer.example.test/authorize")
+	t.Setenv("OIDC_TOKEN_URL", "https://issuer.example.test/token")
+	t.Setenv("OIDC_SESSION_SECRET", "")
+
+	cfg := FromEnv()
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected OIDC browser config without session secret to fail")
+	}
+}
+
 func TestFromEnvReadsQuotaCounterConfig(t *testing.T) {
 	t.Setenv("QUOTA_COUNTER_MODE", "redis")
 	t.Setenv("QUOTA_COUNTER_PREFIX", "custom:quota")

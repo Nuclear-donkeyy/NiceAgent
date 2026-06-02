@@ -76,6 +76,15 @@ func main() {
 			EmailClaim:       cfg.OIDCEmailClaim,
 			NameClaim:        cfg.OIDCNameClaim,
 		},
+		OIDCBrowser: httpapi.OIDCBrowserConfig{
+			ClientID:          cfg.OIDCClientID,
+			ClientSecret:      cfg.OIDCClientSecret,
+			AuthURL:           cfg.OIDCAuthURL,
+			TokenURL:          cfg.OIDCTokenURL,
+			RedirectURL:       cfg.OIDCRedirectURL,
+			SessionSecret:     cfg.OIDCSessionSecret,
+			SessionTTLSeconds: cfg.OIDCSessionTTLSeconds,
+		},
 	})
 
 	logger.Info("starting control plane", "addr", cfg.Addr, "auth_mode", cfg.AuthMode)
