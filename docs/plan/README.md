@@ -23,7 +23,7 @@
 2. Skill 治理补强：在已有 HTTP Skill schema validation、错误模型、secret redaction、OpenAPI preview/save、MCP manifest preview API/前端 dry-run 面板、per-skill retry、进程内/Redis 跨副本 rate limit 基础上，继续补 MCP 保存/执行 adapter 和更细审计。
 3. Sandbox 生产化：把 Compose/部署默认路径从 local executor 推向 container executor，在已有 K8s egress NetworkPolicy 和镜像白名单基础上补云侧出口控制、强隔离和更完整 artifact 预览。
 4. 平台化收口：在 `AUTH_MODE=trusted-header|oidc`、ActorContext、RBAC、邀请、quota、metrics/tracing、告警规则、Alertmanager 路由样例、durable 邀请邮件 outbox、provider-neutral 退信事件记录和 HMAC webhook 入口已有最小闭环基础上，补浏览器 OIDC login/session/refresh token、更完整 tokenizer 覆盖、服务商原生字段映射和真实值班系统接入。
-5. Redis 与多副本韧性：在 Redis Streams worker、attempt/lease/DLQ、跨 Control Plane nudge fanout 和 CI smoke 已落地后，继续补 Redis HA、容量压测和外部告警。
+5. Redis 与多副本韧性：在 Redis Streams worker、attempt/lease/DLQ、consumer group lag 指标、跨 Control Plane nudge fanout 和 CI smoke 已落地后，继续补 Redis HA、容量压测和外部告警。
 6. 前端真实链路 E2E：在 artifact、skill 表单、mock smoke 和三服务 UI smoke 已有基础上，补真实 HTTP Skill 后端流和复杂 SSE 断线重连场景。
 
 ## 文档约定

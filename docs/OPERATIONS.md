@@ -411,12 +411,13 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 - `niceagent_redis_queue_acked_total`：Agent Runtime 成功 ack queue message 的次数。
 - `niceagent_redis_queue_errors_total`：Agent Runtime Redis worker 在 `ensure_group/read/decode/pending/autoclaim/execute/ack/dead_letter` 等阶段的错误次数。
 - `niceagent_redis_queue_dlq_messages_total`：Agent Runtime 写入 DLQ 的消息数，按 `reason` 和 `dlq_stream` 标记。
+- `niceagent_redis_queue_lag_entries`：Agent Runtime 通过 Redis `XINFO GROUPS` 采样到的 consumer group lag，`state="known"` 表示 Redis 能确定尚未投递给 group 的 entries 数，`state="unknown"` 表示 Redis 返回 lag 不可确定。
 - `niceagent_redis_queue_pending_entries`：Agent Runtime 采样到的当前 consumer group pending entries 总量。
 - `niceagent_redis_queue_oldest_pending_idle_seconds`：Agent Runtime 采样到的最老 pending entry idle 秒数，用于发现长期未 ack 或 reclaim 的卡死消息。
 - `niceagent_redis_queue_dlq_length`：Agent Runtime 采样到的 DLQ stream 长度。
 - `niceagent_sandbox_exec_total`：Sandbox Executor 命令执行结果次数。
 
-这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。仓库提供了基础 Prometheus 告警规则文件：`deployments/monitoring/prometheus-alerts.yml`，覆盖 HTTP 5xx/延迟、runtime 失败、skill policy denial、skill rate limit denial、模型 provider 错误/探针失败/延迟、Redis queue error/pending/oldest idle/DLQ、quota denial 和 sandbox failure。仓库也提供了 Alertmanager 路由样例：`deployments/monitoring/alertmanager.example.yml`，按 `severity` 和 `component` 将告警分到 on-call、platform、model-ops、sandbox、quota 等接收组；Grafana dashboard 样例放在 `deployments/monitoring/grafana/dashboards/skill-governance.json`，可导入后选择 Prometheus datasource。可以用下面的仓库内检查做结构验证：
+这些指标是 Prometheus 风格的最小观测面，适合本地、Compose 和 K8s 通过 Prometheus scraper 或网关转发采集。仓库提供了基础 Prometheus 告警规则文件：`deployments/monitoring/prometheus-alerts.yml`，覆盖 HTTP 5xx/延迟、runtime 失败、skill policy denial、skill rate limit denial、模型 provider 错误/探针失败/延迟、Redis queue error/lag/pending/oldest idle/DLQ、quota denial 和 sandbox failure。仓库也提供了 Alertmanager 路由样例：`deployments/monitoring/alertmanager.example.yml`，按 `severity` 和 `component` 将告警分到 on-call、platform、model-ops、sandbox、quota 等接收组；Grafana dashboard 样例放在 `deployments/monitoring/grafana/dashboards/skill-governance.json`，可导入后选择 Prometheus datasource。可以用下面的仓库内检查做结构验证：
 
 ```bash
 make check-alerts
