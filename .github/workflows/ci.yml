@@ -60,6 +60,7 @@ jobs:
           make smoke-control-plane-fanout
           make smoke-sse-replay
           make smoke-http-skill-backend
+          make smoke-redis-capacity
 
       - name: Build container images
         run: make docker-build IMAGE_REGISTRY=niceagent-ci IMAGE_TAG=${{ github.sha }}

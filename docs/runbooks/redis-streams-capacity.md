@@ -4,7 +4,7 @@
 
 ## 适用场景
 
-- 合入 Redis queue 相关改动后，想快速确认本机或 CI 节点能跑通 Streams 基础路径。
+- 合入 Redis queue 相关改动后，想快速确认本机或 CI 节点能跑通 Streams 基础路径；该 smoke 已进入 GitHub `Test and build` 默认门禁。
 - 在目标部署环境变更 Redis 规格、网络或参数前后，留一份轻量对比报告。
 - 排查 `consumer group lag`、pending entries 或 DLQ 告警前，先确认基础 Redis 连接与 Streams 命令可用。
 
@@ -17,6 +17,8 @@ make smoke-redis-capacity
 ```
 
 如果本机没有 Docker CLI 或 daemon，命令会输出 `SKIP` 并以成功状态退出，避免阻断普通开发检查。
+
+GitHub Actions 默认会运行同一个入口。CI 中的报告直接打印到 job log，用于确认 `pending_count=0`、`lag=0` 和报告字段未漂移；生产发布前仍建议使用目标 Redis 运行一次 `--require-redis`。
 
 ## 使用已有 Redis
 

@@ -418,7 +418,7 @@ make smoke-three-services-redis
 make smoke-control-plane-fanout
 ```
 
-该脚本会启动临时 Postgres、Redis、两个 Control Plane、Agent Runtime 和 Sandbox Executor，验证第二个 Control Plane 能通过 Redis nudge + 共享 Postgres 补齐第一个 Control Plane 写入的 `tool.output`、`model.token` 和 `run.succeeded` SSE 事件。CI 的 `Test and build` 已把 `smoke-three-services-redis`、`smoke-control-plane-fanout`、`smoke-sse-replay` 和 `smoke-http-skill-backend` 纳入默认门禁；生产仍需要 Redis 高可用、保留策略和告警。
+该脚本会启动临时 Postgres、Redis、两个 Control Plane、Agent Runtime 和 Sandbox Executor，验证第二个 Control Plane 能通过 Redis nudge + 共享 Postgres 补齐第一个 Control Plane 写入的 `tool.output`、`model.token` 和 `run.succeeded` SSE 事件。CI 的 `Test and build` 已把 `smoke-three-services-redis`、`smoke-control-plane-fanout`、`smoke-sse-replay`、`smoke-http-skill-backend` 和 `smoke-redis-capacity` 纳入默认门禁；生产仍需要 Redis 高可用、保留策略和告警。
 
 Redis Streams 容量冒烟入口：
 
@@ -426,7 +426,7 @@ Redis Streams 容量冒烟入口：
 make smoke-redis-capacity
 ```
 
-该命令会启动临时 Redis 容器，执行一轮 `XADD -> XREADGROUP -> XACK`，并输出包含写入速率、消费速率、pending 数和 lag 的 JSON 报告。也可以通过 `REDIS_ADDR` 指向已有 Redis，通过 `REDIS_CAPACITY_MESSAGES` 调整消息量，通过 `REDIS_CAPACITY_REPORT` 保存机器可读结果。没有 Docker/Redis 时默认安全 `SKIP`；生产发布前应在目标 Redis 或等价环境下使用 `--require-redis` 得到通过结果。详细解读见 [Redis Streams 容量冒烟 Runbook](runbooks/redis-streams-capacity.md)。
+该命令会启动临时 Redis 容器，执行一轮 `XADD -> XREADGROUP -> XACK`，并输出包含写入速率、消费速率、pending 数和 lag 的 JSON 报告。它已进入 CI 默认门禁，用于防止 Redis Streams 基础容量路径和报告格式漂移。也可以通过 `REDIS_ADDR` 指向已有 Redis，通过 `REDIS_CAPACITY_MESSAGES` 调整消息量，通过 `REDIS_CAPACITY_REPORT` 保存机器可读结果。没有 Docker/Redis 时默认安全 `SKIP`；生产发布前应在目标 Redis 或等价环境下使用 `--require-redis` 得到通过结果。详细解读见 [Redis Streams 容量冒烟 Runbook](runbooks/redis-streams-capacity.md)。
 
 Redis stream 保留策略建议：
 
